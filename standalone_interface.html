@@ -118,11 +118,7 @@
         .svg-container svg line,
         .svg-container svg polyline,
         .svg-container svg rect {
-            vector-effect: non-scaling-stroke !important;
-            stroke-width: 2px !important;
-            stroke: red !important;
-            fill: none !important;
-            opacity: 1 !important;
+            vector-effect: non-scaling-stroke;
         }
 
         .error {
@@ -538,22 +534,22 @@
                             const boxW = Math.max(maxX - minX, 50);
                             const boxH = Math.max(maxY - minY, 50);
 
-                            const padding = 2.5; 
-                            
+                            const padding = 2.5;
+
                             // Calculate target viewBox directly
                             const screenW = container.getBoundingClientRect().width;
                             const screenH = container.getBoundingClientRect().height;
                             const screenAR = screenW / screenH;
-                            
+
                             let targetW = boxW * padding;
                             let targetH = boxH * padding;
-                            
+
                             if (targetW / targetH > screenAR) {
                                 targetH = targetW / screenAR;
                             } else {
                                 targetW = targetH * screenAR;
                             }
-                            
+
                             const targetX = centerX - targetW / 2;
                             const targetY = centerY - targetH / 2;
 
@@ -566,7 +562,7 @@
                         }
                     } catch (e) { console.error('Zoom failed:', e); }
 
-                }, 50); 
+                }, 50);
 
                 return () => clearTimeout(timer);
             }, [activeTab, nDiagram, n1Diagram, inspectQuery, selectedBranch]);
