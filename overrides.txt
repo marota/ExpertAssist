@@ -1,0 +1,11 @@
+pandas>=2.2.2
+tqdm>=4.65.0
+lightsim2grid>=0.12.0
+matplotlib>=3.10.6 
+grid2op>=1.12.2 
+pandapower>=2.14.0 
+contourpy>=1.2.0 
+scipy>=1.16.0 
+lxml>=6.0.0 
+packaging>=24.0 
+numpy>=2.0.0

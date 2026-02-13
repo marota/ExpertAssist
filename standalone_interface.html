@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expert_op4grid Standalone Interface</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <!-- svg-pan-zoom removed -->
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            background: #2c3e50;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .config-panel {
+            background: #f4f4f4;
+            padding: 15px;
+            border-bottom: 1px solid #ccc;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: end;
+        }
+
+        .config-panel input {
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .action-feed {
+            width: 25%;
+            background: #eee;
+            border-right: 1px solid #ccc;
+            padding: 15px;
+            overflow-y: auto;
+        }
+
+        .visualization {
+            flex: 1;
+            background: white;
+            position: relative;
+        }
+
+        .card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-left: 5px solid #dc3545;
+        }
+
+        .card h4 {
+            margin: 0 0 5px 0;
+            font-size: 14px;
+        }
+
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+
+        .svg-container {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .svg-container svg {
+            width: 100%;
+            height: 100%;
+            border: 5px solid blue !important;
+        }
+
+        /* Fix for disappearing lines at low zoom */
+        .svg-container svg path,
+        .svg-container svg line,
+        .svg-container svg polyline,
+        .svg-container svg rect {
+            vector-effect: non-scaling-stroke !important;
+            stroke-width: 2px !important;
+            stroke: red !important;
+            fill: none !important;
+            opacity: 1 !important;
+        }
+
+        .error {
+            color: red;
+            margin-top: 5px;
+            font-size: 12px;
+        }
+
+        /* Highlight styles: persistent and simple */
+        .nad-highlight {
+            stroke: #e74c3c !important;
+            stroke-width: 25px !important;
+            opacity: 0.8;
+        }
+
+        circle.nad-highlight {
+            fill: #e74c3c !important;
+            r: 60 !important;
+        }
+
+        .svg-container {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useLayoutEffect, Fragment, useRef } = React;
+        const API_BASE = 'http://localhost:8000';
+
+        // Custom Hook for SVG Pan/Zoom logic (Moved to top level)
+        const usePanZoom = (svgRef, initialViewBox, active) => {
+            const [viewBox, setViewBox] = useState(null);
+            const isDragging = useRef(false);
+            const startPoint = useRef({ x: 0, y: 0 });
+
+            // Reset to initial
+            useEffect(() => {
+                if (initialViewBox) {
+                    setViewBox(initialViewBox);
+                }
+            }, [initialViewBox]);
+
+            // Apply ViewBox to SVG Element
+            useLayoutEffect(() => {
+                if (svgRef.current && viewBox) {
+                    const svg = svgRef.current.querySelector('svg');
+                    if (svg) {
+                        svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
+                    }
+                }
+            }, [viewBox, svgRef]);
+
+            const handleWheel = (e) => {
+                if (!active || !viewBox) return;
+                e.preventDefault();
+                const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9;
+
+                // Zoom towards mouse pointer logic
+                const svg = svgRef.current.querySelector('svg');
+                if (!svg) return;
+
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+
+                const newW = viewBox.w * scaleFactor;
+                const newH = viewBox.h * scaleFactor;
+                const newX = viewBox.x + (svgP.x - viewBox.x) * (1 - scaleFactor);
+                const newY = viewBox.y + (svgP.y - viewBox.y) * (1 - scaleFactor);
+
+                setViewBox({ x: newX, y: newY, w: newW, h: newH });
+            };
+
+            const handleMouseDown = (e) => {
+                if (!active || !viewBox) return;
+                isDragging.current = true;
+                startPoint.current = { x: e.clientX, y: e.clientY };
+            };
+
+            const handleMouseMove = (e) => {
+                if (!active || !viewBox || !isDragging.current) return;
+                e.preventDefault();
+
+                const dx = e.clientX - startPoint.current.x;
+                const dy = e.clientY - startPoint.current.y;
+                startPoint.current = { x: e.clientX, y: e.clientY };
+
+                const svg = svgRef.current.querySelector('svg');
+                if (!svg) return;
+
+                const screenW = svg.getBoundingClientRect().width;
+                const scale = viewBox.w / screenW;
+
+                setViewBox(prev => ({
+                    ...prev,
+                    x: prev.x - dx * scale,
+                    y: prev.y - dy * scale
+                }));
+            };
+
+            const handleMouseUp = () => {
+                isDragging.current = false;
+            };
+
+            useEffect(() => {
+                const el = svgRef.current;
+                if (!el || !active) return;
+
+                el.addEventListener('wheel', handleWheel, { passive: false });
+                el.addEventListener('mousedown', handleMouseDown);
+                window.addEventListener('mousemove', handleMouseMove);
+                window.addEventListener('mouseup', handleMouseUp);
+
+                return () => {
+                    el.removeEventListener('wheel', handleWheel);
+                    el.removeEventListener('mousedown', handleMouseDown);
+                    window.removeEventListener('mousemove', handleMouseMove);
+                    window.removeEventListener('mouseup', handleMouseUp);
+                };
+            }, [active, viewBox, svgRef]);
+
+            return { viewBox, setViewBox };
+        };
+
+        function App() {
+            const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
+            const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
+            const [branches, setBranches] = useState([]);
+            const [voltageLevels, setVoltageLevels] = useState([]);
+            const [selectedBranch, setSelectedBranch] = useState('');
+            const [configLoading, setConfigLoading] = useState(false);
+            const [analysisLoading, setAnalysisLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [result, setResult] = useState(null);
+            const [infoMessage, setInfoMessage] = useState('');
+            const [inspectQuery, setInspectQuery] = useState('');
+
+            // Visualization State
+            const [activeTab, setActiveTab] = useState('n'); // 'n', 'n-1', 'overflow'
+            const activeTabRef = useRef(activeTab);
+            // useLayoutEffect to ensure ref is updated before any layout effects (like svg-pan-zoom) run
+            useLayoutEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+            const [reinitCount, setReinitCount] = useState(0);
+            const prevTabRef = useRef(activeTab);
+
+            // Force re-init when returning from overflow tab to fix visibility issues
+            useEffect(() => {
+                if (prevTabRef.current === 'overflow' && activeTab !== 'overflow') {
+                    setReinitCount(c => c + 1);
+                }
+                prevTabRef.current = activeTab;
+            }, [activeTab]);
+
+            const [nDiagram, setNDiagram] = useState(null);
+            const [n1Diagram, setN1Diagram] = useState(null);
+            const [n1Loading, setN1Loading] = useState(false);
+
+            const [originalViewBox, setOriginalViewBox] = useState(null);
+
+            // Independent Refs for N and N-1
+            const nSvgContainerRef = useRef(null);
+            const n1SvgContainerRef = useRef(null);
+
+            // Native Pan/Zoom Instances
+            const nPZ = usePanZoom(nSvgContainerRef, nDiagram?.originalViewBox, activeTab === 'n');
+            const n1PZ = usePanZoom(n1SvgContainerRef, n1Diagram?.originalViewBox, activeTab === 'n-1');
+
+            // View State Management for Synchronization
+            const lastViewStateN = useRef(null); // { zoom, pan: {x, y} }
+            const lastViewStateN1 = useRef(null); // { zoom, pan: {x, y} }
+            const lastZoomState = useRef({ query: '', branch: '' }); // Tracks last auto-zoom triggers
+
+
+            useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
+            useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
+
+            const pickPath = async (type, setter) => {
+                try {
+                    const res = await axios.get(`${API_BASE}/api/pick-path?type=${type}`);
+                    if (res.data.path) setter(res.data.path);
+                } catch (err) { setError('Failed to open file picker'); }
+            };
+
+            const handleLoadConfig = async () => {
+                setConfigLoading(true); setError(''); setInfoMessage('');
+                setNDiagram(null); setN1Diagram(null); setResult(null);
+                setActiveTab('n');
+                lastViewStateN.current = null; // Reset view state on new config
+                lastViewStateN1.current = null;
+                lastZoomState.current = { query: '', branch: '' };
+
+                try {
+                    await axios.post(API_BASE + '/api/config', { network_path: networkPath, action_file_path: actionPath });
+
+                    const [branchesRes, vlRes] = await Promise.all([
+                        axios.get(API_BASE + '/api/branches'),
+                        axios.get(API_BASE + '/api/voltage-levels')
+                    ]);
+
+                    setBranches(branchesRes.data.branches);
+                    setVoltageLevels(vlRes.data.voltage_levels);
+
+                    fetchBaseDiagram();
+                } catch (err) {
+                    setError('Failed to load config: ' + (err.response?.data?.detail || err.message));
+                } finally { setConfigLoading(false); }
+            };
+
+            const processSvg = (rawSvg) => {
+                const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
+                let vb = null;
+                if (match) {
+                    const parts = match[1].split(/\s+|,/).map(parseFloat);
+                    if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                }
+                // Return SVG AS IS (do not strip viewBox)
+                return { svg: rawSvg, viewBox: vb };
+            };
+
+            const handleManualReset = () => {
+                const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
+                const currentDiagram = activeTab === 'n' ? nDiagram : n1Diagram;
+                const viewBox = currentDiagram?.originalViewBox || originalViewBox;
+
+                console.log(`[ManualReset] Tab: ${activeTab}, using ViewBox:`, viewBox);
+
+                if (currentPZ && viewBox) {
+                    currentPZ.setViewBox(viewBox);
+                    lastZoomState.current = { query: '', branch: '' };
+                }
+            };
+
+            const fetchBaseDiagram = async () => {
+                try {
+                    const res = await axios.get(API_BASE + '/api/network-diagram');
+                    const { svg, viewBox } = processSvg(res.data.svg);
+                    if (viewBox) setOriginalViewBox(viewBox);
+                    setNDiagram({ ...res.data, svg, originalViewBox: viewBox });
+                } catch (err) { console.error('Failed to fetch diagram:', err); }
+            };
+
+            // Fetch N-1 Diagram when contingency is selected (ONLY if valid branch)
+            useEffect(() => {
+                if (!selectedBranch) {
+                    setN1Diagram(null);
+                    return;
+                }
+
+                // Prevent fetching if the branch is not in the valid list (e.g. user is still typing)
+                if (branches.length > 0 && !branches.includes(selectedBranch)) {
+                    return;
+                }
+
+                const fetchN1 = async () => {
+                    setN1Loading(true);
+                    try {
+                        const res = await axios.post(API_BASE + '/api/n1-diagram', { disconnected_element: selectedBranch });
+                        const { svg, viewBox } = processSvg(res.data.svg);
+                        setN1Diagram({ ...res.data, svg, originalViewBox: viewBox }); // Embed viewBox
+                        setActiveTab('n-1');
+                    } catch (err) {
+                        console.error("Failed to fetch N-1 diagram", err);
+                        setError(`Failed to fetch N-1 diagram for ${selectedBranch}`);
+                    } finally {
+                        setN1Loading(false);
+                    }
+                };
+                fetchN1();
+            }, [selectedBranch, branches]);
+
+            // Auto-switch to overflow tab when analysis runs
+            const handleRunAnalysis = async () => {
+                if (!selectedBranch) return;
+                setAnalysisLoading(true); setError(''); setResult(null); setInfoMessage('');
+                setActiveTab('overflow');
+
+                try {
+                    const response = await fetch(API_BASE + '/api/run-analysis', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ disconnected_element: selectedBranch })
+                    });
+                    if (!response.ok) throw new Error('Analysis failed');
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop(); // Keep incomplete line in buffer
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const event = JSON.parse(line);
+                                if (event.type === 'pdf') setResult(p => ({ ...p, pdf_url: event.pdf_url }));
+                                else if (event.type === 'result') { setResult(event); if (event.message) setInfoMessage(event.message); }
+                                else if (event.type === 'error') setError('Analysis failed: ' + event.message);
+                            } catch (e) {
+                                console.error('Stream error:', e);
+                            }
+                        }
+                    }
+                } catch (err) { setError('Analysis failed: ' + err.message); }
+                finally { setAnalysisLoading(false); }
+            };
+
+
+
+
+
+
+
+
+            // --- Synchronization Logic ---
+            // When switching tabs, apply current view state to the new tab
+            useEffect(() => {
+                if (activeTab === 'n') {
+                    // Sync N from N-1
+                    if (n1PZ.viewBox && nPZ.setViewBox) {
+                        nPZ.setViewBox(n1PZ.viewBox);
+                    }
+                } else if (activeTab === 'n-1') {
+                    // Sync N-1 from N
+                    if (nPZ.viewBox && n1PZ.setViewBox) {
+                        n1PZ.setViewBox(nPZ.viewBox);
+                    }
+                }
+            }, [activeTab]);
+
+            // Zoom Logic (Handles Inspect, N-1 Auto-Zoom)
+            useEffect(() => {
+                if (activeTab === 'overflow') return;
+
+                // We need a slight delay to allow the resize/init above to settle
+                const timer = setTimeout(() => {
+                    const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
+                    const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                    const currentDiagram = activeTab === 'n' ? nDiagram : n1Diagram;
+
+                    if (!currentPZ || !container || !currentDiagram?.metadata) return;
+
+                    // Clear highlights
+                    container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
+
+                    // Check triggers
+                    const queryChanged = inspectQuery !== lastZoomState.current.query;
+                    const branchChanged = !inspectQuery && selectedBranch !== lastZoomState.current.branch;
+
+                    if (!queryChanged && !branchChanged) return;
+
+                    lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
+
+                    let targetId = inspectQuery || selectedBranch;
+
+                    // If we cleared query/branch -> Reset
+                    if (!targetId && queryChanged) {
+                        handleManualReset();
+                        return;
+                    }
+
+                    if (!targetId) return;
+
+                    try {
+                        const meta = typeof currentDiagram.metadata === 'string' ? JSON.parse(currentDiagram.metadata) : currentDiagram.metadata;
+                        const nodes = meta.nodes || [];
+                        const edges = meta.edges || [];
+                        const points = [];
+
+                        const addNodePointsBySvgId = (svgId) => {
+                            const n = nodes.find(node => node.svgId === svgId);
+                            if (n) points.push({ x: n.x, y: n.y });
+                            return n;
+                        };
+
+                        const targetNode = nodes.find(n => n.equipmentId === targetId);
+                        const targetEdge = edges.find(e => e.equipmentId === targetId);
+                        let targetSvgId;
+
+                        if (targetNode) {
+                            targetSvgId = targetNode.svgId;
+                            points.push({ x: targetNode.x, y: targetNode.y });
+                            edges.forEach(e => {
+                                if (e.node1 === targetNode.svgId || e.node2 === targetNode.svgId) {
+                                    addNodePointsBySvgId(e.node1);
+                                    addNodePointsBySvgId(e.node2);
+                                }
+                            });
+                        } else if (targetEdge) {
+                            targetSvgId = targetEdge.svgId;
+                            const n1 = addNodePointsBySvgId(targetEdge.node1);
+                            const n2 = addNodePointsBySvgId(targetEdge.node2);
+                            if (n1) edges.forEach(e => { if (e.node1 === n1.svgId || e.node2 === n1.svgId) { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); } });
+                            if (n2) edges.forEach(e => { if (e.node1 === n2.svgId || e.node2 === n2.svgId) { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); } });
+                        }
+
+                        if (points.length > 0) {
+                            const minX = Math.min(...points.map(p => p.x));
+                            const maxX = Math.max(...points.map(p => p.x));
+                            const minY = Math.min(...points.map(p => p.y));
+                            const maxY = Math.max(...points.map(p => p.y));
+
+                            const centerX = (minX + maxX) / 2;
+                            const centerY = (minY + maxY) / 2;
+                            const boxW = Math.max(maxX - minX, 50);
+                            const boxH = Math.max(maxY - minY, 50);
+
+                            const padding = 2.5; 
+                            
+                            // Calculate target viewBox directly
+                            const screenW = container.getBoundingClientRect().width;
+                            const screenH = container.getBoundingClientRect().height;
+                            const screenAR = screenW / screenH;
+                            
+                            let targetW = boxW * padding;
+                            let targetH = boxH * padding;
+                            
+                            if (targetW / targetH > screenAR) {
+                                targetH = targetW / screenAR;
+                            } else {
+                                targetW = targetH * screenAR;
+                            }
+                            
+                            const targetX = centerX - targetW / 2;
+                            const targetY = centerY - targetH / 2;
+
+                            currentPZ.setViewBox({ x: targetX, y: targetY, w: targetW, h: targetH });
+
+                            if (targetSvgId) {
+                                const el = container.querySelector(`[id="${targetSvgId}"]`);
+                                if (el) el.classList.add('nad-highlight');
+                            }
+                        }
+                    } catch (e) { console.error('Zoom failed:', e); }
+
+                }, 50); 
+
+                return () => clearTimeout(timer);
+            }, [activeTab, nDiagram, n1Diagram, inspectQuery, selectedBranch]);
+
+
+
+
+            const inspectableItems = [...branches, ...voltageLevels].sort();
+
+            const renderVisualization = () => {
+                return (
+                    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+                        {/* Overflow Container */}
+                        {activeTab === 'overflow' && (
+                            <div style={{
+                                width: '100%', height: '100%',
+                                position: 'absolute', top: 0, left: 0,
+                                backgroundColor: 'white', zIndex: 20
+                            }}>
+                                {result?.pdf_url || result?.plot_json ? (
+                                    result.pdf_url ?
+                                        <iframe src={API_BASE + result.pdf_url} key={result.pdf_url} style={{ width: '100%', height: '100%', border: 'none' }} />
+                                        : <iframe srcDoc={result.plot_html} style={{ width: '100%', height: '100%', border: 'none' }} />
+                                ) : (
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                                        {analysisLoading ? 'Processing Analysis...' : 'Run analysis to see overflow graph'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* N Container */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            visibility: activeTab === 'n' ? 'visible' : 'hidden',
+                            zIndex: 10
+                        }}>
+                            {nDiagram?.svg ?
+                                <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
+                                : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
+                            }
+                        </div>
+
+                        {/* N-1 Container */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            visibility: activeTab === 'n-1' ? 'visible' : 'hidden',
+                            zIndex: 10
+                        }}>
+                            {n1Loading ?
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
+                                : (n1Diagram?.svg ?
+                                    <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
+                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
+                                )
+                            }
+                        </div>
+                    </div>
+                );
+            };
+
+
+
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+                    <header>
+                        <h2 style={{ margin: 0 }}>⚡ Expert Recommender</h2>
+                        <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+                    </header>
+                    <div className="config-panel">
+                        <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                            <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Network Path</label>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                                <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1 }} />
+                                <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d' }}>📂</button>
+                            </div>
+                        </div>
+                        <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                            <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Action File Path</label>
+                            <div style={{ display: 'flex', gap: '5px' }}>
+                                <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1 }} />
+                                <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d' }}>📄</button>
+                            </div>
+                        </div>
+                        <button onClick={handleLoadConfig} disabled={configLoading}>
+                            {configLoading ? '⏳ Loading...' : '🔄 Load Config'}
+                        </button>
+                        {branches.length > 0 && (
+                            <div style={{ flex: '1 1 300px', display: 'flex', gap: '15px', alignItems: 'end' }}>
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Target Contingency</label>
+                                    <input list="contingencies" value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)} placeholder="Search line/bus..." style={{ padding: '8px' }} />
+                                    <datalist id="contingencies">{branches.map(b => <option key={b} value={b} />)}</datalist>
+                                </div>
+                                <button onClick={handleRunAnalysis} disabled={!selectedBranch || analysisLoading} style={{ background: '#27ae60' }}>
+                                    {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
+                                </button>
+                            </div>
+                        )}
+                        {branches.length > 0 && (
+                            <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Inspect Line/Bus/VL</label>
+                                <div style={{ display: 'flex', gap: '5px' }}>
+                                    <input
+                                        list="inspectables"
+                                        value={inspectQuery}
+                                        onChange={e => setInspectQuery(e.target.value)}
+                                        placeholder="Zoom to..."
+                                        style={{ flex: 1, padding: '8px', border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc' }}
+                                    />
+                                    <datalist id="inspectables">{inspectableItems.map(b => <option key={b} value={b} />)}</datalist>
+                                    {inspectQuery && (
+                                        <button onClick={() => setInspectQuery('')} style={{ background: '#e74c3c', padding: '0 10px' }} title="Clear">
+                                            ✖
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        <button onClick={handleManualReset} style={{ background: '#bdc3c7', color: '#333' }}>
+                            Reset View
+                        </button>
+                    </div>
+                    <div className="main-content">
+                        <div className="action-feed">
+                            <h3>Actions</h3>
+                            {result?.actions && Object.keys(result.actions).length > 0 ? (
+                                Object.entries(result.actions).sort(([, a], [, b]) => (parseFloat(a.new_max_rho) || 999) - (parseFloat(b.new_max_rho) || 999)).map(([id, details]) => (
+                                    <div key={id} className={`card ${details.new_max_rho === null ? 'ineffective' : ''}`} style={{ borderLeftColor: details.new_max_rho === null ? '#dc3545' : ((parseFloat(details.new_max_rho) || 999) < 0.9 ? '#28a745' : '#ffc107') }}>
+                                        <h4>{id}</h4>
+                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire || details.description}</p>
+                                        {details.new_max_rho !== null ? (
+                                            <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                                New Max Rho: <strong>{(parseFloat(details.new_max_rho)).toFixed(2)}</strong> {details.max_rho_line && `on ${details.max_rho_line}`}<br />
+                                                {details.old_rho && details.new_rho && (
+                                                    <div style={{ marginTop: '3px', color: '#555' }}>
+                                                        Evolution: {details.old_rho} → {details.new_rho}
+                                                        {details.max_rho_line && <span> (on {details.max_rho_line})</span>}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : <div style={{ color: '#dc3545', fontSize: '11px' }}>⚠️ Ineffective</div>}
+                                    </div>
+                                ))
+                            ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}
+                        </div>
+                        <div className="visualization" style={{ display: 'flex', flexDirection: 'column' }}>
+                            <div style={{ display: 'flex', borderBottom: '1px solid #ccc' }}>
+                                <button
+                                    onClick={() => setActiveTab('n')}
+                                    style={{ flex: 1, borderRadius: 0, background: activeTab === 'n' ? 'white' : '#ecf0f1', color: activeTab === 'n' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n' ? '3px solid #3498db' : 'none' }}
+                                >
+                                    Network (N)
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('n-1')}
+                                    style={{ flex: 1, borderRadius: 0, background: activeTab === 'n-1' ? 'white' : '#ecf0f1', color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none' }}
+                                >
+                                    Contingency (N-1)
+                                </button>
+                                {result && (
+                                    <button
+                                        onClick={() => setActiveTab('overflow')}
+                                        style={{ flex: 1, borderRadius: 0, background: activeTab === 'overflow' ? 'white' : '#ecf0f1', color: activeTab === 'overflow' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'overflow' ? '3px solid #27ae60' : 'none' }}
+                                    >
+                                        Overflow Analysis
+                                    </button>
+                                )}
+                            </div>
+                            <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                                {renderVisualization()}
+                            </div>
+                        </div>
+                    </div>
+                    {error && <div style={{ position: 'fixed', bottom: 20, right: 20, background: '#e74c3c', color: 'white', padding: '10px 20px', borderRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>❌ {error}</div>}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
