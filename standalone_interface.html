@@ -241,6 +241,64 @@
             return { viewBox, setViewBox };
         };
 
+        // Boost SVG text/annotation sizes proportionally to diagram size.
+        // On large grids the SVG coordinate space is huge (e.g. 50000 units)
+        // while font-sizes stay small (~12 units), making text invisible.
+        // This scales text so it becomes readable when zoomed in and naturally
+        // shrinks to invisible when viewing the full grid.
+        const boostSvgAnnotations = (container) => {
+            if (!container) return;
+            const svg = container.querySelector('svg');
+            if (!svg) return;
+
+            const vb = svg.getAttribute('viewBox');
+            if (!vb) return;
+
+            const parts = vb.split(/[\s,]+/).map(Number);
+            if (parts.length !== 4) return;
+
+            const diagramSize = Math.max(parts[2], parts[3]);
+            const REFERENCE_SIZE = 3000; // size of a small grid where text is already readable
+            const ratio = diagramSize / REFERENCE_SIZE;
+            if (ratio <= 1.1) return; // small grid, no boost needed
+
+            const boost = Math.sqrt(ratio);
+
+            // Boost <text> elements
+            svg.querySelectorAll('text').forEach(el => {
+                if (el.hasAttribute('data-boosted')) return;
+                el.setAttribute('data-boosted', '1');
+
+                let fontSize = parseFloat(el.getAttribute('font-size'));
+                if (isNaN(fontSize)) {
+                    const fs = el.style.fontSize;
+                    fontSize = fs ? parseFloat(fs) : NaN;
+                }
+                if (isNaN(fontSize)) fontSize = 12;
+
+                const newSize = fontSize * boost;
+                el.setAttribute('font-size', newSize);
+                if (el.style.fontSize) el.style.fontSize = newSize + 'px';
+            });
+
+            // Boost <tspan> elements that specify their own font-size
+            svg.querySelectorAll('tspan').forEach(el => {
+                if (el.hasAttribute('data-boosted')) return;
+                el.setAttribute('data-boosted', '1');
+
+                let fontSize = parseFloat(el.getAttribute('font-size'));
+                if (isNaN(fontSize)) {
+                    const fs = el.style.fontSize;
+                    fontSize = fs ? parseFloat(fs) : NaN;
+                }
+                if (isNaN(fontSize)) return; // inherits from parent <text>, already boosted
+
+                const newSize = fontSize * boost;
+                el.setAttribute('font-size', newSize);
+                if (el.style.fontSize) el.style.fontSize = newSize + 'px';
+            });
+        };
+
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
@@ -274,12 +332,6 @@
             const [n1Diagram, setN1Diagram] = useState(null);
             const [n1Loading, setN1Loading] = useState(false);
 
-            // Focused sub-diagram state (for zoom-to-inspect on large grids)
-            const [focusedDiagram, setFocusedDiagram] = useState(null);
-            const [focusedLoading, setFocusedLoading] = useState(false);
-            const [focusDepth, setFocusDepth] = useState(1);
-            const focusedSvgContainerRef = useRef(null);
-
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
             // Independent Refs for N and N-1
@@ -287,9 +339,8 @@
             const n1SvgContainerRef = useRef(null);
 
             // Native Pan/Zoom Instances
-            const nPZ = usePanZoom(nSvgContainerRef, nDiagram?.originalViewBox, activeTab === 'n' && !focusedDiagram);
-            const n1PZ = usePanZoom(n1SvgContainerRef, n1Diagram?.originalViewBox, activeTab === 'n-1' && !focusedDiagram);
-            const focusedPZ = usePanZoom(focusedSvgContainerRef, focusedDiagram?.originalViewBox, !!focusedDiagram && activeTab !== 'overflow');
+            const nPZ = usePanZoom(nSvgContainerRef, nDiagram?.originalViewBox, activeTab === 'n');
+            const n1PZ = usePanZoom(n1SvgContainerRef, n1Diagram?.originalViewBox, activeTab === 'n-1');
 
             // View State Management for Synchronization
             const lastViewStateN = useRef(null); // { zoom, pan: {x, y} }
@@ -344,8 +395,6 @@
             };
 
             const handleManualReset = () => {
-                // Clear focused diagram to restore full grid view
-                setFocusedDiagram(null);
                 setInspectQuery('');
 
                 const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
@@ -355,6 +404,12 @@
                 if (currentPZ && viewBox) {
                     currentPZ.setViewBox(viewBox);
                     lastZoomState.current = { query: '', branch: '' };
+                }
+
+                // Clear highlights
+                const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                if (container) {
+                    container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
                 }
             };
 
@@ -457,38 +512,8 @@
                 }
             }, [activeTab]);
 
-            // Fetch a focused sub-diagram for the given element
-            const fetchFocusedDiagram = async (elementId, depth) => {
-                if (!elementId) return;
-                setFocusedLoading(true);
-                try {
-                    const body = {
-                        element_id: elementId,
-                        depth: depth
-                    };
-                    // If on N-1 tab and we have a selected branch, include it
-                    if (selectedBranch && activeTab === 'n-1') {
-                        body.disconnected_element = selectedBranch;
-                    }
-                    const res = await axios.post(API_BASE + '/api/focused-diagram', body);
-                    const { svg, viewBox } = processSvg(res.data.svg);
-                    setFocusedDiagram({
-                        ...res.data,
-                        svg,
-                        originalViewBox: viewBox,
-                        elementId: elementId
-                    });
-                } catch (err) {
-                    console.error('Failed to fetch focused diagram:', err);
-                    // Fallback: use viewBox zoom on the full diagram
-                    fallbackViewBoxZoom(elementId);
-                } finally {
-                    setFocusedLoading(false);
-                }
-            };
-
-            // Fallback: viewBox zoom on full diagram (for small grids or when focused fails)
-            const fallbackViewBoxZoom = (targetId) => {
+            // Zoom to an element by computing its bounding box from metadata
+            const zoomToElement = (targetId) => {
                 const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
                 const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
                 const currentDiagram = activeTab === 'n' ? nDiagram : n1Diagram;
@@ -538,7 +563,7 @@
                         const boxW = Math.max(maxX - minX, 50);
                         const boxH = Math.max(maxY - minY, 50);
 
-                        const padding = 2.5;
+                        const padding = 1.8;
                         const screenW = container.getBoundingClientRect().width;
                         const screenH = container.getBoundingClientRect().height;
                         const screenAR = screenW / screenH;
@@ -557,16 +582,26 @@
 
                         currentPZ.setViewBox({ x: targetX, y: targetY, w: targetW, h: targetH });
 
+                        // Highlight the target element
+                        container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
                         if (targetSvgId) {
-                            container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
                             const el = container.querySelector(`[id="${targetSvgId}"]`);
                             if (el) el.classList.add('nad-highlight');
                         }
                     }
-                } catch (e) { console.error('ViewBox zoom failed:', e); }
+                } catch (e) { console.error('Zoom failed:', e); }
             };
 
-            // Zoom Logic: fetch focused diagram or fallback to viewBox zoom
+            // Boost text annotations after SVG is injected into DOM
+            useLayoutEffect(() => {
+                boostSvgAnnotations(nSvgContainerRef.current);
+            }, [nDiagram]);
+
+            useLayoutEffect(() => {
+                boostSvgAnnotations(n1SvgContainerRef.current);
+            }, [n1Diagram]);
+
+            // Auto-zoom to selected element via viewBox
             useEffect(() => {
                 if (activeTab === 'overflow') return;
 
@@ -579,27 +614,17 @@
 
                 let targetId = inspectQuery || selectedBranch;
 
-                // Cleared inspect → clear focused diagram and reset
+                // Cleared inspect → reset view
                 if (!targetId && queryChanged) {
-                    setFocusedDiagram(null);
                     handleManualReset();
                     return;
                 }
 
                 if (!targetId) return;
 
-                // Fetch focused sub-diagram for readable zoom
-                fetchFocusedDiagram(targetId, focusDepth);
+                zoomToElement(targetId);
 
             }, [activeTab, nDiagram, n1Diagram, inspectQuery, selectedBranch]);
-
-            // Re-fetch focused diagram when depth changes
-            useEffect(() => {
-                const targetId = inspectQuery || selectedBranch;
-                if (targetId && focusedDiagram) {
-                    fetchFocusedDiagram(targetId, focusDepth);
-                }
-            }, [focusDepth]);
 
 
 
@@ -607,8 +632,6 @@
             const inspectableItems = [...branches, ...voltageLevels].sort();
 
             const renderVisualization = () => {
-                const showFocused = focusedDiagram && activeTab !== 'overflow';
-
                 return (
                     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
                         {/* Overflow Container */}
@@ -627,35 +650,6 @@
                                         {analysisLoading ? 'Processing Analysis...' : 'Run analysis to see overflow graph'}
                                     </div>
                                 )}
-                            </div>
-                        )}
-
-                        {/* Focused Sub-Diagram Overlay (highest priority when active) */}
-                        {showFocused && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                backgroundColor: 'white', zIndex: 15
-                            }}>
-                                {focusedLoading ? (
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
-                                        Generating focused diagram...
-                                    </div>
-                                ) : (
-                                    <div className="svg-container" ref={focusedSvgContainerRef} dangerouslySetInnerHTML={{ __html: focusedDiagram.svg }} />
-                                )}
-                            </div>
-                        )}
-
-                        {/* Loading overlay for focused diagram (show while fetching) */}
-                        {focusedLoading && !focusedDiagram && activeTab !== 'overflow' && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                backgroundColor: 'rgba(255,255,255,0.8)', zIndex: 15,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666'
-                            }}>
-                                Generating focused diagram...
                             </div>
                         )}
 
@@ -747,11 +741,6 @@
                                         </button>
                                     )}
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.75rem' }}>
-                                    <label>Depth:</label>
-                                    <input type="range" min="0" max="5" value={focusDepth} onChange={e => setFocusDepth(parseInt(e.target.value))} style={{ flex: 1 }} />
-                                    <span style={{ minWidth: '16px', textAlign: 'center', fontWeight: 'bold' }}>{focusDepth}</span>
-                                </div>
                             </div>
                         )}
                         <button onClick={handleManualReset} style={{ background: '#bdc3c7', color: '#333' }}>
@@ -804,21 +793,6 @@
                                     </button>
                                 )}
                             </div>
-                            {focusedDiagram && activeTab !== 'overflow' && (
-                                <div style={{
-                                    background: '#eaf4fc', padding: '4px 12px', fontSize: '0.75rem',
-                                    display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #bcd4e6'
-                                }}>
-                                    <span>Focused on: <strong>{focusedDiagram.elementId}</strong> (depth {focusDepth})</span>
-                                    <button
-                                        onClick={handleManualReset}
-                                        style={{ background: '#e74c3c', color: 'white', padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px' }}
-                                    >
-                                        Back to Full Grid
-                                    </button>
-                                    {focusedLoading && <span style={{ color: '#999' }}>Updating...</span>}
-                                </div>
-                            )}
                             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
                                 {renderVisualization()}
                             </div>
