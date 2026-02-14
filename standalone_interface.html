@@ -241,33 +241,79 @@
             return { viewBox, setViewBox };
         };
 
-        // Boost SVG text/annotation sizes proportionally to diagram size.
-        // pypowsybl NAD SVGs use <foreignObject> with HTML divs for labels,
-        // with font-size in SVG user units via CSS classes. On large grids
-        // (viewBox 50000+) the 25px font becomes invisible (<1 screen pixel).
-        // This injects CSS overrides into the SVG <style> block to scale
-        // text/label sizes so they're readable when zoomed in and naturally
-        // shrink to invisible when viewing the full grid.
+        // Scale SVG elements for large grids so text, nodes, and flow values
+        // are readable when zoomed in and naturally shrink at full view.
+        // pypowsybl NAD SVGs use:
+        //   - <foreignObject> with HTML divs for node labels (font via CSS)
+        //   - <text> elements inside <g class="nad-edge-infos"> for flow values
+        //   - <circle> elements for bus nodes and transformer windings
+        // All sized in SVG user units which become invisible on large grids.
+        // This REPLACES values in the SVG string directly (no CSS overrides)
+        // to avoid duplicate rendering.
         const boostSvgForLargeGrid = (svgString, viewBox) => {
             if (!viewBox) return svgString;
 
             const diagramSize = Math.max(viewBox.w, viewBox.h);
-            const REFERENCE_SIZE = 1250; // small grid where text is readable
+            const REFERENCE_SIZE = 1250; // small grid where everything is readable
             const ratio = diagramSize / REFERENCE_SIZE;
             if (ratio <= 1.5) return svgString; // small grid, no boost needed
 
             const boost = Math.sqrt(ratio);
+            let svg = svgString;
 
-            // Inject CSS overrides before </style> to scale text/label sizes
-            const overrideCSS = `
-                /* Auto-scaled for large grid (boost: ${boost.toFixed(2)}x) */
-                .nad-text-nodes { font-size: ${Math.round(25 * boost)}px !important; }
-                .nad-edge-infos text, .nad-edge-label text { font-size: ${Math.round(20 * boost)}px !important; stroke-width: ${Math.round(10 * boost)} !important; }
-                .nad-label-box { padding: ${Math.round(10 * boost)}px !important; border-radius: ${Math.round(10 * boost)}px !important; }
-                .nad-legend-square { margin-right: ${Math.round(10 * boost)}px !important; width: ${Math.round(20 * boost)}px !important; height: ${Math.round(20 * boost)}px !important; }
-            `;
+            // === 1. REPLACE CSS values in <style> block (not override) ===
 
-            return svgString.replace('</style>', overrideCSS + '</style>');
+            // Node label font (foreignObject content): font: 25px serif → boosted
+            svg = svg.replace(
+                /font:\s*25px\s+serif/,
+                `font: ${Math.round(25 * boost)}px serif`
+            );
+
+            // Label box padding and border-radius
+            svg = svg.replace(
+                'padding: 10px; border-radius: 10px;',
+                `padding: ${Math.round(10 * boost)}px; border-radius: ${Math.round(10 * boost)}px;`
+            );
+
+            // Legend square sizes
+            svg = svg.replace(
+                'margin-right: 10px; width: 20px; height: 20px;',
+                `margin-right: ${Math.round(10 * boost)}px; width: ${Math.round(20 * boost)}px; height: ${Math.round(20 * boost)}px;`
+            );
+
+            // === 2. Scale circle radii (bus nodes + windings) ===
+            svg = svg.replace(
+                /<circle([^>]*)\br="(\d+\.?\d*)"([^>]*)\/?>/g,
+                (match, before, r, after) => {
+                    const newR = (parseFloat(r) * boost).toFixed(2);
+                    return match.replace(`r="${r}"`, `r="${newR}"`);
+                }
+            );
+
+            // === 3. Scale edge-info groups (flow arrows + values) ===
+            // Add scale(boost) to inner group transforms within nad-edge-infos.
+            // This scales arrows, text, and positioning proportionally.
+            // DON'T scale the edge-info CSS font (font: 20px serif) since
+            // the transform scaling handles it automatically.
+            const eiStart = svg.indexOf('<g class="nad-edge-infos">');
+            if (eiStart >= 0) {
+                // Find end of edge-infos section (next top-level group)
+                let eiEnd = svg.indexOf('<g class="nad-text-edges">', eiStart);
+                if (eiEnd < 0) eiEnd = svg.indexOf('</g>', svg.indexOf('</g>', eiStart + 30) + 4);
+                if (eiEnd > eiStart) {
+                    const before = svg.substring(0, eiStart);
+                    const section = svg.substring(eiStart, eiEnd);
+                    const after = svg.substring(eiEnd);
+
+                    const scaled = section.replace(
+                        /transform="translate\(([^)]+)\)"/g,
+                        `transform="translate($1) scale(${boost.toFixed(2)})"`
+                    );
+                    svg = before + scaled + after;
+                }
+            }
+
+            return svg;
         };
 
         function App() {
