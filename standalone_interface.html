@@ -242,61 +242,32 @@
         };
 
         // Boost SVG text/annotation sizes proportionally to diagram size.
-        // On large grids the SVG coordinate space is huge (e.g. 50000 units)
-        // while font-sizes stay small (~12 units), making text invisible.
-        // This scales text so it becomes readable when zoomed in and naturally
-        // shrinks to invisible when viewing the full grid.
-        const boostSvgAnnotations = (container) => {
-            if (!container) return;
-            const svg = container.querySelector('svg');
-            if (!svg) return;
+        // pypowsybl NAD SVGs use <foreignObject> with HTML divs for labels,
+        // with font-size in SVG user units via CSS classes. On large grids
+        // (viewBox 50000+) the 25px font becomes invisible (<1 screen pixel).
+        // This injects CSS overrides into the SVG <style> block to scale
+        // text/label sizes so they're readable when zoomed in and naturally
+        // shrink to invisible when viewing the full grid.
+        const boostSvgForLargeGrid = (svgString, viewBox) => {
+            if (!viewBox) return svgString;
 
-            const vb = svg.getAttribute('viewBox');
-            if (!vb) return;
-
-            const parts = vb.split(/[\s,]+/).map(Number);
-            if (parts.length !== 4) return;
-
-            const diagramSize = Math.max(parts[2], parts[3]);
-            const REFERENCE_SIZE = 3000; // size of a small grid where text is already readable
+            const diagramSize = Math.max(viewBox.w, viewBox.h);
+            const REFERENCE_SIZE = 1250; // small grid where text is readable
             const ratio = diagramSize / REFERENCE_SIZE;
-            if (ratio <= 1.1) return; // small grid, no boost needed
+            if (ratio <= 1.5) return svgString; // small grid, no boost needed
 
             const boost = Math.sqrt(ratio);
 
-            // Boost <text> elements
-            svg.querySelectorAll('text').forEach(el => {
-                if (el.hasAttribute('data-boosted')) return;
-                el.setAttribute('data-boosted', '1');
+            // Inject CSS overrides before </style> to scale text/label sizes
+            const overrideCSS = `
+                /* Auto-scaled for large grid (boost: ${boost.toFixed(2)}x) */
+                .nad-text-nodes { font-size: ${Math.round(25 * boost)}px !important; }
+                .nad-edge-infos text, .nad-edge-label text { font-size: ${Math.round(20 * boost)}px !important; stroke-width: ${Math.round(10 * boost)} !important; }
+                .nad-label-box { padding: ${Math.round(10 * boost)}px !important; border-radius: ${Math.round(10 * boost)}px !important; }
+                .nad-legend-square { margin-right: ${Math.round(10 * boost)}px !important; width: ${Math.round(20 * boost)}px !important; height: ${Math.round(20 * boost)}px !important; }
+            `;
 
-                let fontSize = parseFloat(el.getAttribute('font-size'));
-                if (isNaN(fontSize)) {
-                    const fs = el.style.fontSize;
-                    fontSize = fs ? parseFloat(fs) : NaN;
-                }
-                if (isNaN(fontSize)) fontSize = 12;
-
-                const newSize = fontSize * boost;
-                el.setAttribute('font-size', newSize);
-                if (el.style.fontSize) el.style.fontSize = newSize + 'px';
-            });
-
-            // Boost <tspan> elements that specify their own font-size
-            svg.querySelectorAll('tspan').forEach(el => {
-                if (el.hasAttribute('data-boosted')) return;
-                el.setAttribute('data-boosted', '1');
-
-                let fontSize = parseFloat(el.getAttribute('font-size'));
-                if (isNaN(fontSize)) {
-                    const fs = el.style.fontSize;
-                    fontSize = fs ? parseFloat(fs) : NaN;
-                }
-                if (isNaN(fontSize)) return; // inherits from parent <text>, already boosted
-
-                const newSize = fontSize * boost;
-                el.setAttribute('font-size', newSize);
-                if (el.style.fontSize) el.style.fontSize = newSize + 'px';
-            });
+            return svgString.replace('</style>', overrideCSS + '</style>');
         };
 
         function App() {
@@ -390,8 +361,9 @@
                     const parts = match[1].split(/\s+|,/).map(parseFloat);
                     if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
                 }
-                // Return SVG AS IS (do not strip viewBox)
-                return { svg: rawSvg, viewBox: vb };
+                // Boost text/label sizes for large grids before injection
+                const svg = boostSvgForLargeGrid(rawSvg, vb);
+                return { svg, viewBox: vb };
             };
 
             const handleManualReset = () => {
@@ -591,15 +563,6 @@
                     }
                 } catch (e) { console.error('Zoom failed:', e); }
             };
-
-            // Boost text annotations after SVG is injected into DOM
-            useLayoutEffect(() => {
-                boostSvgAnnotations(nSvgContainerRef.current);
-            }, [nDiagram]);
-
-            useLayoutEffect(() => {
-                boostSvgAnnotations(n1SvgContainerRef.current);
-            }, [n1Diagram]);
 
             // Auto-zoom to selected element via viewBox
             useEffect(() => {
