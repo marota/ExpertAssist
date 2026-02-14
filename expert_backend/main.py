@@ -31,6 +31,11 @@ class ConfigRequest(BaseModel):
 class AnalysisRequest(BaseModel):
     disconnected_element: str
 
+class FocusedDiagramRequest(BaseModel):
+    element_id: str
+    depth: int = 1
+    disconnected_element: str = None
+
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
     try:
@@ -120,6 +125,48 @@ def get_n1_diagram(request: AnalysisRequest):
     try:
         diagram = recommender_service.get_n1_diagram(request.disconnected_element)
         return diagram
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/element-voltage-levels")
+def get_element_voltage_levels(element_id: str = Query(...)):
+    """Resolve an equipment ID to its voltage level IDs."""
+    try:
+        vls = network_service.get_element_voltage_levels(element_id)
+        return {"voltage_level_ids": vls}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/focused-diagram")
+def get_focused_diagram(request: FocusedDiagramRequest):
+    """Generate a NAD focused on a specific element's voltage levels.
+
+    If disconnected_element is provided, generates the N-1 state.
+    Uses voltage_level_ids + depth to produce a readable sub-diagram.
+    """
+    try:
+        vl_ids = network_service.get_element_voltage_levels(request.element_id)
+        if not vl_ids:
+            raise HTTPException(status_code=404, detail=f"No voltage levels found for {request.element_id}")
+
+        if request.disconnected_element:
+            diagram = recommender_service.get_n1_diagram(
+                request.disconnected_element,
+                voltage_level_ids=vl_ids,
+                depth=request.depth
+            )
+        else:
+            diagram = recommender_service.get_network_diagram(
+                voltage_level_ids=vl_ids,
+                depth=request.depth
+            )
+        diagram["voltage_level_ids"] = vl_ids
+        diagram["depth"] = request.depth
+        return diagram
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()

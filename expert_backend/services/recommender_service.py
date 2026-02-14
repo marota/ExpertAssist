@@ -246,45 +246,39 @@ class RecommenderService:
             "dc_fallback": dc_fallback_used
         }
 
-    def get_network_diagram(self):
+    def _load_network(self):
+        """Load and return a pypowsybl network from config path."""
         import pypowsybl as pp
-        import pandas as pd
-        import json
-        from pypowsybl.network import NadParameters
-        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
-        
-        # Load network from config
+
         network_file = config.ENV_PATH / "grid.xiidm"
         if not network_file.exists():
-             # Fallback to search in ENV_PATH
-             xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
-             if xiidm_files:
-                 network_file = xiidm_files[0]
-             else:
-                 raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
-             
-        n = pp.network.load(str(network_file))
-        
-        # Load layout if available
+            xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
+            if xiidm_files:
+                network_file = xiidm_files[0]
+            else:
+                raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
+        return pp.network.load(str(network_file))
+
+    def _load_layout(self):
+        """Load layout DataFrame from grid_layout.json if available."""
+        import pandas as pd
+        import json
+
         layout_file = config.ENV_PATH / "grid_layout.json"
-        df_layout = None
         if layout_file.exists():
             try:
                 with open(layout_file, 'r') as f:
                     layout_data = json.load(f)
-                
-                # Convert layout_data to DataFrame
-                # JSON is { "ID": [x, y], ... }
-                records = []
-                for node_id, coords in layout_data.items():
-                    records.append({'id': node_id, 'x': coords[0], 'y': coords[1]})
-                
-                df_layout = pd.DataFrame(records).set_index('id')
+                records = [{'id': k, 'x': v[0], 'y': v[1]} for k, v in layout_data.items()]
+                return pd.DataFrame(records).set_index('id')
             except Exception as e:
                 print(f"Warning: Could not load layout: {e}")
+        return None
 
-        # Generate diagram with default parameters used in nad_explorer
-        npars = NadParameters(
+    def _default_nad_parameters(self):
+        """Return default NadParameters for diagram generation."""
+        from pypowsybl.network import NadParameters
+        return NadParameters(
             edge_name_displayed=False,
             id_displayed=False,
             edge_info_along_edge=True,
@@ -295,90 +289,51 @@ class RecommenderService:
             bus_legend=True,
             substation_description_displayed=True
         )
-        
-        diagram = n.get_network_area_diagram(
-            nad_parameters=npars,
-            fixed_positions=df_layout
-        )
-        
-        svg_value = _get_svg_string(diagram)
-        svg_metadata = _get_svg_metadata(diagram)
-        
+
+    def _generate_diagram(self, network, voltage_level_ids=None, depth=0):
+        """Generate NAD and return svg + metadata dict.
+
+        Args:
+            network: pypowsybl network object
+            voltage_level_ids: list of VL IDs to center on (None = full grid)
+            depth: number of hops from center VLs to include
+        """
+        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
+
+        df_layout = self._load_layout()
+        npars = self._default_nad_parameters()
+
+        kwargs = dict(nad_parameters=npars)
+        if df_layout is not None:
+            kwargs['fixed_positions'] = df_layout
+        if voltage_level_ids is not None:
+            kwargs['voltage_level_ids'] = voltage_level_ids
+            kwargs['depth'] = depth
+
+        diagram = network.get_network_area_diagram(**kwargs)
+
         return {
-            "svg": svg_value,
-            "metadata": svg_metadata
+            "svg": _get_svg_string(diagram),
+            "metadata": _get_svg_metadata(diagram),
         }
 
-    def get_n1_diagram(self, disconnected_element: str):
+    def get_network_diagram(self, voltage_level_ids=None, depth=0):
+        n = self._load_network()
+        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+
+    def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
-        import pandas as pd
-        import json
-        from pypowsybl.network import NadParameters
-        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
-        
-        # Load network from config
-        network_file = config.ENV_PATH / "grid.xiidm"
-        if not network_file.exists():
-             xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
-             if xiidm_files:
-                 network_file = xiidm_files[0]
-             else:
-                 raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
-             
-        n = pp.network.load(str(network_file))
-        
-        # Apply contingency (N-1)
-        # We try to disconnect the element by ID.
+
+        n = self._load_network()
+
         try:
             n.disconnect(disconnected_element)
         except Exception as e:
             raise ValueError(f"Failed to disconnect element {disconnected_element}: {e}")
 
-        # Run Load Flow (AC with DC fallback)
         params = pp.loadflow.Parameters()
-        results = pp.loadflow.run_ac(n, params)
-        # Check if converged? If strictly needed for diagram, yes. 
-        # But even if not converged, we might want to see the state. 
-        # However, for N-1 visualization, we usually want the post-contingency steady state.
-        
-        # Load layout if available
-        layout_file = config.ENV_PATH / "grid_layout.json"
-        df_layout = None
-        if layout_file.exists():
-            try:
-                with open(layout_file, 'r') as f:
-                    layout_data = json.load(f)
-                records = []
-                for node_id, coords in layout_data.items():
-                    records.append({'id': node_id, 'x': coords[0], 'y': coords[1]})
-                df_layout = pd.DataFrame(records).set_index('id')
-            except Exception as e:
-                print(f"Warning: Could not load layout: {e}")
+        pp.loadflow.run_ac(n, params)
 
-        # Generate diagram
-        npars = NadParameters(
-            edge_name_displayed=False,
-            id_displayed=False,
-            edge_info_along_edge=True,
-            power_value_precision=1,
-            angle_value_precision=0,
-            current_value_precision=1,
-            voltage_value_precision=0,
-            bus_legend=True,
-            substation_description_displayed=True
-        )
-        
-        diagram = n.get_network_area_diagram(
-            nad_parameters=npars,
-            fixed_positions=df_layout
-        )
-        
-        svg_value = _get_svg_string(diagram)
-        svg_metadata = _get_svg_metadata(diagram)
-        
-        return {
-            "svg": svg_value,
-            "metadata": svg_metadata
-        }
+        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
 
 recommender_service = RecommenderService()
