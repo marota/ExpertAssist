@@ -345,7 +345,7 @@
             const diagramSize = Math.max(viewBox.w, viewBox.h);
             const REFERENCE_SIZE = 1250; // small grid where everything is readable
             const ratio = diagramSize / REFERENCE_SIZE;
-            if (ratio <= 1.5) return svgString; // small grid, no boost needed
+            if (ratio <= 3) return svgString; // small/medium grid, no boost needed
 
             const boost = Math.sqrt(ratio);
 
@@ -353,13 +353,11 @@
             const doc = parser.parseFromString(svgString, 'image/svg+xml');
             const svgEl = doc.documentElement;
 
-            // Only enable text-hiding on genuinely large grids where text is
-            // unreadable at full zoom-out. At ratio > 3 (viewBox > 3750),
-            // 25px text renders at ~8px on a 1200px screen — effectively invisible.
-            // Medium grids (ratio 1.5-3) get the boost but keep text always visible.
-            if (ratio > 3) {
-                svgEl.setAttribute('data-large-grid', 'true');
-            }
+            // Mark as large grid so usePanZoom can toggle text visibility on zoom.
+            // Only grids past ratio > 3 reach here (early-return above),
+            // so text-hiding is only active when text is genuinely unreadable
+            // at full zoom-out (~8px or smaller on a 1200px screen).
+            svgEl.setAttribute('data-large-grid', 'true');
 
             // === 1. Scale CSS values in <style> blocks ===
             const styles = svgEl.querySelectorAll('style');
@@ -569,11 +567,11 @@
 
                 const fetchN1 = async () => {
                     setN1Loading(true);
+                    setActiveTab('n-1'); // Switch immediately → shows "Generating N-1 Diagram..."
                     try {
                         const res = await axios.post(API_BASE + '/api/n1-diagram', { disconnected_element: selectedBranch });
                         const { svg, viewBox } = processSvg(res.data.svg);
                         setN1Diagram({ ...res.data, svg, originalViewBox: viewBox }); // Embed viewBox
-                        setActiveTab('n-1');
                     } catch (err) {
                         console.error("Failed to fetch N-1 diagram", err);
                         setError(`Failed to fetch N-1 diagram for ${selectedBranch}`);
@@ -734,18 +732,24 @@
 
                 if (!queryChanged && !branchChanged) return;
 
-                lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-
                 let targetId = inspectQuery || selectedBranch;
 
                 // Cleared inspect → reset view
                 if (!targetId && queryChanged) {
+                    lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
                     handleManualReset();
                     return;
                 }
 
                 if (!targetId) return;
 
+                // Only consume the zoom intent when the container has SVG content.
+                // If not ready (e.g. N-1 still loading), skip — the effect re-runs
+                // when n1Diagram changes, and branchChanged will still be true.
+                const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                if (!container || !container.querySelector('svg')) return;
+
+                lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
                 zoomToElement(targetId);
 
             }, [activeTab, nDiagram, n1Diagram, inspectQuery, selectedBranch]);

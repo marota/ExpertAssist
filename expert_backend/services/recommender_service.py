@@ -332,7 +332,13 @@ class RecommenderService:
             raise ValueError(f"Failed to disconnect element {disconnected_element}: {e}")
 
         params = pp.loadflow.Parameters()
-        pp.loadflow.run_ac(n, params)
+        results = pp.loadflow.run_ac(n, params)
+
+        # Fall back to DC if AC didn't converge (matches run_analysis pattern)
+        converged = any(r.status.name == 'CONVERGED' for r in results)
+        if not converged:
+            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}), falling back to DC")
+            pp.loadflow.run_dc(n, params)
 
         return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
 
