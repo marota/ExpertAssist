@@ -353,8 +353,13 @@
             const doc = parser.parseFromString(svgString, 'image/svg+xml');
             const svgEl = doc.documentElement;
 
-            // Mark as large grid so usePanZoom can toggle text visibility on zoom
-            svgEl.setAttribute('data-large-grid', 'true');
+            // Only enable text-hiding on genuinely large grids where text is
+            // unreadable at full zoom-out. At ratio > 3 (viewBox > 3750),
+            // 25px text renders at ~8px on a 1200px screen — effectively invisible.
+            // Medium grids (ratio 1.5-3) get the boost but keep text always visible.
+            if (ratio > 3) {
+                svgEl.setAttribute('data-large-grid', 'true');
+            }
 
             // === 1. Scale CSS values in <style> blocks ===
             const styles = svgEl.querySelectorAll('style');
