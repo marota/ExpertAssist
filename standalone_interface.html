@@ -142,39 +142,67 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useLayoutEffect, Fragment, useRef } = React;
+        const { useState, useEffect, useLayoutEffect, useMemo, Fragment, useRef } = React;
         const API_BASE = 'http://localhost:8000';
 
-        // Custom Hook for SVG Pan/Zoom logic (Moved to top level)
+        // Custom Hook for SVG Pan/Zoom logic
+        // Performance: viewBox updates go directly to the DOM via refs,
+        // bypassing React's render cycle during active interaction.
+        // React state is only synced on interaction end / pause.
         const usePanZoom = (svgRef, initialViewBox, active) => {
+            // React state: "settled" viewBox for downstream consumers
             const [viewBox, setViewBox] = useState(null);
+            // Mutable ref for the hot path — updated every frame, no React render
+            const viewBoxRef = useRef(null);
             const isDragging = useRef(false);
             const startPoint = useRef({ x: 0, y: 0 });
+            const wheelTimerId = useRef(null);
+            const rafId = useRef(null);
+            // Cached SVG element ref — avoids querySelector on every event
+            const svgElRef = useRef(null);
+            const activeRef = useRef(active);
+            activeRef.current = active;
 
-            // Reset to initial
+            // Direct DOM update — no React involved
+            const applyViewBox = (vb) => {
+                const svg = svgElRef.current;
+                if (svg && vb) {
+                    svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+                }
+            };
+
+            // Flush ref -> React state for downstream consumers
+            const commitViewBox = () => {
+                if (viewBoxRef.current) {
+                    setViewBox({ ...viewBoxRef.current });
+                }
+            };
+
+            // Cache SVG element when container content changes
+            useLayoutEffect(() => {
+                if (svgRef.current) {
+                    svgElRef.current = svgRef.current.querySelector('svg');
+                } else {
+                    svgElRef.current = null;
+                }
+            });
+
+            // Sync from initialViewBox (diagram load or programmatic reset)
             useEffect(() => {
                 if (initialViewBox) {
+                    viewBoxRef.current = initialViewBox;
+                    applyViewBox(initialViewBox);
                     setViewBox(initialViewBox);
                 }
             }, [initialViewBox]);
 
-            // Apply ViewBox to SVG Element
-            useLayoutEffect(() => {
-                if (svgRef.current && viewBox) {
-                    const svg = svgRef.current.querySelector('svg');
-                    if (svg) {
-                        svg.setAttribute('viewBox', `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
-                    }
-                }
-            }, [viewBox, svgRef]);
-
             const handleWheel = (e) => {
-                if (!active || !viewBox) return;
+                if (!activeRef.current || !viewBoxRef.current) return;
                 e.preventDefault();
+                const vb = viewBoxRef.current;
                 const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9;
 
-                // Zoom towards mouse pointer logic
-                const svg = svgRef.current.querySelector('svg');
+                const svg = svgElRef.current;
                 if (!svg) return;
 
                 const pt = svg.createSVGPoint();
@@ -182,45 +210,71 @@
                 pt.y = e.clientY;
                 const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-                const newW = viewBox.w * scaleFactor;
-                const newH = viewBox.h * scaleFactor;
-                const newX = viewBox.x + (svgP.x - viewBox.x) * (1 - scaleFactor);
-                const newY = viewBox.y + (svgP.y - viewBox.y) * (1 - scaleFactor);
+                const newVb = {
+                    x: vb.x + (svgP.x - vb.x) * (1 - scaleFactor),
+                    y: vb.y + (svgP.y - vb.y) * (1 - scaleFactor),
+                    w: vb.w * scaleFactor,
+                    h: vb.h * scaleFactor
+                };
 
-                setViewBox({ x: newX, y: newY, w: newW, h: newH });
+                viewBoxRef.current = newVb;
+                applyViewBox(newVb);
+
+                // Debounced commit: sync to React after scrolling stops
+                clearTimeout(wheelTimerId.current);
+                wheelTimerId.current = setTimeout(commitViewBox, 150);
             };
 
             const handleMouseDown = (e) => {
-                if (!active || !viewBox) return;
+                if (!activeRef.current || !viewBoxRef.current) return;
                 isDragging.current = true;
-                startPoint.current = { x: e.clientX, y: e.clientY };
+                startPoint.current = { x: e.clientX, y: e.clientY, pendingX: e.clientX, pendingY: e.clientY };
             };
 
+            // rAF-throttled drag: at most one DOM update per display frame
             const handleMouseMove = (e) => {
-                if (!active || !viewBox || !isDragging.current) return;
+                if (!activeRef.current || !viewBoxRef.current || !isDragging.current) return;
                 e.preventDefault();
 
-                const dx = e.clientX - startPoint.current.x;
-                const dy = e.clientY - startPoint.current.y;
-                startPoint.current = { x: e.clientX, y: e.clientY };
+                startPoint.current.pendingX = e.clientX;
+                startPoint.current.pendingY = e.clientY;
 
-                const svg = svgRef.current.querySelector('svg');
-                if (!svg) return;
+                if (rafId.current) return; // frame already queued
 
-                const screenW = svg.getBoundingClientRect().width;
-                const scale = viewBox.w / screenW;
+                rafId.current = requestAnimationFrame(() => {
+                    rafId.current = null;
+                    const sp = startPoint.current;
+                    const dx = sp.pendingX - sp.x;
+                    const dy = sp.pendingY - sp.y;
+                    sp.x = sp.pendingX;
+                    sp.y = sp.pendingY;
 
-                setViewBox(prev => ({
-                    ...prev,
-                    x: prev.x - dx * scale,
-                    y: prev.y - dy * scale
-                }));
+                    const svg = svgElRef.current;
+                    if (!svg) return;
+                    const screenW = svg.getBoundingClientRect().width;
+                    const vb = viewBoxRef.current;
+                    const scale = vb.w / screenW;
+
+                    const newVb = {
+                        ...vb,
+                        x: vb.x - dx * scale,
+                        y: vb.y - dy * scale
+                    };
+                    viewBoxRef.current = newVb;
+                    applyViewBox(newVb);
+                });
             };
 
             const handleMouseUp = () => {
                 isDragging.current = false;
+                if (rafId.current) {
+                    cancelAnimationFrame(rafId.current);
+                    rafId.current = null;
+                }
+                commitViewBox(); // Sync to React state on drag end
             };
 
+            // Stable event registration — only depends on active tab, not viewBox
             useEffect(() => {
                 const el = svgRef.current;
                 if (!el || !active) return;
@@ -235,21 +289,25 @@
                     el.removeEventListener('mousedown', handleMouseDown);
                     window.removeEventListener('mousemove', handleMouseMove);
                     window.removeEventListener('mouseup', handleMouseUp);
+                    clearTimeout(wheelTimerId.current);
+                    if (rafId.current) cancelAnimationFrame(rafId.current);
                 };
-            }, [active, viewBox, svgRef]);
+            }, [active]);
 
-            return { viewBox, setViewBox };
+            // Public API: updates ref + DOM + React state immediately
+            const setViewBoxPublic = (vb) => {
+                viewBoxRef.current = vb;
+                applyViewBox(vb);
+                setViewBox(vb);
+            };
+
+            return { viewBox, setViewBox: setViewBoxPublic };
         };
 
         // Scale SVG elements for large grids so text, nodes, and flow values
         // are readable when zoomed in and naturally shrink at full view.
-        // pypowsybl NAD SVGs use:
-        //   - <foreignObject> with HTML divs for node labels (font via CSS)
-        //   - <text> elements inside <g class="nad-edge-infos"> for flow values
-        //   - <circle> elements for bus nodes and transformer windings
-        // All sized in SVG user units which become invisible on large grids.
-        // This REPLACES values in the SVG string directly (no CSS overrides)
-        // to avoid duplicate rendering.
+        // Uses DOMParser for in-place DOM manipulation instead of regex on
+        // multi-MB strings, avoiding large temporary string copies.
         const boostSvgForLargeGrid = (svgString, viewBox) => {
             if (!viewBox) return svgString;
 
@@ -259,61 +317,79 @@
             if (ratio <= 1.5) return svgString; // small grid, no boost needed
 
             const boost = Math.sqrt(ratio);
-            let svg = svgString;
 
-            // === 1. REPLACE CSS values in <style> block (not override) ===
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(svgString, 'image/svg+xml');
+            const svgEl = doc.documentElement;
 
-            // Node label font (foreignObject content): font: 25px serif → boosted
-            svg = svg.replace(
-                /font:\s*25px\s+serif/,
-                `font: ${Math.round(25 * boost)}px serif`
-            );
-
-            // Label box padding and border-radius
-            svg = svg.replace(
-                'padding: 10px; border-radius: 10px;',
-                `padding: ${Math.round(10 * boost)}px; border-radius: ${Math.round(10 * boost)}px;`
-            );
-
-            // Legend square sizes
-            svg = svg.replace(
-                'margin-right: 10px; width: 20px; height: 20px;',
-                `margin-right: ${Math.round(10 * boost)}px; width: ${Math.round(20 * boost)}px; height: ${Math.round(20 * boost)}px;`
-            );
+            // === 1. Scale CSS values in <style> blocks ===
+            const styles = svgEl.querySelectorAll('style');
+            styles.forEach(style => {
+                let css = style.textContent;
+                // Node label font
+                css = css.replace(/font:\s*25px\s+serif/, `font: ${Math.round(25 * boost)}px serif`);
+                // Label box padding and border-radius
+                css = css.replace(
+                    'padding: 10px; border-radius: 10px;',
+                    `padding: ${Math.round(10 * boost)}px; border-radius: ${Math.round(10 * boost)}px;`
+                );
+                // Legend square sizes
+                css = css.replace(
+                    'margin-right: 10px; width: 20px; height: 20px;',
+                    `margin-right: ${Math.round(10 * boost)}px; width: ${Math.round(20 * boost)}px; height: ${Math.round(20 * boost)}px;`
+                );
+                style.textContent = css;
+            });
 
             // === 2. Scale circle radii (bus nodes + windings) ===
-            svg = svg.replace(
-                /<circle([^>]*)\br="(\d+\.?\d*)"([^>]*)\/?>/g,
-                (match, before, r, after) => {
-                    const newR = (parseFloat(r) * boost).toFixed(2);
-                    return match.replace(`r="${r}"`, `r="${newR}"`);
+            svgEl.querySelectorAll('circle').forEach(circle => {
+                const r = parseFloat(circle.getAttribute('r'));
+                if (!isNaN(r)) {
+                    circle.setAttribute('r', (r * boost).toFixed(2));
                 }
-            );
+            });
 
-            // === 3. Scale edge-info groups (flow arrows + values) ===
-            // Add scale(boost) to inner group transforms within nad-edge-infos.
-            // This scales arrows, text, and positioning proportionally.
-            // DON'T scale the edge-info CSS font (font: 20px serif) since
-            // the transform scaling handles it automatically.
-            const eiStart = svg.indexOf('<g class="nad-edge-infos">');
-            if (eiStart >= 0) {
-                // Find end of edge-infos section (next top-level group)
-                let eiEnd = svg.indexOf('<g class="nad-text-edges">', eiStart);
-                if (eiEnd < 0) eiEnd = svg.indexOf('</g>', svg.indexOf('</g>', eiStart + 30) + 4);
-                if (eiEnd > eiStart) {
-                    const before = svg.substring(0, eiStart);
-                    const section = svg.substring(eiStart, eiEnd);
-                    const after = svg.substring(eiEnd);
-
-                    const scaled = section.replace(
-                        /transform="translate\(([^)]+)\)"/g,
-                        `transform="translate($1) scale(${boost.toFixed(2)})"`
-                    );
-                    svg = before + scaled + after;
-                }
+            // === 3. Scale edge-info group transforms (flow arrows + values) ===
+            // DON'T scale the edge-info CSS font separately — the transform handles it.
+            const edgeInfoGroup = svgEl.querySelector('.nad-edge-infos');
+            if (edgeInfoGroup) {
+                edgeInfoGroup.querySelectorAll(':scope > g[transform]').forEach(g => {
+                    const t = g.getAttribute('transform');
+                    if (t && t.includes('translate(') && !t.includes('scale(')) {
+                        g.setAttribute('transform', t + ` scale(${boost.toFixed(2)})`);
+                    }
+                });
             }
 
-            return svg;
+            return new XMLSerializer().serializeToString(svgEl);
+        };
+
+        // Build Map indices from metadata for O(1) lookups in zoomToElement
+        const buildMetadataIndex = (metadata) => {
+            if (!metadata) return null;
+            const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+            const nodes = meta.nodes || [];
+            const edges = meta.edges || [];
+
+            const nodesByEquipmentId = new Map();
+            const nodesBySvgId = new Map();
+            const edgesByEquipmentId = new Map();
+            const edgesByNode = new Map(); // svgId -> [edge, ...]
+
+            nodes.forEach(n => {
+                nodesByEquipmentId.set(n.equipmentId, n);
+                nodesBySvgId.set(n.svgId, n);
+            });
+
+            edges.forEach(e => {
+                edgesByEquipmentId.set(e.equipmentId, e);
+                if (!edgesByNode.has(e.node1)) edgesByNode.set(e.node1, []);
+                edgesByNode.get(e.node1).push(e);
+                if (!edgesByNode.has(e.node2)) edgesByNode.set(e.node2, []);
+                edgesByNode.get(e.node2).push(e);
+            });
+
+            return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
         };
 
         function App() {
@@ -530,44 +606,44 @@
                 }
             }, [activeTab]);
 
+            // Pre-indexed metadata for O(1) lookups in zoomToElement
+            const nMetaIndex = useMemo(() => buildMetadataIndex(nDiagram?.metadata), [nDiagram?.metadata]);
+            const n1MetaIndex = useMemo(() => buildMetadataIndex(n1Diagram?.metadata), [n1Diagram?.metadata]);
+
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
                 const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
                 const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
-                const currentDiagram = activeTab === 'n' ? nDiagram : n1Diagram;
-                if (!currentPZ || !container || !currentDiagram?.metadata) return;
+                const index = activeTab === 'n' ? nMetaIndex : n1MetaIndex;
+                if (!currentPZ || !container || !index) return;
 
                 try {
-                    const meta = typeof currentDiagram.metadata === 'string' ? JSON.parse(currentDiagram.metadata) : currentDiagram.metadata;
-                    const nodes = meta.nodes || [];
-                    const edges = meta.edges || [];
+                    const { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode } = index;
                     const points = [];
 
                     const addNodePointsBySvgId = (svgId) => {
-                        const n = nodes.find(node => node.svgId === svgId);
+                        const n = nodesBySvgId.get(svgId);
                         if (n) points.push({ x: n.x, y: n.y });
                         return n;
                     };
 
-                    const targetNode = nodes.find(n => n.equipmentId === targetId);
-                    const targetEdge = edges.find(e => e.equipmentId === targetId);
+                    const targetNode = nodesByEquipmentId.get(targetId);
+                    const targetEdge = edgesByEquipmentId.get(targetId);
                     let targetSvgId;
 
                     if (targetNode) {
                         targetSvgId = targetNode.svgId;
                         points.push({ x: targetNode.x, y: targetNode.y });
-                        edges.forEach(e => {
-                            if (e.node1 === targetNode.svgId || e.node2 === targetNode.svgId) {
-                                addNodePointsBySvgId(e.node1);
-                                addNodePointsBySvgId(e.node2);
-                            }
+                        (edgesByNode.get(targetNode.svgId) || []).forEach(e => {
+                            addNodePointsBySvgId(e.node1);
+                            addNodePointsBySvgId(e.node2);
                         });
                     } else if (targetEdge) {
                         targetSvgId = targetEdge.svgId;
                         const n1 = addNodePointsBySvgId(targetEdge.node1);
                         const n2 = addNodePointsBySvgId(targetEdge.node2);
-                        if (n1) edges.forEach(e => { if (e.node1 === n1.svgId || e.node2 === n1.svgId) { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); } });
-                        if (n2) edges.forEach(e => { if (e.node1 === n2.svgId || e.node2 === n2.svgId) { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); } });
+                        if (n1) (edgesByNode.get(n1.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
+                        if (n2) (edgesByNode.get(n2.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
                     }
 
                     if (points.length > 0) {
@@ -662,34 +738,36 @@
                             </div>
                         )}
 
-                        {/* N Container */}
-                        <div style={{
-                            width: '100%', height: '100%',
-                            position: 'absolute', top: 0, left: 0,
-                            visibility: activeTab === 'n' ? 'visible' : 'hidden',
-                            zIndex: 10
-                        }}>
-                            {nDiagram?.svg ?
-                                <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
-                                : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
-                            }
-                        </div>
+                        {/* N Container — only mounted when active to halve DOM weight */}
+                        {activeTab === 'n' && (
+                            <div style={{
+                                width: '100%', height: '100%',
+                                position: 'absolute', top: 0, left: 0,
+                                zIndex: 10
+                            }}>
+                                {nDiagram?.svg ?
+                                    <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
+                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
+                                }
+                            </div>
+                        )}
 
-                        {/* N-1 Container */}
-                        <div style={{
-                            width: '100%', height: '100%',
-                            position: 'absolute', top: 0, left: 0,
-                            visibility: activeTab === 'n-1' ? 'visible' : 'hidden',
-                            zIndex: 10
-                        }}>
-                            {n1Loading ?
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
-                                : (n1Diagram?.svg ?
-                                    <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
-                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
-                                )
-                            }
-                        </div>
+                        {/* N-1 Container — only mounted when active to halve DOM weight */}
+                        {activeTab === 'n-1' && (
+                            <div style={{
+                                width: '100%', height: '100%',
+                                position: 'absolute', top: 0, left: 0,
+                                zIndex: 10
+                            }}>
+                                {n1Loading ?
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
+                                    : (n1Diagram?.svg ?
+                                        <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
+                                        : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
+                                    )
+                                }
+                            </div>
+                        )}
                     </div>
                 );
             };
