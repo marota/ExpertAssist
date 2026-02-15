@@ -305,7 +305,10 @@
                 commitViewBox(); // Sync to React state on drag end
             };
 
-            // Stable event registration — only depends on active tab, not viewBox
+            // Stable event registration — re-registers when active tab changes
+            // OR when the diagram loads (initialViewBox changes). This handles the
+            // case where the tab becomes active before the SVG is loaded (e.g. N-1
+            // "Generating..." placeholder): events re-attach when the SVG appears.
             useEffect(() => {
                 const el = svgRef.current;
                 if (!el || !active) return;
@@ -323,7 +326,7 @@
                     clearTimeout(wheelTimerId.current);
                     if (rafId.current) cancelAnimationFrame(rafId.current);
                 };
-            }, [active]);
+            }, [active, initialViewBox]);
 
             // Public API: updates ref + DOM + React state immediately
             const setViewBoxPublic = (vb) => {
@@ -339,19 +342,23 @@
         // are readable when zoomed in and naturally shrink at full view.
         // Uses DOMParser for in-place DOM manipulation instead of regex on
         // multi-MB strings, avoiding large temporary string copies.
-        const boostSvgForLargeGrid = (svgString, viewBox) => {
+        const boostSvgForLargeGrid = (svgString, viewBox, vlCount) => {
             if (!viewBox) return svgString;
+
+            // Skip boost entirely for grids with < 500 voltage levels —
+            // smaller grids render well at native pypowsybl sizes.
+            if (!vlCount || vlCount < 500) return svgString;
 
             const diagramSize = Math.max(viewBox.w, viewBox.h);
             const REFERENCE_SIZE = 1250; // small grid where everything is readable
             const BOOST_THRESHOLD = 3;   // ratio above which we start boosting
             const ratio = diagramSize / REFERENCE_SIZE;
-            if (ratio <= BOOST_THRESHOLD) return svgString; // small/medium grid, no boost needed
+            if (ratio <= BOOST_THRESHOLD) return svgString; // viewBox too small for boost
 
             // Normalized boost: starts at 1.0 at threshold, increases gradually.
             // ratio=4 → 1.15, ratio=6 → 1.41, ratio=9 → 1.73, ratio=12 → 2.0
             const boost = Math.sqrt(ratio / BOOST_THRESHOLD);
-            console.log(`[SVG] viewBox ${diagramSize.toFixed(0)}, ratio ${ratio.toFixed(2)}, boost ${boost.toFixed(2)}`);
+            console.log(`[SVG] vlCount=${vlCount}, viewBox ${diagramSize.toFixed(0)}, ratio ${ratio.toFixed(2)}, boost ${boost.toFixed(2)}`);
 
             const parser = new DOMParser();
             const doc = parser.parseFromString(svgString, 'image/svg+xml');
@@ -383,12 +390,21 @@
                 style.textContent = css;
             });
 
-            // === 2. Scale circle radii (bus nodes + windings) ===
+            // === 2. Scale node groups (circles + inner bus sectors/paths) ===
+            // Scale the entire parent <g> so both the outer circle AND inner
+            // path sectors (multi-bus VLs like PYMONP3) scale uniformly.
+            const scaledGroups = new Set();
             svgEl.querySelectorAll('circle').forEach(circle => {
-                const r = parseFloat(circle.getAttribute('r'));
-                if (!isNaN(r)) {
-                    circle.setAttribute('r', (r * boost).toFixed(2));
-                }
+                const g = circle.parentElement;
+                if (!g || g.tagName !== 'g' || scaledGroups.has(g)) return;
+                // Skip groups containing labels — those scale via CSS
+                if (g.querySelector('foreignObject')) return;
+                scaledGroups.add(g);
+                const cx = parseFloat(circle.getAttribute('cx')) || 0;
+                const cy = parseFloat(circle.getAttribute('cy')) || 0;
+                const t = g.getAttribute('transform') || '';
+                g.setAttribute('transform',
+                    `${t} translate(${cx},${cy}) scale(${boost.toFixed(2)}) translate(${-cx},${-cy})`);
             });
 
             // === 3. Scale edge-info group transforms (flow arrows + values) ===
@@ -512,13 +528,13 @@
                     setBranches(branchesRes.data.branches);
                     setVoltageLevels(vlRes.data.voltage_levels);
 
-                    fetchBaseDiagram();
+                    fetchBaseDiagram(vlRes.data.voltage_levels.length);
                 } catch (err) {
                     setError('Failed to load config: ' + (err.response?.data?.detail || err.message));
                 } finally { setConfigLoading(false); }
             };
 
-            const processSvg = (rawSvg) => {
+            const processSvg = (rawSvg, vlCount) => {
                 const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
                 let vb = null;
                 if (match) {
@@ -526,7 +542,7 @@
                     if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
                 }
                 // Boost text/label sizes for large grids before injection
-                const svg = boostSvgForLargeGrid(rawSvg, vb);
+                const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
                 return { svg, viewBox: vb };
             };
 
@@ -549,10 +565,10 @@
                 }
             };
 
-            const fetchBaseDiagram = async () => {
+            const fetchBaseDiagram = async (vlCount) => {
                 try {
                     const res = await axios.get(API_BASE + '/api/network-diagram');
-                    const { svg, viewBox } = processSvg(res.data.svg);
+                    const { svg, viewBox } = processSvg(res.data.svg, vlCount || 0);
                     if (viewBox) setOriginalViewBox(viewBox);
                     setNDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) { console.error('Failed to fetch diagram:', err); }
@@ -575,7 +591,7 @@
                     setActiveTab('n-1'); // Switch immediately → shows "Generating N-1 Diagram..."
                     try {
                         const res = await axios.post(API_BASE + '/api/n1-diagram', { disconnected_element: selectedBranch });
-                        const { svg, viewBox } = processSvg(res.data.svg);
+                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                         setN1Diagram({ ...res.data, svg, originalViewBox: viewBox }); // Embed viewBox
                     } catch (err) {
                         console.error("Failed to fetch N-1 diagram", err);
