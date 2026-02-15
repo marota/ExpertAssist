@@ -171,11 +171,8 @@
             const svgElRef = useRef(null);
             const activeRef = useRef(active);
             activeRef.current = active;
-
-            // Threshold: show text when zoomed in enough that labels are readable.
-            // Below this viewBox size, boosted text (~70px SVG units) renders at
-            // ~22px on a 1200px screen — comfortably readable.
-            const TEXT_VISIBILITY_MAX_VIEWBOX = 3750; // REFERENCE_SIZE * 3
+            // Original viewBox max dimension — used for relative text visibility threshold
+            const initialMaxDimRef = useRef(null);
 
             // Direct DOM update — no React involved
             const applyViewBox = (vb) => {
@@ -184,11 +181,13 @@
                     svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
                 }
                 // Toggle text visibility based on zoom level (large grids only).
-                // display:none via CSS removes elements from layout entirely,
-                // so the browser skips layout/paint for thousands of text nodes.
+                // Show text when zoomed in to < 50% of original viewBox (2x+ zoom).
+                // This scales with grid size: zoomToElement typically zooms to
+                // 10-30% of the grid, so text always appears on element focus.
                 const container = svgRef.current;
                 if (container && vb && svg && svg.hasAttribute('data-large-grid')) {
-                    const shouldHide = Math.max(vb.w, vb.h) >= TEXT_VISIBILITY_MAX_VIEWBOX;
+                    const origMax = initialMaxDimRef.current;
+                    const shouldHide = !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5;
                     container.classList.toggle('text-hidden', shouldHide);
                 }
             };
@@ -208,7 +207,8 @@
                     svgElRef.current = svgRef.current.querySelector('svg');
                     if (svgElRef.current && svgElRef.current.hasAttribute('data-large-grid')) {
                         const vb = viewBoxRef.current;
-                        if (!vb || Math.max(vb.w, vb.h) >= TEXT_VISIBILITY_MAX_VIEWBOX) {
+                        const origMax = initialMaxDimRef.current;
+                        if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5) {
                             svgRef.current.classList.add('text-hidden');
                         }
                     }
@@ -221,6 +221,7 @@
             useEffect(() => {
                 if (initialViewBox) {
                     viewBoxRef.current = initialViewBox;
+                    initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
                     applyViewBox(initialViewBox);
                     setViewBox(initialViewBox);
                 }
