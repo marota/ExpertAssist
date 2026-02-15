@@ -224,6 +224,14 @@
                     initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
                     applyViewBox(initialViewBox);
                     setViewBox(initialViewBox);
+                    // Diagnostic: log effective scaling
+                    const el = svgRef.current;
+                    if (el) {
+                        const rect = el.getBoundingClientRect();
+                        const scaleX = rect.width / initialViewBox.w;
+                        const scaleY = rect.height / initialViewBox.h;
+                        console.log(`[SVG render] container=${rect.width.toFixed(0)}x${rect.height.toFixed(0)}, viewBox=${initialViewBox.w.toFixed(0)}x${initialViewBox.h.toFixed(0)}, scale=${Math.min(scaleX, scaleY).toFixed(3)}`);
+                    }
                 }
             }, [initialViewBox]);
 
@@ -541,6 +549,13 @@
                     const parts = match[1].split(/\s+|,/).map(parseFloat);
                     if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
                 }
+
+                // Diagnostic: log SVG root attributes and embedded CSS for debugging
+                const svgTag = rawSvg.match(/<svg[^>]*>/)?.[0] || '';
+                const widthMatch = svgTag.match(/\bwidth=["']([^"']+)["']/);
+                const heightMatch = svgTag.match(/\bheight=["']([^"']+)["']/);
+                console.log(`[SVG processSvg] vlCount=${vlCount}, viewBox=${vb ? `${vb.w.toFixed(0)}x${vb.h.toFixed(0)}` : 'none'}, svgWidth=${widthMatch?.[1] || 'none'}, svgHeight=${heightMatch?.[1] || 'none'}`);
+
                 // Boost text/label sizes for large grids before injection
                 const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
                 return { svg, viewBox: vb };
