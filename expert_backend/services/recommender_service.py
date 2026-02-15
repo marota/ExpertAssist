@@ -1,6 +1,7 @@
 import expert_op4grid_recommender
 from expert_op4grid_recommender import config
 from expert_op4grid_recommender.main import Backend, run_analysis
+from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import os
 import glob
 from pathlib import Path
@@ -331,7 +332,7 @@ class RecommenderService:
         except Exception as e:
             raise ValueError(f"Failed to disconnect element {disconnected_element}: {e}")
 
-        params = pp.loadflow.Parameters()
+        params = create_olf_rte_parameter()#pp.loadflow.Parameters()
         results = pp.loadflow.run_ac(n, params)
 
         # Check convergence — partial AC results are still better than DC
