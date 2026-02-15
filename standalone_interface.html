@@ -344,20 +344,25 @@
 
             const diagramSize = Math.max(viewBox.w, viewBox.h);
             const REFERENCE_SIZE = 1250; // small grid where everything is readable
+            const BOOST_THRESHOLD = 3;   // ratio above which we start boosting
             const ratio = diagramSize / REFERENCE_SIZE;
-            if (ratio <= 3) return svgString; // small/medium grid, no boost needed
+            if (ratio <= BOOST_THRESHOLD) return svgString; // small/medium grid, no boost needed
 
-            const boost = Math.sqrt(ratio);
+            // Normalized boost: starts at 1.0 at threshold, increases gradually.
+            // ratio=4 → 1.15, ratio=6 → 1.41, ratio=9 → 1.73, ratio=12 → 2.0
+            const boost = Math.sqrt(ratio / BOOST_THRESHOLD);
+            console.log(`[SVG] viewBox ${diagramSize.toFixed(0)}, ratio ${ratio.toFixed(2)}, boost ${boost.toFixed(2)}`);
 
             const parser = new DOMParser();
             const doc = parser.parseFromString(svgString, 'image/svg+xml');
             const svgEl = doc.documentElement;
 
-            // Mark as large grid so usePanZoom can toggle text visibility on zoom.
-            // Only grids past ratio > 3 reach here (early-return above),
-            // so text-hiding is only active when text is genuinely unreadable
-            // at full zoom-out (~8px or smaller on a 1200px screen).
-            svgEl.setAttribute('data-large-grid', 'true');
+            // Only enable text-hiding for genuinely large grids where text is
+            // unreadable at full zoom-out (~4px on screen). Decoupled from
+            // the boost threshold so medium-large grids keep text always visible.
+            if (ratio > 6) {
+                svgEl.setAttribute('data-large-grid', 'true');
+            }
 
             // === 1. Scale CSS values in <style> blocks ===
             const styles = svgEl.querySelectorAll('style');
@@ -743,6 +748,12 @@
 
                 if (!targetId) return;
 
+                // Branch changes should zoom on the N-1 tab, not N.
+                // In the same render cycle, setActiveTab('n-1') is batched but
+                // not committed — this effect still sees activeTab='n'. Skip here;
+                // the effect re-runs when activeTab changes to 'n-1'.
+                if (branchChanged && activeTab === 'n') return;
+
                 // Only consume the zoom intent when the container has SVG content.
                 // If not ready (e.g. N-1 still loading), skip — the effect re-runs
                 // when n1Diagram changes, and branchChanged will still be true.
@@ -802,6 +813,17 @@
                                 position: 'absolute', top: 0, left: 0,
                                 zIndex: 10
                             }}>
+                                {/* Convergence warning banner */}
+                                {n1Diagram && n1Diagram.lf_converged === false && (
+                                    <div style={{
+                                        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                        background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                        fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                        textAlign: 'center', pointerEvents: 'none'
+                                    }}>
+                                        ⚠ AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                                    </div>
+                                )}
                                 {n1Loading ?
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
                                     : (n1Diagram?.svg ?

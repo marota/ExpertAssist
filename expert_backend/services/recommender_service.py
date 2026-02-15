@@ -334,12 +334,16 @@ class RecommenderService:
         params = pp.loadflow.Parameters()
         results = pp.loadflow.run_ac(n, params)
 
-        # Fall back to DC if AC didn't converge (matches run_analysis pattern)
+        # Check convergence — partial AC results are still better than DC
+        # (DC only computes angles/power, not voltage magnitudes).
         converged = any(r.status.name == 'CONVERGED' for r in results)
+        lf_status = results[0].status.name if results else "UNKNOWN"
         if not converged:
-            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}), falling back to DC")
-            pp.loadflow.run_dc(n, params)
+            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}): {lf_status}")
 
-        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lf_converged"] = converged
+        diagram["lf_status"] = lf_status
+        return diagram
 
 recommender_service = RecommenderService()
