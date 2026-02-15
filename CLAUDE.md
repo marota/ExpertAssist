@@ -10,14 +10,29 @@ ExpertAssist is a full-stack web application for **power grid contingency analys
 
 ```
 ExpertAssist/
+├── .gitignore               # Excludes __pycache__/, *.pyc, *.pyo
+├── CLAUDE.md                # Project documentation for AI assistants
 ├── expert_backend/          # Python FastAPI backend
+│   ├── __init__.py
 │   ├── main.py              # FastAPI app, API endpoints, CORS config
+│   ├── requirements.txt     # Core Python deps (fastapi, uvicorn)
 │   └── services/
+│       ├── __init__.py
 │       ├── network_service.py       # pypowsybl network loading & queries
 │       └── recommender_service.py   # Analysis orchestration, PDF/SVG generation
 ├── frontend/                # React + TypeScript + Vite frontend
+│   ├── index.html           # HTML entry point
+│   ├── package.json         # Dependencies and scripts
+│   ├── vite.config.ts       # Vite configuration
+│   ├── eslint.config.js     # ESLint v9+ flat config
+│   ├── tsconfig.json        # Root TypeScript config
+│   ├── tsconfig.app.json    # App TypeScript config (strict mode)
+│   ├── tsconfig.node.json   # Node/config TypeScript config
 │   └── src/
+│       ├── main.tsx          # React entry point (StrictMode)
 │       ├── App.tsx           # Root component (layout: header, config, action feed, viz)
+│       ├── App.css           # App-specific styles
+│       ├── index.css         # Global styles
 │       ├── api.ts            # Axios HTTP client (base URL: localhost:8000)
 │       ├── types.ts          # TypeScript interfaces
 │       └── components/
@@ -25,8 +40,13 @@ ExpertAssist/
 │           ├── ActionFeed.tsx          # Prioritized action results display
 │           └── VisualizationPanel.tsx  # PDF viewer (iframe)
 ├── Overflow_Graph/          # Generated PDFs (created at runtime)
-├── standalone_interface.html # Self-contained HTML version of the UI
-└── test_*.py / verify_*.py  # Root-level integration test scripts
+├── overrides.txt            # Additional Python dependency version pins
+├── standalone_interface.html # Self-contained HTML version of the UI with SVG visualization
+├── test_*.py / verify_*.py  # Root-level integration test scripts
+├── reproduce_error.py       # Ad-hoc error reproduction script
+├── repro_stuck.py           # Ad-hoc stuck analysis reproduction
+├── fix_zoom.py              # Zoom/scaling fix utility
+└── inspect_metadata.py      # SVG metadata inspection utility
 ```
 
 ## Tech Stack
@@ -100,9 +120,11 @@ There is no unit test framework or automated test runner configured.
 | POST | `/api/config` | Set network path and action file path |
 | GET | `/api/branches` | List disconnectable elements (lines + transformers) |
 | GET | `/api/voltage-levels` | List voltage levels in the network |
+| GET | `/api/element-voltage-levels` | Resolve equipment ID to its voltage level IDs |
 | POST | `/api/run-analysis` | Run N-1 contingency analysis (streaming NDJSON response) |
-| GET | `/api/network-diagram` | Get full network SVG diagram |
+| GET | `/api/network-diagram` | Get full network SVG diagram (supports voltage_level_ids + depth) |
 | POST | `/api/n1-diagram` | Get post-contingency network SVG diagram |
+| POST | `/api/focused-diagram` | Generate NAD sub-diagram focused on a specific element |
 | GET | `/api/pick-path` | Open native OS file/directory picker (tkinter subprocess) |
 | GET | `/results/pdf/{filename}` | Serve generated PDF files from `Overflow_Graph/` |
 
@@ -114,6 +136,8 @@ There is no unit test framework or automated test runner configured.
 - **AC/DC fallback**: Analysis first tries AC load flow; falls back to DC if AC does not converge
 - **Threaded analysis**: `run_analysis` runs the computation in a background thread and polls for PDF generation
 - **JSON sanitization**: NumPy types are recursively converted to native Python types via `sanitize_for_json()`
+- **Shared diagram helpers**: `RecommenderService` uses `_load_network()`, `_load_layout()`, `_default_nad_parameters()`, and `_generate_diagram()` to deduplicate diagram generation logic across endpoints
+- **Focused diagrams**: The `/api/focused-diagram` endpoint resolves an element to its voltage levels and generates a sub-diagram with configurable depth, useful for inspecting specific parts of large grids
 - **No formal Python linter config**: Code follows PEP 8 conventions manually
 
 ### Frontend
@@ -129,6 +153,14 @@ There is no unit test framework or automated test runner configured.
 3. User selects a branch and runs analysis -> `POST /api/run-analysis`
 4. Backend streams events: first a PDF event (overflow graph), then the result with enriched actions
 5. Frontend displays the PDF in an iframe and the actions in the ActionFeed panel
+
+### SVG Visualization (standalone_interface.html)
+The standalone interface includes advanced SVG rendering for pypowsybl network-area diagrams:
+- **Dynamic text scaling**: Font sizes for node labels, edge info, and legends scale proportionally to diagram size using `sqrt(diagramSize / referenceSize)`, so text is readable when zoomed in and naturally invisible at full zoom-out
+- **Bus node scaling**: Circle radii for bus nodes and transformer windings are boosted proportionally
+- **Edge info scaling**: Flow values and arrows along lines are scaled via transform groups
+- **ViewBox zoom**: Auto-centers on selected contingency targets with adjustable padding
+- **Interactive pan/zoom**: Wheel + drag for manual exploration via `react-zoom-pan-pinch`
 
 ## Dependencies
 
@@ -155,6 +187,7 @@ There is no unit test framework or automated test runner configured.
 - CORS is configured to allow all origins (`allow_origins=["*"]`)
 - The `ConfigurationPanel` has hardcoded default paths specific to a developer workstation; these are not portable
 - There is no CI/CD pipeline, Dockerfile, or containerization configured
-- There is no root-level `.gitignore`; only `frontend/.gitignore` exists
+- Root `.gitignore` excludes `__pycache__/`, `*.pyc`, `*.pyo`; `frontend/.gitignore` handles frontend build artifacts
 - Root-level Python scripts (`test_*.py`, `reproduce_error.py`, `repro_stuck.py`, `fix_zoom.py`, `inspect_metadata.py`) are ad-hoc development/debugging utilities, not part of the main application
-- The `standalone_interface.html` is a self-contained version of the full UI in a single HTML file
+- The `standalone_interface.html` is a self-contained version of the full UI in a single HTML file with embedded SVG scaling/zoom logic for large grid diagrams
+- `overrides.txt` contains pinned versions for transitive Python dependencies that need to be forced to specific versions
