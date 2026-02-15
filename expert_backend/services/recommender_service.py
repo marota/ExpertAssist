@@ -1,6 +1,7 @@
 import expert_op4grid_recommender
 from expert_op4grid_recommender import config
 from expert_op4grid_recommender.main import Backend, run_analysis
+from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import os
 import glob
 from pathlib import Path
@@ -331,9 +332,19 @@ class RecommenderService:
         except Exception as e:
             raise ValueError(f"Failed to disconnect element {disconnected_element}: {e}")
 
-        params = pp.loadflow.Parameters()
-        pp.loadflow.run_ac(n, params)
+        params = create_olf_rte_parameter()#pp.loadflow.Parameters()
+        results = pp.loadflow.run_ac(n, params)
 
-        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        # Check convergence — partial AC results are still better than DC
+        # (DC only computes angles/power, not voltage magnitudes).
+        converged = any(r.status.name == 'CONVERGED' for r in results)
+        lf_status = results[0].status.name if results else "UNKNOWN"
+        if not converged:
+            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}): {lf_status}")
+
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lf_converged"] = converged
+        diagram["lf_status"] = lf_status
+        return diagram
 
 recommender_service = RecommenderService()

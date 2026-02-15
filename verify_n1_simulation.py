@@ -2,13 +2,17 @@ import pypowsybl as pp
 import json
 import pandas as pd
 from pypowsybl.network import NadParameters
-from pypowsybl_jupyter.util import _get_svg_metadata
+#from pypowsybl_jupyter.util import _get_svg_metadata
+from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import sys
 from pathlib import Path
 import os
 
-grid_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only/grid.xiidm"
-layout_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only/grid_layout.json"
+#grid_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only/grid.xiidm"
+#layout_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only/grid_layout.json"
+
+grid_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z/grid.xiidm"
+layout_path = "/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z/grid_layout.json"
 
 print(f"Loading network from {grid_path}...")
 try:
@@ -23,7 +27,7 @@ if lines.empty:
     print("No lines found!")
     sys.exit(1)
     
-target_line_id = lines.index[0]
+target_line_id = "P.SAOL31RONCI"#lines.index[0]
 print(f"Targeting line for disconnection: {target_line_id}")
 
 print("Disconnecting line...")
@@ -33,12 +37,13 @@ try:
     # Or just n.disconnect(id) if ID is unique?
     # Let's try guessing signature or check if it needs args.
     # Based on pypowsybl docs it might be disconnect(id)
+    params = create_olf_rte_parameter()
+    results = pp.loadflow.run_ac(n, params)
     n.disconnect(target_line_id)
     print(f"Successfully disconnected {target_line_id}")
     
     # Run LoadFlow
     print("Running AC LoadFlow...")
-    params = pp.loadflow.Parameters()
     results = pp.loadflow.run_ac(n, params)
     print("LoadFlow run complete.")
     for result in results:
