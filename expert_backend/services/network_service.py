@@ -43,10 +43,44 @@ class NetworkService:
     def get_voltage_levels(self):
         if not self.network:
             raise ValueError("Network not loaded")
-        
+
         voltage_levels = self.network.get_voltage_levels()
         if voltage_levels is not None and not voltage_levels.empty:
             return sorted(voltage_levels.index.tolist())
+        return []
+
+    def get_element_voltage_levels(self, element_id: str):
+        """Resolve an equipment ID (line, transformer, or VL) to its voltage level IDs."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        # Check if it's already a voltage level
+        voltage_levels = self.network.get_voltage_levels()
+        if voltage_levels is not None and element_id in voltage_levels.index:
+            return [element_id]
+
+        # Check lines (have voltage_level1_id and voltage_level2_id columns)
+        lines = self.network.get_lines()
+        if lines is not None and element_id in lines.index:
+            row = lines.loc[element_id]
+            vls = set()
+            if 'voltage_level1_id' in row.index:
+                vls.add(row['voltage_level1_id'])
+            if 'voltage_level2_id' in row.index:
+                vls.add(row['voltage_level2_id'])
+            return sorted(vls)
+
+        # Check 2-winding transformers
+        transformers = self.network.get_2_windings_transformers()
+        if transformers is not None and element_id in transformers.index:
+            row = transformers.loc[element_id]
+            vls = set()
+            if 'voltage_level1_id' in row.index:
+                vls.add(row['voltage_level1_id'])
+            if 'voltage_level2_id' in row.index:
+                vls.add(row['voltage_level2_id'])
+            return sorted(vls)
+
         return []
 
 network_service = NetworkService()
