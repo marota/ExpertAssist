@@ -490,15 +490,22 @@
             const [n1Diagram, setN1Diagram] = useState(null);
             const [n1Loading, setN1Loading] = useState(false);
 
+            // Action variant diagram state
+            const [selectedActionId, setSelectedActionId] = useState(null);
+            const [actionDiagram, setActionDiagram] = useState(null);
+            const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
+
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
-            // Independent Refs for N and N-1
+            // Independent Refs for N, N-1, and Action Variant
             const nSvgContainerRef = useRef(null);
             const n1SvgContainerRef = useRef(null);
+            const actionSvgContainerRef = useRef(null);
 
             // Native Pan/Zoom Instances
             const nPZ = usePanZoom(nSvgContainerRef, nDiagram?.originalViewBox, activeTab === 'n');
             const n1PZ = usePanZoom(n1SvgContainerRef, n1Diagram?.originalViewBox, activeTab === 'n-1');
+            const actionPZ = usePanZoom(actionSvgContainerRef, actionDiagram?.originalViewBox, activeTab === 'action');
 
             // View State Management for Synchronization
             const lastViewStateN = useRef(null); // { zoom, pan: {x, y} }
@@ -519,6 +526,7 @@
             const handleLoadConfig = async () => {
                 setConfigLoading(true); setError(''); setInfoMessage('');
                 setNDiagram(null); setN1Diagram(null); setResult(null);
+                setSelectedActionId(null); setActionDiagram(null);
                 setActiveTab('n');
                 lastViewStateN.current = null; // Reset view state on new config
                 lastViewStateN1.current = null;
@@ -563,8 +571,8 @@
             const handleManualReset = () => {
                 setInspectQuery('');
 
-                const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
-                const currentDiagram = activeTab === 'n' ? nDiagram : n1Diagram;
+                const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+                const currentDiagram = activeTab === 'action' ? actionDiagram : activeTab === 'n' ? nDiagram : n1Diagram;
                 const viewBox = currentDiagram?.originalViewBox || originalViewBox;
 
                 if (currentPZ && viewBox) {
@@ -573,7 +581,8 @@
                 }
 
                 // Clear highlights
-                const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                const container = activeTab === 'action' ? actionSvgContainerRef.current
+                    : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
                 if (container) {
                     container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
                 }
@@ -621,6 +630,7 @@
             const handleRunAnalysis = async () => {
                 if (!selectedBranch) return;
                 setAnalysisLoading(true); setError(''); setResult(null); setInfoMessage('');
+                setSelectedActionId(null); setActionDiagram(null);
                 setActiveTab('overflow');
 
                 try {
@@ -655,46 +665,74 @@
                 finally { setAnalysisLoading(false); }
             };
 
-
-
+            // Fetch action variant diagram when an action card is clicked
+            const handleActionSelect = async (actionId) => {
+                if (actionId === selectedActionId) {
+                    // Deselect — return to previous diagram tab
+                    setSelectedActionId(null);
+                    setActionDiagram(null);
+                    setActiveTab('n-1');
+                    return;
+                }
+                setSelectedActionId(actionId);
+                setActionDiagram(null);
+                setActionDiagramLoading(true);
+                setActiveTab('action');
+                try {
+                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
+                    const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
+                    setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
+                } catch (err) {
+                    console.error('Failed to fetch action variant diagram:', err);
+                    setError('Failed to fetch action variant diagram for ' + actionId);
+                } finally {
+                    setActionDiagramLoading(false);
+                }
+            };
 
 
 
 
 
             // --- Synchronization Logic ---
-            // When switching directly between N and N-1, sync the zoom/pan
-            // state so both tabs show the same region. When returning from
-            // the overflow tab, each tab keeps its own saved zoom state.
+            // When switching directly between N, N-1, and Action tabs, sync
+            // the zoom/pan state so all diagram tabs show the same region.
+            // When returning from the overflow tab, each tab keeps its own
+            // saved zoom state.
             useEffect(() => {
                 const prevTab = prevTabRef.current;
                 prevTabRef.current = activeTab;
 
-                // Only cross-sync when switching directly between N and N-1
+                // Don't sync when coming from / going to overflow
                 if (prevTab === 'overflow' || activeTab === 'overflow') return;
 
-                if (activeTab === 'n') {
-                    // Sync N from N-1
-                    if (n1PZ.viewBox && nPZ.setViewBox) {
-                        nPZ.setViewBox(n1PZ.viewBox);
-                    }
-                } else if (activeTab === 'n-1') {
-                    // Sync N-1 from N
-                    if (nPZ.viewBox && n1PZ.setViewBox) {
-                        n1PZ.setViewBox(nPZ.viewBox);
-                    }
+                // Find the source viewBox from the previous tab
+                const sourceVB = prevTab === 'n' ? nPZ.viewBox
+                    : prevTab === 'n-1' ? n1PZ.viewBox
+                    : prevTab === 'action' ? actionPZ.viewBox
+                    : null;
+                if (!sourceVB) return;
+
+                // Apply to the new active tab
+                if (activeTab === 'n' && nPZ.setViewBox) {
+                    nPZ.setViewBox(sourceVB);
+                } else if (activeTab === 'n-1' && n1PZ.setViewBox) {
+                    n1PZ.setViewBox(sourceVB);
+                } else if (activeTab === 'action' && actionPZ.setViewBox) {
+                    actionPZ.setViewBox(sourceVB);
                 }
             }, [activeTab]);
 
             // Pre-indexed metadata for O(1) lookups in zoomToElement
             const nMetaIndex = useMemo(() => buildMetadataIndex(nDiagram?.metadata), [nDiagram?.metadata]);
             const n1MetaIndex = useMemo(() => buildMetadataIndex(n1Diagram?.metadata), [n1Diagram?.metadata]);
+            const actionMetaIndex = useMemo(() => buildMetadataIndex(actionDiagram?.metadata), [actionDiagram?.metadata]);
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
-                const currentPZ = activeTab === 'n' ? nPZ : n1PZ;
-                const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
-                const index = activeTab === 'n' ? nMetaIndex : n1MetaIndex;
+                const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+                const container = activeTab === 'action' ? actionSvgContainerRef.current : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                const index = activeTab === 'action' ? actionMetaIndex : activeTab === 'n' ? nMetaIndex : n1MetaIndex;
                 if (!currentPZ || !container || !index) return;
 
                 try {
@@ -795,13 +833,14 @@
                 // Only consume the zoom intent when the container has SVG content.
                 // If not ready (e.g. N-1 still loading), skip — the effect re-runs
                 // when n1Diagram changes, and branchChanged will still be true.
-                const container = activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+                const container = activeTab === 'action' ? actionSvgContainerRef.current
+                    : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
                 if (!container || !container.querySelector('svg')) return;
 
                 lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
                 zoomToElement(targetId);
 
-            }, [activeTab, nDiagram, n1Diagram, inspectQuery, selectedBranch]);
+            }, [activeTab, nDiagram, n1Diagram, actionDiagram, inspectQuery, selectedBranch]);
 
 
 
@@ -868,6 +907,37 @@
                                 : (n1Diagram?.svg ?
                                     <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
                                     : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
+                                )
+                            }
+                        </div>
+
+                        {/* Action Variant Container — always mounted, hidden via CSS to preserve zoom state */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            zIndex: activeTab === 'action' ? 10 : -1,
+                            visibility: activeTab === 'action' ? 'visible' : 'hidden',
+                            pointerEvents: activeTab === 'action' ? 'auto' : 'none'
+                        }}>
+                            {/* Convergence warning banner */}
+                            {actionDiagram && actionDiagram.lf_converged === false && (
+                                <div style={{
+                                    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                    background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                    fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                    textAlign: 'center', pointerEvents: 'none'
+                                }}>
+                                    ⚠ AC load flow: {actionDiagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                                </div>
+                            )}
+                            {actionDiagramLoading ?
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating Action Variant Diagram...</div>
+                                : (actionDiagram?.svg ?
+                                    <div className="svg-container" ref={actionSvgContainerRef} dangerouslySetInnerHTML={{ __html: actionDiagram.svg }} />
+                                    : (selectedActionId ?
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Failed to load diagram for action {selectedActionId}</div>
+                                        : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select an action card to view its network variant</div>
+                                    )
                                 )
                             }
                         </div>
@@ -963,16 +1033,30 @@
                                         if (!arr || arr.length === 0) return '—';
                                         return arr.map((v, i) => `${overloadedLines[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
                                     };
+                                    const isSelected = selectedActionId === id;
                                     return (
-                                    <div key={id} className="card" style={{ borderLeftColor: sc.border }}>
+                                    <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
+                                        borderLeftColor: isSelected ? '#007bff' : sc.border,
+                                        cursor: 'pointer',
+                                        background: isSelected ? '#e7f1ff' : 'white',
+                                        boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                                        transition: 'all 0.15s ease'
+                                    }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <h4 style={{ margin: 0 }}>#{index + 1} — {id}</h4>
-                                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
-                                                {sc.label}
-                                            </span>
+                                            <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
+                                            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                {isSelected && (
+                                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                                        VIEWING
+                                                    </span>
+                                                )}
+                                                <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                                    {sc.label}
+                                                </span>
+                                            </div>
                                         </div>
                                         <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
-                                        <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                        <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
                                             <div>Rho before: {formatRho(details.rho_before)}</div>
                                             <div>Rho after: {formatRho(details.rho_after)}</div>
                                             {maxRhoPct != null && (
@@ -1001,6 +1085,14 @@
                                 >
                                     Contingency (N-1)
                                 </button>
+                                {selectedActionId && (
+                                    <button
+                                        onClick={() => setActiveTab('action')}
+                                        style={{ flex: 1, borderRadius: 0, background: activeTab === 'action' ? 'white' : '#ecf0f1', color: activeTab === 'action' ? '#0056b3' : '#7f8c8d', borderBottom: activeTab === 'action' ? '3px solid #007bff' : 'none' }}
+                                    >
+                                        Action: {selectedActionId}
+                                    </button>
+                                )}
                                 {result && (
                                     <button
                                         onClick={() => setActiveTab('overflow')}
