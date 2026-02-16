@@ -28,3 +28,11 @@ export interface AnalysisResult {
 export interface BranchResponse {
     branches: string[];
 }
+
+export interface DiagramData {
+    svg: string;
+    metadata: unknown;
+    lf_converged?: boolean;
+    lf_status?: string;
+    action_id?: string;
+}

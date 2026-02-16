@@ -32,7 +32,8 @@ def sanitize_for_json(obj):
 
 class RecommenderService:
     def __init__(self):
-        pass
+        self._last_result = None
+        self._last_disconnected_element = None
 
     def update_config(self, network_path: str, action_file_path: str):
         # Update the global config of the package
@@ -156,6 +157,10 @@ class RecommenderService:
         output = shared_state["output"]
         analysis_message = shared_state["analysis_message"]
         dc_fallback_used = shared_state["dc_fallback_used"]
+
+        # Store the full result for later action variant diagram generation
+        self._last_result = result
+        self._last_disconnected_element = disconnected_element
 
         if result is None:
             if "No topological solution without load shedding" in output:
@@ -288,6 +293,51 @@ class RecommenderService:
         diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["lf_converged"] = converged
         diagram["lf_status"] = lf_status
+        return diagram
+
+    def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0):
+        """Generate a NAD showing the network state after applying a remedial action.
+
+        Uses the observation stored from the last analysis run to determine
+        which lines are disconnected in the post-action state, then replays
+        those disconnections on a fresh pypowsybl network.
+        """
+        import pypowsybl as pp
+
+        if not self._last_result or not self._last_result.get("prioritized_actions"):
+            raise ValueError("No analysis result available. Run analysis first.")
+
+        actions = self._last_result["prioritized_actions"]
+        if action_id not in actions:
+            raise ValueError(f"Action '{action_id}' not found in last analysis result.")
+
+        obs = actions[action_id]["observation"]
+
+        n = self._load_network()
+
+        # Apply line statuses from the observation.
+        # obs.line_status covers both power lines and transformers in grid2op.
+        line_names = list(obs.name_line)
+        line_status = obs.line_status
+
+        for name, connected in zip(line_names, line_status):
+            if not connected:
+                try:
+                    n.disconnect(name)
+                except Exception as e:
+                    print(f"Warning: Could not disconnect {name}: {e}")
+
+        params = create_olf_rte_parameter()
+        results = pp.loadflow.run_ac(n, params)
+        converged = any(r.status.name == 'CONVERGED' for r in results)
+        lf_status = results[0].status.name if results else "UNKNOWN"
+        if not converged:
+            print(f"Warning: AC load flow did not converge for action variant ({action_id}): {lf_status}")
+
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lf_converged"] = converged
+        diagram["lf_status"] = lf_status
+        diagram["action_id"] = action_id
         return diagram
 
 recommender_service = RecommenderService()
