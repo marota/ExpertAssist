@@ -1,1 +1,9 @@
 /* App specific styles if needed */
+
+/* Highlight overloaded lines in orange on SVG network diagrams */
+.nad-overloaded path,
+.nad-overloaded line,
+.nad-overloaded polyline {
+    stroke: #ff8c00 !important;
+    stroke-width: 3px !important;
+}

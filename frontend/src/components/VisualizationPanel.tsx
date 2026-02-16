@@ -1,6 +1,18 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import type { DiagramData } from '../types';
+
+interface EdgeMeta {
+    equipmentId: string;
+    svgId: string;
+    node1: string;
+    node2: string;
+}
+
+interface DiagramMetadata {
+    nodes?: unknown[];
+    edges?: EdgeMeta[];
+}
 
 interface VisualizationPanelProps {
     pdfUrl: string | null;
@@ -8,6 +20,7 @@ interface VisualizationPanelProps {
     actionDiagramLoading: boolean;
     selectedActionId: string | null;
     onDeselectAction: () => void;
+    linesOverloaded: string[];
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -16,8 +29,36 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     actionDiagramLoading,
     selectedActionId,
     onDeselectAction,
+    linesOverloaded,
 }) => {
     const svgContainerRef = useRef<HTMLDivElement>(null);
+
+    // Highlight overloaded lines in orange after the action SVG is rendered
+    useEffect(() => {
+        const container = svgContainerRef.current;
+        if (!container || !actionDiagram?.svg || linesOverloaded.length === 0) return;
+
+        // Parse metadata to build equipmentId -> svgId mapping
+        const meta: DiagramMetadata = typeof actionDiagram.metadata === 'string'
+            ? JSON.parse(actionDiagram.metadata)
+            : (actionDiagram.metadata as DiagramMetadata) ?? {};
+
+        const edges = meta.edges || [];
+        const edgesByEquipmentId = new Map<string, EdgeMeta>();
+        edges.forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
+
+        // Clear previous overloaded highlights
+        container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
+
+        // Apply orange highlight to each overloaded line's SVG edge element
+        linesOverloaded.forEach(lineName => {
+            const edge = edgesByEquipmentId.get(lineName);
+            if (edge?.svgId) {
+                const el = container.querySelector(`[id="${edge.svgId}"]`);
+                if (el) el.classList.add('nad-overloaded');
+            }
+        });
+    }, [actionDiagram, linesOverloaded]);
 
     const showingAction = selectedActionId !== null;
     const showingPdf = !showingAction && pdfUrl !== null;

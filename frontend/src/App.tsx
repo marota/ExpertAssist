@@ -69,6 +69,7 @@ function App() {
             actionDiagramLoading={actionDiagramLoading}
             selectedActionId={selectedActionId}
             onDeselectAction={handleDeselectAction}
+            linesOverloaded={analysisResult?.lines_overloaded || []}
           />
         </div>
       </div>

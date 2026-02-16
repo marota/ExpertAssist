@@ -115,12 +115,8 @@
         /* Keep lines/paths visible at any zoom level without breaking fills/colors */
         .svg-container svg path,
         .svg-container svg line,
-<<<<<<< HEAD
         .svg-container svg polyline,
         .svg-container svg rect {
-=======
-        .svg-container svg polyline {
->>>>>>> 12b1cb6680ca8d82ff828a24edf64dea2530a363
             vector-effect: non-scaling-stroke;
         }
 
@@ -139,6 +135,14 @@
 
         circle.nad-highlight {
             fill: #e74c3c !important;
+        }
+
+        /* Highlight overloaded lines in orange */
+        .nad-overloaded path,
+        .nad-overloaded line,
+        .nad-overloaded polyline {
+            stroke: #ff8c00 !important;
+            stroke-width: 3px !important;
         }
 
         /* Hide text on large grids at full zoom — revealed by removing this class.
@@ -471,6 +475,23 @@
             return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
         };
 
+        // Apply orange highlights to overloaded line edges on a given SVG container
+        const applyOverloadedHighlights = (container, metaIndex, overloadedLines) => {
+            if (!container || !metaIndex || !overloadedLines || overloadedLines.length === 0) return;
+
+            // Clear previous overloaded highlights
+            container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
+
+            const { edgesByEquipmentId } = metaIndex;
+            overloadedLines.forEach(lineName => {
+                const edge = edgesByEquipmentId.get(lineName);
+                if (edge && edge.svgId) {
+                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+                    if (el) el.classList.add('nad-overloaded');
+                }
+            });
+        };
+
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
@@ -755,6 +776,19 @@
             const nMetaIndex = useMemo(() => buildMetadataIndex(nDiagram?.metadata), [nDiagram?.metadata]);
             const n1MetaIndex = useMemo(() => buildMetadataIndex(n1Diagram?.metadata), [n1Diagram?.metadata]);
             const actionMetaIndex = useMemo(() => buildMetadataIndex(actionDiagram?.metadata), [actionDiagram?.metadata]);
+
+            // Highlight overloaded lines in orange on N-1 and Action diagrams
+            useEffect(() => {
+                const overloadedLines = result?.lines_overloaded || [];
+                if (overloadedLines.length === 0) return;
+
+                if (n1SvgContainerRef.current && n1MetaIndex) {
+                    applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+                }
+                if (actionSvgContainerRef.current && actionMetaIndex) {
+                    applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, overloadedLines);
+                }
+            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result?.lines_overloaded]);
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
