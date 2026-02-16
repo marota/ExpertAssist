@@ -3,7 +3,7 @@ import './App.css';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
-import { AnalysisResult } from './types';
+import type { AnalysisResult } from './types';
 
 function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
@@ -22,7 +22,10 @@ function App() {
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ width: '25%', borderRight: '1px solid #ddd', overflowY: 'auto', backgroundColor: '#f4f4f4' }}>
-          <ActionFeed actions={analysisResult?.actions || {}} />
+          <ActionFeed
+            actions={analysisResult?.actions || {}}
+            linesOverloaded={analysisResult?.lines_overloaded || []}
+          />
         </div>
         <div style={{ width: '75%', backgroundColor: '#fff', position: 'relative' }}>
           <VisualizationPanel pdfUrl={analysisResult?.pdf_url || null} />

@@ -58,9 +58,7 @@ class RecommenderService:
         import io
         import time
         import threading
-        import queue
         from contextlib import redirect_stdout
-        import re
 
         analysis_start_time = time.time()
         shared_state = {
@@ -159,35 +157,6 @@ class RecommenderService:
         analysis_message = shared_state["analysis_message"]
         dc_fallback_used = shared_state["dc_fallback_used"]
 
-        # Parse rho values from output
-        rho_info = {}
-        current_action_id = None
-        lines = output.split('\n')
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line: continue
-            if result and line in result:
-                current_action_id = line
-            if "✅ Rho reduction" in line and current_action_id:
-                match = re.search(r"Rho reduction from \[(.*?)\] to \[(.*?)\]. New max rho is (.*?) on line (.*)\.", line)
-                if match:
-                    rho_info[current_action_id] = {
-                        "old_rho": match.group(1),
-                        "new_rho": match.group(2),
-                        "new_max_rho": float(match.group(3)),
-                        "max_rho_line": match.group(4)
-                    }
-
-        # Load action descriptions
-        action_descriptions = {}
-        try:
-            if hasattr(config, 'ACTION_FILE_PATH') and config.ACTION_FILE_PATH.exists():
-                import json
-                with open(config.ACTION_FILE_PATH, 'r') as f:
-                    action_descriptions = json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load action descriptions: {e}")
-
         if result is None:
             if "No topological solution without load shedding" in output:
                 analysis_message = "No topological solution found without load shedding. The grid might be too constrained."
@@ -196,53 +165,27 @@ class RecommenderService:
             else:
                 analysis_message = "Analysis finished but no recommendations were found."
             enriched_actions = {}
+            lines_overloaded = []
         else:
-            enriched_actions = {}
-            raw_actions = sanitize_for_json(result)
-            if isinstance(raw_actions, dict):
-                 for action_id, action_data in raw_actions.items():
-                     enriched_data = action_data.copy() if isinstance(action_data, dict) else {"data": action_data}
-                     item = None
-                     if action_id in action_descriptions:
-                         item = action_descriptions[action_id]
-                     else:
-                         possible_matches = [k for k in action_descriptions.keys() if k.lower() == action_id.lower()]
-                         if possible_matches:
-                             item = action_descriptions[possible_matches[0]]
-                         else:
-                             sub_match = re.search(r"_([A-Z0-9.]+?)$", action_id)
-                             if sub_match:
-                                 sub_name = sub_match.group(1)
-                                 matching_sub_keys = [k for k in action_descriptions.keys() if k.endswith(f"_{sub_name}")]
-                                 if matching_sub_keys:
-                                     item = action_descriptions[matching_sub_keys[0]]
-                             
-                             if not item and action_id.startswith("reco_"):
-                                 stripped_reco = action_id[5:]
-                                 if stripped_reco in action_descriptions:
-                                     item = action_descriptions[stripped_reco]
-                                 else:
-                                     possible_matches = [k for k in action_descriptions.keys() if k.lower() == stripped_reco.lower()]
-                                     if possible_matches:
-                                         item = action_descriptions[possible_matches[0]]
+            lines_overloaded = result.get("lines_overloaded_names", [])
+            prioritized = result.get("prioritized_actions", {})
 
-                     if item:
-                         desc = item.get("description", "")
-                         desc_unit = item.get("description_unitaire", "")
-                         enriched_data["description"] = desc
-                         enriched_data["description_unitaire"] = desc_unit if desc_unit else desc
-                     else:
-                         enriched_data["description"] = "No description available"
-                         enriched_data["description_unitaire"] = "No description available"
-                     
-                     if action_id in rho_info:
-                         enriched_data.update(rho_info[action_id])
-                     enriched_actions[action_id] = enriched_data
+            enriched_actions = {}
+            for action_id, action_data in prioritized.items():
+                enriched_actions[action_id] = {
+                    "description_unitaire": action_data.get("description_unitaire") or "No description available",
+                    "rho_before": sanitize_for_json(action_data.get("rho_before")),
+                    "rho_after": sanitize_for_json(action_data.get("rho_after")),
+                    "max_rho": sanitize_for_json(action_data.get("max_rho")),
+                    "max_rho_line": action_data.get("max_rho_line", ""),
+                    "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
+                }
 
         yield {
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
             "actions": enriched_actions,
+            "lines_overloaded": sanitize_for_json(lines_overloaded),
             "message": analysis_message,
             "dc_fallback": dc_fallback_used
         }

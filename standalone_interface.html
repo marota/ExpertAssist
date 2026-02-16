@@ -321,6 +321,14 @@
                 const el = svgRef.current;
                 if (!el || !active) return;
 
+                // Re-apply saved viewBox to the DOM when becoming active again
+                // (e.g. returning from the overflow tab). The container stays
+                // mounted so the ref is valid, but the SVG viewBox attribute may
+                // need refreshing after being hidden.
+                if (viewBoxRef.current) {
+                    applyViewBox(viewBoxRef.current);
+                }
+
                 el.addEventListener('wheel', handleWheel, { passive: false });
                 el.addEventListener('mousedown', handleMouseDown);
                 window.addEventListener('mousemove', handleMouseMove);
@@ -476,16 +484,7 @@
             const activeTabRef = useRef(activeTab);
             // useLayoutEffect to ensure ref is updated before any layout effects (like svg-pan-zoom) run
             useLayoutEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
-            const [reinitCount, setReinitCount] = useState(0);
             const prevTabRef = useRef(activeTab);
-
-            // Force re-init when returning from overflow tab to fix visibility issues
-            useEffect(() => {
-                if (prevTabRef.current === 'overflow' && activeTab !== 'overflow') {
-                    setReinitCount(c => c + 1);
-                }
-                prevTabRef.current = activeTab;
-            }, [activeTab]);
 
             const [nDiagram, setNDiagram] = useState(null);
             const [n1Diagram, setN1Diagram] = useState(null);
@@ -664,8 +663,16 @@
 
 
             // --- Synchronization Logic ---
-            // When switching tabs, apply current view state to the new tab
+            // When switching directly between N and N-1, sync the zoom/pan
+            // state so both tabs show the same region. When returning from
+            // the overflow tab, each tab keeps its own saved zoom state.
             useEffect(() => {
+                const prevTab = prevTabRef.current;
+                prevTabRef.current = activeTab;
+
+                // Only cross-sync when switching directly between N and N-1
+                if (prevTab === 'overflow' || activeTab === 'overflow') return;
+
                 if (activeTab === 'n') {
                     // Sync N from N-1
                     if (n1PZ.viewBox && nPZ.setViewBox) {
@@ -823,47 +830,47 @@
                             </div>
                         )}
 
-                        {/* N Container — only mounted when active to halve DOM weight */}
-                        {activeTab === 'n' && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                zIndex: 10
-                            }}>
-                                {nDiagram?.svg ?
-                                    <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
-                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
-                                }
-                            </div>
-                        )}
+                        {/* N Container — always mounted, hidden via CSS to preserve zoom state */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            zIndex: activeTab === 'n' ? 10 : -1,
+                            visibility: activeTab === 'n' ? 'visible' : 'hidden',
+                            pointerEvents: activeTab === 'n' ? 'auto' : 'none'
+                        }}>
+                            {nDiagram?.svg ?
+                                <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
+                                : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
+                            }
+                        </div>
 
-                        {/* N-1 Container — only mounted when active to halve DOM weight */}
-                        {activeTab === 'n-1' && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                zIndex: 10
-                            }}>
-                                {/* Convergence warning banner */}
-                                {n1Diagram && n1Diagram.lf_converged === false && (
-                                    <div style={{
-                                        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
-                                        background: '#fff3cd', color: '#856404', padding: '6px 12px',
-                                        fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
-                                        textAlign: 'center', pointerEvents: 'none'
-                                    }}>
-                                        ⚠ AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
-                                    </div>
-                                )}
-                                {n1Loading ?
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
-                                    : (n1Diagram?.svg ?
-                                        <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
-                                        : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
-                                    )
-                                }
-                            </div>
-                        )}
+                        {/* N-1 Container — always mounted, hidden via CSS to preserve zoom state */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            zIndex: activeTab === 'n-1' ? 10 : -1,
+                            visibility: activeTab === 'n-1' ? 'visible' : 'hidden',
+                            pointerEvents: activeTab === 'n-1' ? 'auto' : 'none'
+                        }}>
+                            {/* Convergence warning banner */}
+                            {n1Diagram && n1Diagram.lf_converged === false && (
+                                <div style={{
+                                    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                    background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                    fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                    textAlign: 'center', pointerEvents: 'none'
+                                }}>
+                                    ⚠ AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                                </div>
+                            )}
+                            {n1Loading ?
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
+                                : (n1Diagram?.svg ?
+                                    <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
+                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
+                                )
+                            }
+                        </div>
                     </div>
                 );
             };
@@ -933,24 +940,51 @@
                     <div className="main-content">
                         <div className="action-feed">
                             <h3>Actions</h3>
+                            {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
+                                <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
+                                    <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}
+                                </div>
+                            )}
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
-                                Object.entries(result.actions).sort(([, a], [, b]) => (parseFloat(a.new_max_rho) || 999) - (parseFloat(b.new_max_rho) || 999)).map(([id, details]) => (
-                                    <div key={id} className={`card ${details.new_max_rho === null ? 'ineffective' : ''}`} style={{ borderLeftColor: details.new_max_rho === null ? '#dc3545' : ((parseFloat(details.new_max_rho) || 999) < 0.9 ? '#28a745' : '#ffc107') }}>
-                                        <h4>{id}</h4>
-                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire || details.description}</p>
-                                        {details.new_max_rho !== null ? (
-                                            <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                                New Max Rho: <strong>{(parseFloat(details.new_max_rho)).toFixed(2)}</strong> {details.max_rho_line && `on ${details.max_rho_line}`}<br />
-                                                {details.old_rho && details.new_rho && (
-                                                    <div style={{ marginTop: '3px', color: '#555' }}>
-                                                        Evolution: {details.old_rho} → {details.new_rho}
-                                                        {details.max_rho_line && <span> (on {details.max_rho_line})</span>}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ) : <div style={{ color: '#dc3545', fontSize: '11px' }}>⚠️ Ineffective</div>}
+                                Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
+                                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+                                    const overloadedLines = result.lines_overloaded || [];
+                                    // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
+                                    const severity = details.max_rho != null
+                                        ? (details.max_rho > 1.0 ? 'red' : details.max_rho > 0.9 ? 'orange' : 'green')
+                                        : (details.is_rho_reduction ? 'green' : 'red');
+                                    const severityColors = {
+                                        green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
+                                        red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
+                                    };
+                                    const sc = severityColors[severity];
+                                    const formatRho = (arr) => {
+                                        if (!arr || arr.length === 0) return '—';
+                                        return arr.map((v, i) => `${overloadedLines[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
+                                    };
+                                    return (
+                                    <div key={id} className="card" style={{ borderLeftColor: sc.border }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <h4 style={{ margin: 0 }}>#{index + 1} — {id}</h4>
+                                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                                {sc.label}
+                                            </span>
+                                        </div>
+                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                                        <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                            <div>Rho before: {formatRho(details.rho_before)}</div>
+                                            <div>Rho after: {formatRho(details.rho_after)}</div>
+                                            {maxRhoPct != null && (
+                                                <div style={{ marginTop: '3px' }}>
+                                                    Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                                    {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                ))
+                                    );
+                                })
                             ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}
                         </div>
                         <div className="visualization" style={{ display: 'flex', flexDirection: 'column' }}>
