@@ -35,51 +35,81 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 }) => {
     const svgContainerRef = useRef<HTMLDivElement>(null);
 
-    // Highlight lines that are still >100% after the action in orange
+    // Highlight overloaded lines (orange) and acted-upon lines (yellow fluo) on action SVG
     useEffect(() => {
         const container = svgContainerRef.current;
         if (!container || !actionDiagram?.svg) return;
 
-        // Clear previous overloaded highlights
+        // Clear previous highlights
         container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
+        container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
 
-        if (linesOverloaded.length === 0 || !selectedActionDetail) return;
-
-        // Compute which lines remain overloaded (>100%) after the action
-        const stillOverloaded: string[] = [];
-        if (selectedActionDetail.rho_after) {
-            linesOverloaded.forEach((name, i) => {
-                if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
-                    stillOverloaded.push(name);
-                }
-            });
-        }
-        // If a different line became the new max and is >100%, highlight it too
-        if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
-            if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
-                stillOverloaded.push(selectedActionDetail.max_rho_line);
-            }
-        }
-
-        if (stillOverloaded.length === 0) return;
+        if (!selectedActionDetail) return;
 
         // Parse metadata to build equipmentId -> svgId mapping
         const meta: DiagramMetadata = typeof actionDiagram.metadata === 'string'
             ? JSON.parse(actionDiagram.metadata)
             : (actionDiagram.metadata as DiagramMetadata) ?? {};
-
         const edges = meta.edges || [];
         const edgesByEquipmentId = new Map<string, EdgeMeta>();
         edges.forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
 
-        // Apply orange highlight to each still-overloaded line's SVG edge element
-        stillOverloaded.forEach(lineName => {
-            const edge = edgesByEquipmentId.get(lineName);
-            if (edge?.svgId) {
-                const el = container.querySelector(`[id="${edge.svgId}"]`);
-                if (el) el.classList.add('nad-overloaded');
+        const highlightEdges = (lineNames: string[], className: string) => {
+            lineNames.forEach(lineName => {
+                const edge = edgesByEquipmentId.get(lineName);
+                if (edge?.svgId) {
+                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+                    if (el) el.classList.add(className);
+                }
+            });
+        };
+
+        // Orange: lines that remain >100% after the action
+        if (linesOverloaded.length > 0) {
+            const stillOverloaded: string[] = [];
+            if (selectedActionDetail.rho_after) {
+                linesOverloaded.forEach((name, i) => {
+                    if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
+                        stillOverloaded.push(name);
+                    }
+                });
             }
-        });
+            if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
+                if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
+                    stillOverloaded.push(selectedActionDetail.max_rho_line);
+                }
+            }
+            highlightEdges(stillOverloaded, 'nad-overloaded');
+        }
+
+        // Yellow fluo: lines the action acts upon (line disconnection/reconnection only)
+        const topo = selectedActionDetail.action_topology;
+        if (topo) {
+            const lineKeys = new Set([
+                ...Object.keys(topo.lines_ex_bus || {}),
+                ...Object.keys(topo.lines_or_bus || {}),
+            ]);
+            const genKeys = Object.keys(topo.gens_bus || {});
+            const loadKeys = Object.keys(topo.loads_bus || {});
+
+            let targetLines: string[] = [];
+            if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
+                // No gen/load changes → line-only action
+                targetLines = [...lineKeys];
+            } else {
+                // Multiple asset types: check if all values are -1 (pure disconnections)
+                const allValues = [
+                    ...Object.values(topo.lines_ex_bus || {}),
+                    ...Object.values(topo.lines_or_bus || {}),
+                    ...Object.values(topo.gens_bus || {}),
+                    ...Object.values(topo.loads_bus || {}),
+                ];
+                if (allValues.length > 0 && allValues.every(v => v === -1)) {
+                    targetLines = [...lineKeys];
+                }
+            }
+            highlightEdges(targetLines, 'nad-action-target');
+        }
     }, [actionDiagram, linesOverloaded, selectedActionDetail]);
 
     const showingAction = selectedActionId !== null;

@@ -186,6 +186,17 @@ class RecommenderService:
                     "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
                 }
 
+                # Extract topology from the underlying action object
+                action_obj = action_data.get("action")
+                if action_obj is not None:
+                    topo = {}
+                    for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus"):
+                        val = getattr(action_obj, field, None)
+                        if val is None and isinstance(action_obj, dict):
+                            val = action_obj.get(field)
+                        topo[field] = sanitize_for_json(val) if val else {}
+                    enriched_actions[action_id]["action_topology"] = topo
+
         yield {
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
