@@ -298,12 +298,10 @@ class RecommenderService:
     def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0):
         """Generate a NAD showing the network state after applying a remedial action.
 
-        Uses the observation stored from the last analysis run to determine
-        which lines are disconnected in the post-action state, then replays
-        those disconnections on a fresh pypowsybl network.
+        Uses the variant ID and network manager stored in the observation from
+        the last analysis run to switch to the post-action network state
+        directly, avoiding the need to replay disconnections on a fresh network.
         """
-        import pypowsybl as pp
-
         if not self._last_result or not self._last_result.get("prioritized_actions"):
             raise ValueError("No analysis result available. Run analysis first.")
 
@@ -313,30 +311,18 @@ class RecommenderService:
 
         obs = actions[action_id]["observation"]
 
-        n = self._load_network()
+        # Extract the variant ID and network manager from the observation
+        variant_id = obs._variant_id
+        nm = obs._network_manager
 
-        # Apply line statuses from the observation.
-        # obs.line_status covers both power lines and transformers in grid2op.
-        line_names = list(obs.name_line)
-        line_status = obs.line_status
+        # Switch to the action's variant which already contains the
+        # post-action network state with load flow results
+        nm.set_working_variant(variant_id)
 
-        for name, connected in zip(line_names, line_status):
-            if not connected:
-                try:
-                    n.disconnect(name)
-                except Exception as e:
-                    print(f"Warning: Could not disconnect {name}: {e}")
+        # Use the underlying pypowsybl network directly
+        network = nm.network
 
-        params = create_olf_rte_parameter()
-        results = pp.loadflow.run_ac(n, params)
-        converged = any(r.status.name == 'CONVERGED' for r in results)
-        lf_status = results[0].status.name if results else "UNKNOWN"
-        if not converged:
-            print(f"Warning: AC load flow did not converge for action variant ({action_id}): {lf_status}")
-
-        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
-        diagram["lf_converged"] = converged
-        diagram["lf_status"] = lf_status
+        diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["action_id"] = action_id
         return diagram
 
