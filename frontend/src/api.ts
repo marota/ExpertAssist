@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ConfigRequest, AnalysisResult, BranchResponse } from './types';
+import type { ConfigRequest, AnalysisResult, BranchResponse } from './types';
 
 const API_BASE_URL = 'http://localhost:8000';
 
