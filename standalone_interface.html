@@ -675,7 +675,6 @@
             // When switching directly between N and N-1, sync the zoom/pan
             // state so both tabs show the same region. When returning from
             // the overflow tab, each tab keeps its own saved zoom state.
-            const prevTabRef = useRef(activeTab);
             useEffect(() => {
                 const prevTab = prevTabRef.current;
                 prevTabRef.current = activeTab;
