@@ -321,6 +321,14 @@
                 const el = svgRef.current;
                 if (!el || !active) return;
 
+                // Re-apply saved viewBox to the DOM when becoming active again
+                // (e.g. returning from the overflow tab). The container stays
+                // mounted so the ref is valid, but the SVG viewBox attribute may
+                // need refreshing after being hidden.
+                if (viewBoxRef.current) {
+                    applyViewBox(viewBoxRef.current);
+                }
+
                 el.addEventListener('wheel', handleWheel, { passive: false });
                 el.addEventListener('mousedown', handleMouseDown);
                 window.addEventListener('mousemove', handleMouseMove);
@@ -664,8 +672,17 @@
 
 
             // --- Synchronization Logic ---
-            // When switching tabs, apply current view state to the new tab
+            // When switching directly between N and N-1, sync the zoom/pan
+            // state so both tabs show the same region. When returning from
+            // the overflow tab, each tab keeps its own saved zoom state.
+            const prevTabRef = useRef(activeTab);
             useEffect(() => {
+                const prevTab = prevTabRef.current;
+                prevTabRef.current = activeTab;
+
+                // Only cross-sync when switching directly between N and N-1
+                if (prevTab === 'overflow' || activeTab === 'overflow') return;
+
                 if (activeTab === 'n') {
                     // Sync N from N-1
                     if (n1PZ.viewBox && nPZ.setViewBox) {
@@ -823,47 +840,47 @@
                             </div>
                         )}
 
-                        {/* N Container — only mounted when active to halve DOM weight */}
-                        {activeTab === 'n' && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                zIndex: 10
-                            }}>
-                                {nDiagram?.svg ?
-                                    <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
-                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
-                                }
-                            </div>
-                        )}
+                        {/* N Container — always mounted, hidden via CSS to preserve zoom state */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            zIndex: activeTab === 'n' ? 10 : -1,
+                            visibility: activeTab === 'n' ? 'visible' : 'hidden',
+                            pointerEvents: activeTab === 'n' ? 'auto' : 'none'
+                        }}>
+                            {nDiagram?.svg ?
+                                <div className="svg-container" ref={nSvgContainerRef} dangerouslySetInnerHTML={{ __html: nDiagram.svg }} />
+                                : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Load configuration to see diagram</div>
+                            }
+                        </div>
 
-                        {/* N-1 Container — only mounted when active to halve DOM weight */}
-                        {activeTab === 'n-1' && (
-                            <div style={{
-                                width: '100%', height: '100%',
-                                position: 'absolute', top: 0, left: 0,
-                                zIndex: 10
-                            }}>
-                                {/* Convergence warning banner */}
-                                {n1Diagram && n1Diagram.lf_converged === false && (
-                                    <div style={{
-                                        position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
-                                        background: '#fff3cd', color: '#856404', padding: '6px 12px',
-                                        fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
-                                        textAlign: 'center', pointerEvents: 'none'
-                                    }}>
-                                        ⚠ AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
-                                    </div>
-                                )}
-                                {n1Loading ?
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
-                                    : (n1Diagram?.svg ?
-                                        <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
-                                        : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
-                                    )
-                                }
-                            </div>
-                        )}
+                        {/* N-1 Container — always mounted, hidden via CSS to preserve zoom state */}
+                        <div style={{
+                            width: '100%', height: '100%',
+                            position: 'absolute', top: 0, left: 0,
+                            zIndex: activeTab === 'n-1' ? 10 : -1,
+                            visibility: activeTab === 'n-1' ? 'visible' : 'hidden',
+                            pointerEvents: activeTab === 'n-1' ? 'auto' : 'none'
+                        }}>
+                            {/* Convergence warning banner */}
+                            {n1Diagram && n1Diagram.lf_converged === false && (
+                                <div style={{
+                                    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                    background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                    fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                    textAlign: 'center', pointerEvents: 'none'
+                                }}>
+                                    ⚠ AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                                </div>
+                            )}
+                            {n1Loading ?
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Generating N-1 Diagram...</div>
+                                : (n1Diagram?.svg ?
+                                    <div className="svg-container" ref={n1SvgContainerRef} dangerouslySetInnerHTML={{ __html: n1Diagram.svg }} />
+                                    : <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>Select a target contingency to view N-1</div>
+                                )
+                            }
+                        </div>
                     </div>
                 );
             };
