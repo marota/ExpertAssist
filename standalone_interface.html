@@ -933,24 +933,42 @@
                     <div className="main-content">
                         <div className="action-feed">
                             <h3>Actions</h3>
+                            {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
+                                <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
+                                    <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}
+                                </div>
+                            )}
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
-                                Object.entries(result.actions).sort(([, a], [, b]) => (parseFloat(a.new_max_rho) || 999) - (parseFloat(b.new_max_rho) || 999)).map(([id, details]) => (
-                                    <div key={id} className={`card ${details.new_max_rho === null ? 'ineffective' : ''}`} style={{ borderLeftColor: details.new_max_rho === null ? '#dc3545' : ((parseFloat(details.new_max_rho) || 999) < 0.9 ? '#28a745' : '#ffc107') }}>
-                                        <h4>{id}</h4>
-                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire || details.description}</p>
-                                        {details.new_max_rho !== null ? (
-                                            <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                                New Max Rho: <strong>{(parseFloat(details.new_max_rho)).toFixed(2)}</strong> {details.max_rho_line && `on ${details.max_rho_line}`}<br />
-                                                {details.old_rho && details.new_rho && (
-                                                    <div style={{ marginTop: '3px', color: '#555' }}>
-                                                        Evolution: {details.old_rho} → {details.new_rho}
-                                                        {details.max_rho_line && <span> (on {details.max_rho_line})</span>}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ) : <div style={{ color: '#dc3545', fontSize: '11px' }}>⚠️ Ineffective</div>}
+                                Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
+                                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+                                    const isOverloaded = details.max_rho != null && details.max_rho > 1.0;
+                                    const overloadedLines = result.lines_overloaded || [];
+                                    const formatRho = (arr) => {
+                                        if (!arr || arr.length === 0) return '—';
+                                        return arr.map((v, i) => `${overloadedLines[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
+                                    };
+                                    return (
+                                    <div key={id} className={`card ${!details.is_rho_reduction ? 'ineffective' : ''}`} style={{ borderLeftColor: details.is_rho_reduction ? '#28a745' : '#dc3545' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <h4 style={{ margin: 0 }}>#{index + 1} — {id}</h4>
+                                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: details.is_rho_reduction ? '#d4edda' : '#f8d7da', color: details.is_rho_reduction ? '#155724' : '#721c24' }}>
+                                                {details.is_rho_reduction ? 'Reduces overload' : 'No reduction'}
+                                            </span>
+                                        </div>
+                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                                        <div style={{ fontSize: '12px', background: '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                            <div>Rho before: {formatRho(details.rho_before)}</div>
+                                            <div>Rho after: {formatRho(details.rho_after)}</div>
+                                            {maxRhoPct != null && (
+                                                <div style={{ marginTop: '3px' }}>
+                                                    Max rho: <strong style={{ color: isOverloaded ? '#dc3545' : '#28a745' }}>{maxRhoPct}%</strong>
+                                                    {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                ))
+                                    );
+                                })
                             ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}
                         </div>
                         <div className="visualization" style={{ display: 'flex', flexDirection: 'column' }}>
