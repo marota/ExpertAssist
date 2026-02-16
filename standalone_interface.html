@@ -145,12 +145,11 @@
             stroke-width: 3px !important;
         }
 
-        /* Highlight lines acted upon by the selected action in yellow fluo */
+        /* Highlight lines acted upon by the selected action with a yellow fluo halo */
         .nad-action-target path,
         .nad-action-target line,
         .nad-action-target polyline {
-            stroke: #ccff00 !important;
-            stroke-width: 3px !important;
+            filter: drop-shadow(0 0 4px #ccff00) drop-shadow(0 0 8px #ccff00);
         }
 
         /* Hide text on large grids at full zoom — revealed by removing this class.
