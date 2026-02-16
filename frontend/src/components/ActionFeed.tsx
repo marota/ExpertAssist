@@ -1,39 +1,133 @@
 import React from 'react';
+import type { ActionDetail } from '../types';
 
 interface ActionFeedProps {
-    actions: Record<string, any>;
+    actions: Record<string, ActionDetail>;
+    linesOverloaded: string[];
+    selectedActionId: string | null;
+    onActionSelect: (actionId: string | null) => void;
 }
 
-const ActionFeed: React.FC<ActionFeedProps> = ({ actions }) => {
+const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
+    if (!rho || rho.length === 0) return '—';
+    return rho.map((val, i) => {
+        const pct = (val * 100).toFixed(1);
+        const name = lines[i] || `line ${i}`;
+        return `${name}: ${pct}%`;
+    }).join(', ');
+};
+
+const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded, selectedActionId, onActionSelect }) => {
     return (
         <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
-            <h3>Prioritized Actions</h3>
+            <h3 style={{ marginTop: 0 }}>Prioritized Actions</h3>
+
+            {linesOverloaded.length > 0 && (
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#fff3cd',
+                    border: '1px solid #ffc107',
+                    borderRadius: '6px',
+                    fontSize: '0.85rem',
+                }}>
+                    <strong>Overloaded lines:</strong>{' '}
+                    {linesOverloaded.join(', ')}
+                </div>
+            )}
+
             {Object.entries(actions).length === 0 ? (
                 <div style={{ color: '#666', fontStyle: 'italic' }}>No actions found.</div>
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {Object.entries(actions).map(([id, details]) => (
-                        <div key={id} style={{
-                            padding: '1rem',
-                            border: '1px solid #ddd',
-                            borderRadius: '8px',
-                            backgroundColor: 'white',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        }}>
-                            <h4 style={{ margin: '0 0 0.5rem 0', wordBreak: 'break-all' }}>{id}</h4>
-                            <pre style={{
-                                fontSize: '0.8rem',
-                                whiteSpace: 'pre-wrap',
-                                backgroundColor: '#f4f4f4',
-                                padding: '0.5rem',
-                                borderRadius: '4px',
-                                maxHeight: '200px',
-                                overflow: 'auto'
-                            }}>
-                                {JSON.stringify(details, null, 2)}
-                            </pre>
-                        </div>
-                    ))}
+                    {Object.entries(actions).map(([id, detail], index) => {
+                        const maxRhoPct = detail.max_rho != null ? (detail.max_rho * 100).toFixed(1) : null;
+                        const severity = detail.max_rho != null
+                            ? (detail.max_rho > 1.0 ? 'red' : detail.max_rho > 0.9 ? 'orange' : 'green')
+                            : (detail.is_rho_reduction ? 'green' : 'red');
+                        const severityMap = {
+                            green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                            orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
+                            red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
+                        };
+                        const sc = severityMap[severity];
+                        const isSelected = selectedActionId === id;
+
+                        return (
+                            <div
+                                key={id}
+                                onClick={() => onActionSelect(isSelected ? null : id)}
+                                style={{
+                                    padding: '1rem',
+                                    border: `1px solid ${isSelected ? '#007bff' : sc.border}`,
+                                    borderLeft: `4px solid ${isSelected ? '#007bff' : sc.border}`,
+                                    borderRadius: '8px',
+                                    backgroundColor: isSelected ? '#e7f1ff' : 'white',
+                                    boxShadow: isSelected
+                                        ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)'
+                                        : '0 2px 4px rgba(0,0,0,0.1)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                }}
+                            >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                    <h4 style={{ margin: 0, fontSize: '0.95rem', color: isSelected ? '#0056b3' : '#333' }}>
+                                        #{index + 1} — {id}
+                                    </h4>
+                                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        {isSelected && (
+                                            <span style={{
+                                                fontSize: '0.7rem',
+                                                fontWeight: 600,
+                                                padding: '2px 6px',
+                                                borderRadius: '4px',
+                                                backgroundColor: '#007bff',
+                                                color: 'white',
+                                            }}>
+                                                VIEWING
+                                            </span>
+                                        )}
+                                        <span style={{
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            backgroundColor: sc.badgeBg,
+                                            color: sc.badgeText,
+                                        }}>
+                                            {sc.label}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <p style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.9rem', color: '#555' }}>
+                                    {detail.description_unitaire}
+                                </p>
+
+                                <div style={{ fontSize: '0.82rem', lineHeight: 1.6, color: '#444' }}>
+                                    <div>
+                                        <strong>Rho before:</strong>{' '}
+                                        {formatRhoArray(detail.rho_before, linesOverloaded)}
+                                    </div>
+                                    <div>
+                                        <strong>Rho after:</strong>{' '}
+                                        {formatRhoArray(detail.rho_after, linesOverloaded)}
+                                    </div>
+                                    {maxRhoPct != null && (
+                                        <div style={{ marginTop: '0.25rem' }}>
+                                            <strong>Max rho:</strong>{' '}
+                                            <span style={{ color: sc.border, fontWeight: 600 }}>
+                                                {maxRhoPct}%
+                                            </span>
+                                            {detail.max_rho_line && (
+                                                <span style={{ color: '#888' }}> on {detail.max_rho_line}</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             )}
         </div>

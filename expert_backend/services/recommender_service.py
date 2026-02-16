@@ -1,6 +1,7 @@
 import expert_op4grid_recommender
 from expert_op4grid_recommender import config
 from expert_op4grid_recommender.main import Backend, run_analysis
+from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import os
 import glob
 from pathlib import Path
@@ -31,7 +32,8 @@ def sanitize_for_json(obj):
 
 class RecommenderService:
     def __init__(self):
-        pass
+        self._last_result = None
+        self._last_disconnected_element = None
 
     def update_config(self, network_path: str, action_file_path: str):
         # Update the global config of the package
@@ -57,9 +59,7 @@ class RecommenderService:
         import io
         import time
         import threading
-        import queue
         from contextlib import redirect_stdout
-        import re
 
         analysis_start_time = time.time()
         shared_state = {
@@ -158,34 +158,9 @@ class RecommenderService:
         analysis_message = shared_state["analysis_message"]
         dc_fallback_used = shared_state["dc_fallback_used"]
 
-        # Parse rho values from output
-        rho_info = {}
-        current_action_id = None
-        lines = output.split('\n')
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line: continue
-            if result and line in result:
-                current_action_id = line
-            if "✅ Rho reduction" in line and current_action_id:
-                match = re.search(r"Rho reduction from \[(.*?)\] to \[(.*?)\]. New max rho is (.*?) on line (.*)\.", line)
-                if match:
-                    rho_info[current_action_id] = {
-                        "old_rho": match.group(1),
-                        "new_rho": match.group(2),
-                        "new_max_rho": float(match.group(3)),
-                        "max_rho_line": match.group(4)
-                    }
-
-        # Load action descriptions
-        action_descriptions = {}
-        try:
-            if hasattr(config, 'ACTION_FILE_PATH') and config.ACTION_FILE_PATH.exists():
-                import json
-                with open(config.ACTION_FILE_PATH, 'r') as f:
-                    action_descriptions = json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load action descriptions: {e}")
+        # Store the full result for later action variant diagram generation
+        self._last_result = result
+        self._last_disconnected_element = disconnected_element
 
         if result is None:
             if "No topological solution without load shedding" in output:
@@ -195,96 +170,64 @@ class RecommenderService:
             else:
                 analysis_message = "Analysis finished but no recommendations were found."
             enriched_actions = {}
+            lines_overloaded = []
         else:
-            enriched_actions = {}
-            raw_actions = sanitize_for_json(result)
-            if isinstance(raw_actions, dict):
-                 for action_id, action_data in raw_actions.items():
-                     enriched_data = action_data.copy() if isinstance(action_data, dict) else {"data": action_data}
-                     item = None
-                     if action_id in action_descriptions:
-                         item = action_descriptions[action_id]
-                     else:
-                         possible_matches = [k for k in action_descriptions.keys() if k.lower() == action_id.lower()]
-                         if possible_matches:
-                             item = action_descriptions[possible_matches[0]]
-                         else:
-                             sub_match = re.search(r"_([A-Z0-9.]+?)$", action_id)
-                             if sub_match:
-                                 sub_name = sub_match.group(1)
-                                 matching_sub_keys = [k for k in action_descriptions.keys() if k.endswith(f"_{sub_name}")]
-                                 if matching_sub_keys:
-                                     item = action_descriptions[matching_sub_keys[0]]
-                             
-                             if not item and action_id.startswith("reco_"):
-                                 stripped_reco = action_id[5:]
-                                 if stripped_reco in action_descriptions:
-                                     item = action_descriptions[stripped_reco]
-                                 else:
-                                     possible_matches = [k for k in action_descriptions.keys() if k.lower() == stripped_reco.lower()]
-                                     if possible_matches:
-                                         item = action_descriptions[possible_matches[0]]
+            lines_overloaded = result.get("lines_overloaded_names", [])
+            prioritized = result.get("prioritized_actions", {})
 
-                     if item:
-                         desc = item.get("description", "")
-                         desc_unit = item.get("description_unitaire", "")
-                         enriched_data["description"] = desc
-                         enriched_data["description_unitaire"] = desc_unit if desc_unit else desc
-                     else:
-                         enriched_data["description"] = "No description available"
-                         enriched_data["description_unitaire"] = "No description available"
-                     
-                     if action_id in rho_info:
-                         enriched_data.update(rho_info[action_id])
-                     enriched_actions[action_id] = enriched_data
+            enriched_actions = {}
+            for action_id, action_data in prioritized.items():
+                enriched_actions[action_id] = {
+                    "description_unitaire": action_data.get("description_unitaire") or "No description available",
+                    "rho_before": sanitize_for_json(action_data.get("rho_before")),
+                    "rho_after": sanitize_for_json(action_data.get("rho_after")),
+                    "max_rho": sanitize_for_json(action_data.get("max_rho")),
+                    "max_rho_line": action_data.get("max_rho_line", ""),
+                    "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
+                }
 
         yield {
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
             "actions": enriched_actions,
+            "lines_overloaded": sanitize_for_json(lines_overloaded),
             "message": analysis_message,
             "dc_fallback": dc_fallback_used
         }
 
-    def get_network_diagram(self):
+    def _load_network(self):
+        """Load and return a pypowsybl network from config path."""
         import pypowsybl as pp
-        import pandas as pd
-        import json
-        from pypowsybl.network import NadParameters
-        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
-        
-        # Load network from config
+
         network_file = config.ENV_PATH / "grid.xiidm"
         if not network_file.exists():
-             # Fallback to search in ENV_PATH
-             xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
-             if xiidm_files:
-                 network_file = xiidm_files[0]
-             else:
-                 raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
-             
-        n = pp.network.load(str(network_file))
-        
-        # Load layout if available
+            xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
+            if xiidm_files:
+                network_file = xiidm_files[0]
+            else:
+                raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
+        return pp.network.load(str(network_file))
+
+    def _load_layout(self):
+        """Load layout DataFrame from grid_layout.json if available."""
+        import pandas as pd
+        import json
+
         layout_file = config.ENV_PATH / "grid_layout.json"
-        df_layout = None
         if layout_file.exists():
             try:
                 with open(layout_file, 'r') as f:
                     layout_data = json.load(f)
-                
-                # Convert layout_data to DataFrame
-                # JSON is { "ID": [x, y], ... }
-                records = []
-                for node_id, coords in layout_data.items():
-                    records.append({'id': node_id, 'x': coords[0], 'y': coords[1]})
-                
-                df_layout = pd.DataFrame(records).set_index('id')
+                records = [{'id': k, 'x': v[0], 'y': v[1]} for k, v in layout_data.items()]
+                return pd.DataFrame(records).set_index('id')
             except Exception as e:
                 print(f"Warning: Could not load layout: {e}")
+        return None
 
-        # Generate diagram with default parameters used in nad_explorer
-        npars = NadParameters(
+    def _default_nad_parameters(self):
+        """Return default NadParameters for diagram generation."""
+        from pypowsybl.network import NadParameters
+        return NadParameters(
             edge_name_displayed=False,
             id_displayed=False,
             edge_info_along_edge=True,
@@ -295,90 +238,92 @@ class RecommenderService:
             bus_legend=True,
             substation_description_displayed=True
         )
-        
-        diagram = n.get_network_area_diagram(
-            nad_parameters=npars,
-            fixed_positions=df_layout
-        )
-        
-        svg_value = _get_svg_string(diagram)
-        svg_metadata = _get_svg_metadata(diagram)
-        
+
+    def _generate_diagram(self, network, voltage_level_ids=None, depth=0):
+        """Generate NAD and return svg + metadata dict.
+
+        Args:
+            network: pypowsybl network object
+            voltage_level_ids: list of VL IDs to center on (None = full grid)
+            depth: number of hops from center VLs to include
+        """
+        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
+
+        df_layout = self._load_layout()
+        npars = self._default_nad_parameters()
+
+        kwargs = dict(nad_parameters=npars)
+        if df_layout is not None:
+            kwargs['fixed_positions'] = df_layout
+        if voltage_level_ids is not None:
+            kwargs['voltage_level_ids'] = voltage_level_ids
+            kwargs['depth'] = depth
+
+        diagram = network.get_network_area_diagram(**kwargs)
+
         return {
-            "svg": svg_value,
-            "metadata": svg_metadata
+            "svg": _get_svg_string(diagram),
+            "metadata": _get_svg_metadata(diagram),
         }
 
-    def get_n1_diagram(self, disconnected_element: str):
+    def get_network_diagram(self, voltage_level_ids=None, depth=0):
+        n = self._load_network()
+        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+
+    def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
-        import pandas as pd
-        import json
-        from pypowsybl.network import NadParameters
-        from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
-        
-        # Load network from config
-        network_file = config.ENV_PATH / "grid.xiidm"
-        if not network_file.exists():
-             xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
-             if xiidm_files:
-                 network_file = xiidm_files[0]
-             else:
-                 raise FileNotFoundError(f"Network file not found in {config.ENV_PATH}")
-             
-        n = pp.network.load(str(network_file))
-        
-        # Apply contingency (N-1)
-        # We try to disconnect the element by ID.
+
+        n = self._load_network()
+
         try:
             n.disconnect(disconnected_element)
         except Exception as e:
             raise ValueError(f"Failed to disconnect element {disconnected_element}: {e}")
 
-        # Run Load Flow (AC with DC fallback)
-        params = pp.loadflow.Parameters()
+        params = create_olf_rte_parameter()#pp.loadflow.Parameters()
         results = pp.loadflow.run_ac(n, params)
-        # Check if converged? If strictly needed for diagram, yes. 
-        # But even if not converged, we might want to see the state. 
-        # However, for N-1 visualization, we usually want the post-contingency steady state.
-        
-        # Load layout if available
-        layout_file = config.ENV_PATH / "grid_layout.json"
-        df_layout = None
-        if layout_file.exists():
-            try:
-                with open(layout_file, 'r') as f:
-                    layout_data = json.load(f)
-                records = []
-                for node_id, coords in layout_data.items():
-                    records.append({'id': node_id, 'x': coords[0], 'y': coords[1]})
-                df_layout = pd.DataFrame(records).set_index('id')
-            except Exception as e:
-                print(f"Warning: Could not load layout: {e}")
 
-        # Generate diagram
-        npars = NadParameters(
-            edge_name_displayed=False,
-            id_displayed=False,
-            edge_info_along_edge=True,
-            power_value_precision=1,
-            angle_value_precision=0,
-            current_value_precision=1,
-            voltage_value_precision=0,
-            bus_legend=True,
-            substation_description_displayed=True
-        )
-        
-        diagram = n.get_network_area_diagram(
-            nad_parameters=npars,
-            fixed_positions=df_layout
-        )
-        
-        svg_value = _get_svg_string(diagram)
-        svg_metadata = _get_svg_metadata(diagram)
-        
-        return {
-            "svg": svg_value,
-            "metadata": svg_metadata
-        }
+        # Check convergence — partial AC results are still better than DC
+        # (DC only computes angles/power, not voltage magnitudes).
+        converged = any(r.status.name == 'CONVERGED' for r in results)
+        lf_status = results[0].status.name if results else "UNKNOWN"
+        if not converged:
+            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}): {lf_status}")
+
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lf_converged"] = converged
+        diagram["lf_status"] = lf_status
+        return diagram
+
+    def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0):
+        """Generate a NAD showing the network state after applying a remedial action.
+
+        Uses the variant ID and network manager stored in the observation from
+        the last analysis run to switch to the post-action network state
+        directly, avoiding the need to replay disconnections on a fresh network.
+        """
+        if not self._last_result or not self._last_result.get("prioritized_actions"):
+            raise ValueError("No analysis result available. Run analysis first.")
+
+        actions = self._last_result["prioritized_actions"]
+        if action_id not in actions:
+            raise ValueError(f"Action '{action_id}' not found in last analysis result.")
+
+        obs = actions[action_id]["observation"]
+
+        # Extract the variant ID and network manager from the observation
+        variant_id = obs._variant_id
+        nm = obs._network_manager
+
+        # Switch to the action's variant which already contains the
+        # post-action network state with load flow results
+        nm.set_working_variant(variant_id)
+
+        # Use the underlying pypowsybl network directly
+        network = nm.network
+
+        diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["action_id"] = action_id
+        return diagram
 
 recommender_service = RecommenderService()
