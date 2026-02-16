@@ -40,13 +40,22 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {Object.entries(actions).map(([id, detail], index) => {
                         const maxRhoPct = detail.max_rho != null ? (detail.max_rho * 100).toFixed(1) : null;
-                        const isOverloaded = detail.max_rho != null && detail.max_rho > 1.0;
+                        // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
+                        const severity = detail.max_rho != null
+                            ? (detail.max_rho > 1.0 ? 'red' : detail.max_rho > 0.9 ? 'orange' : 'green')
+                            : (detail.is_rho_reduction ? 'green' : 'red');
+                        const severityMap = {
+                            green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                            orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Partial reduction' },
+                            red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
+                        };
+                        const sc = severityMap[severity];
 
                         return (
                             <div key={id} style={{
                                 padding: '1rem',
-                                border: `1px solid ${detail.is_rho_reduction ? '#28a745' : '#dc3545'}`,
-                                borderLeft: `4px solid ${detail.is_rho_reduction ? '#28a745' : '#dc3545'}`,
+                                border: `1px solid ${sc.border}`,
+                                borderLeft: `4px solid ${sc.border}`,
                                 borderRadius: '8px',
                                 backgroundColor: 'white',
                                 boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
@@ -60,10 +69,10 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                                         fontWeight: 600,
                                         padding: '2px 8px',
                                         borderRadius: '12px',
-                                        backgroundColor: detail.is_rho_reduction ? '#d4edda' : '#f8d7da',
-                                        color: detail.is_rho_reduction ? '#155724' : '#721c24',
+                                        backgroundColor: sc.badgeBg,
+                                        color: sc.badgeText,
                                     }}>
-                                        {detail.is_rho_reduction ? 'Reduces overload' : 'No reduction'}
+                                        {sc.label}
                                     </span>
                                 </div>
 
@@ -83,7 +92,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                                     {maxRhoPct != null && (
                                         <div style={{ marginTop: '0.25rem' }}>
                                             <strong>Max rho:</strong>{' '}
-                                            <span style={{ color: isOverloaded ? '#dc3545' : '#28a745', fontWeight: 600 }}>
+                                            <span style={{ color: sc.border, fontWeight: 600 }}>
                                                 {maxRhoPct}%
                                             </span>
                                             {detail.max_rho_line && (

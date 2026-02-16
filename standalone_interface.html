@@ -484,16 +484,7 @@
             const activeTabRef = useRef(activeTab);
             // useLayoutEffect to ensure ref is updated before any layout effects (like svg-pan-zoom) run
             useLayoutEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
-            const [reinitCount, setReinitCount] = useState(0);
             const prevTabRef = useRef(activeTab);
-
-            // Force re-init when returning from overflow tab to fix visibility issues
-            useEffect(() => {
-                if (prevTabRef.current === 'overflow' && activeTab !== 'overflow') {
-                    setReinitCount(c => c + 1);
-                }
-                prevTabRef.current = activeTab;
-            }, [activeTab]);
 
             const [nDiagram, setNDiagram] = useState(null);
             const [n1Diagram, setN1Diagram] = useState(null);
@@ -957,18 +948,27 @@
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
                                 Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
                                     const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
-                                    const isOverloaded = details.max_rho != null && details.max_rho > 1.0;
                                     const overloadedLines = result.lines_overloaded || [];
+                                    // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
+                                    const severity = details.max_rho != null
+                                        ? (details.max_rho > 1.0 ? 'red' : details.max_rho > 0.9 ? 'orange' : 'green')
+                                        : (details.is_rho_reduction ? 'green' : 'red');
+                                    const severityColors = {
+                                        green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Partial reduction' },
+                                        red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
+                                    };
+                                    const sc = severityColors[severity];
                                     const formatRho = (arr) => {
                                         if (!arr || arr.length === 0) return '—';
                                         return arr.map((v, i) => `${overloadedLines[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
                                     };
                                     return (
-                                    <div key={id} className={`card ${!details.is_rho_reduction ? 'ineffective' : ''}`} style={{ borderLeftColor: details.is_rho_reduction ? '#28a745' : '#dc3545' }}>
+                                    <div key={id} className="card" style={{ borderLeftColor: sc.border }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <h4 style={{ margin: 0 }}>#{index + 1} — {id}</h4>
-                                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: details.is_rho_reduction ? '#d4edda' : '#f8d7da', color: details.is_rho_reduction ? '#155724' : '#721c24' }}>
-                                                {details.is_rho_reduction ? 'Reduces overload' : 'No reduction'}
+                                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                                {sc.label}
                                             </span>
                                         </div>
                                         <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
@@ -977,7 +977,7 @@
                                             <div>Rho after: {formatRho(details.rho_after)}</div>
                                             {maxRhoPct != null && (
                                                 <div style={{ marginTop: '3px' }}>
-                                                    Max rho: <strong style={{ color: isOverloaded ? '#dc3545' : '#28a745' }}>{maxRhoPct}%</strong>
+                                                    Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
                                                     {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
                                                 </div>
                                             )}
