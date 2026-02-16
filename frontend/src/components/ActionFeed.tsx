@@ -4,6 +4,8 @@ import type { ActionDetail } from '../types';
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
     linesOverloaded: string[];
+    selectedActionId: string | null;
+    onActionSelect: (actionId: string | null) => void;
 }
 
 const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
@@ -15,7 +17,7 @@ const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
     }).join(', ');
 };
 
-const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => {
+const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded, selectedActionId, onActionSelect }) => {
     return (
         <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
             <h3 style={{ marginTop: 0 }}>Prioritized Actions</h3>
@@ -40,7 +42,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {Object.entries(actions).map(([id, detail], index) => {
                         const maxRhoPct = detail.max_rho != null ? (detail.max_rho * 100).toFixed(1) : null;
-                        // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
                         const severity = detail.max_rho != null
                             ? (detail.max_rho > 1.0 ? 'red' : detail.max_rho > 0.9 ? 'orange' : 'green')
                             : (detail.is_rho_reduction ? 'green' : 'red');
@@ -50,30 +51,53 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                             red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
                         };
                         const sc = severityMap[severity];
+                        const isSelected = selectedActionId === id;
 
                         return (
-                            <div key={id} style={{
-                                padding: '1rem',
-                                border: `1px solid ${sc.border}`,
-                                borderLeft: `4px solid ${sc.border}`,
-                                borderRadius: '8px',
-                                backgroundColor: 'white',
-                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                            }}>
+                            <div
+                                key={id}
+                                onClick={() => onActionSelect(isSelected ? null : id)}
+                                style={{
+                                    padding: '1rem',
+                                    border: `1px solid ${isSelected ? '#007bff' : sc.border}`,
+                                    borderLeft: `4px solid ${isSelected ? '#007bff' : sc.border}`,
+                                    borderRadius: '8px',
+                                    backgroundColor: isSelected ? '#e7f1ff' : 'white',
+                                    boxShadow: isSelected
+                                        ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)'
+                                        : '0 2px 4px rgba(0,0,0,0.1)',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                }}
+                            >
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                    <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#333' }}>
+                                    <h4 style={{ margin: 0, fontSize: '0.95rem', color: isSelected ? '#0056b3' : '#333' }}>
                                         #{index + 1} — {id}
                                     </h4>
-                                    <span style={{
-                                        fontSize: '0.75rem',
-                                        fontWeight: 600,
-                                        padding: '2px 8px',
-                                        borderRadius: '12px',
-                                        backgroundColor: sc.badgeBg,
-                                        color: sc.badgeText,
-                                    }}>
-                                        {sc.label}
-                                    </span>
+                                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        {isSelected && (
+                                            <span style={{
+                                                fontSize: '0.7rem',
+                                                fontWeight: 600,
+                                                padding: '2px 6px',
+                                                borderRadius: '4px',
+                                                backgroundColor: '#007bff',
+                                                color: 'white',
+                                            }}>
+                                                VIEWING
+                                            </span>
+                                        )}
+                                        <span style={{
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            padding: '2px 8px',
+                                            borderRadius: '12px',
+                                            backgroundColor: sc.badgeBg,
+                                            color: sc.badgeText,
+                                        }}>
+                                            {sc.label}
+                                        </span>
+                                    </div>
                                 </div>
 
                                 <p style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.9rem', color: '#555' }}>

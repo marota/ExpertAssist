@@ -36,6 +36,9 @@ class FocusedDiagramRequest(BaseModel):
     depth: int = 1
     disconnected_element: str = None
 
+class ActionVariantRequest(BaseModel):
+    action_id: str
+
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
     try:
@@ -124,6 +127,20 @@ def get_network_diagram():
 def get_n1_diagram(request: AnalysisRequest):
     try:
         diagram = recommender_service.get_n1_diagram(request.disconnected_element)
+        return diagram
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/action-variant-diagram")
+def get_action_variant_diagram(request: ActionVariantRequest):
+    """Generate a NAD for the network state after applying a remedial action.
+
+    Requires a prior call to /api/run-analysis so the observation is available.
+    """
+    try:
+        diagram = recommender_service.get_action_variant_diagram(request.action_id)
         return diagram
     except Exception as e:
         import traceback
