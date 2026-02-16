@@ -511,6 +511,10 @@
             const lastViewStateN = useRef(null); // { zoom, pan: {x, y} }
             const lastViewStateN1 = useRef(null); // { zoom, pan: {x, y} }
             const lastZoomState = useRef({ query: '', branch: '' }); // Tracks last auto-zoom triggers
+            // Captured viewBox to re-apply after the action diagram loads
+            // (the tab-switch sync fires before the SVG exists, then
+            // usePanZoom resets to the diagram's native viewBox).
+            const actionSyncSourceRef = useRef(null);
 
 
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
@@ -674,6 +678,15 @@
                     setActiveTab('n-1');
                     return;
                 }
+
+                // Capture current viewBox so we can re-apply it after the
+                // action diagram loads (the tab-switch sync fires before
+                // the SVG exists, then usePanZoom resets to the native
+                // viewBox — we need to override that).
+                actionSyncSourceRef.current =
+                    (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
+                    || n1PZ.viewBox || nPZ.viewBox;
+
                 setSelectedActionId(actionId);
                 setActionDiagram(null);
                 setActionDiagramLoading(true);
@@ -722,6 +735,16 @@
                     actionPZ.setViewBox(sourceVB);
                 }
             }, [activeTab]);
+
+            // Re-sync after action diagram loads: usePanZoom's initialViewBox
+            // effect resets to the diagram's native viewBox, so we override it
+            // with the captured source viewBox from the tab the user was on.
+            useEffect(() => {
+                if (actionDiagram && activeTab === 'action' && actionSyncSourceRef.current) {
+                    actionPZ.setViewBox(actionSyncSourceRef.current);
+                    actionSyncSourceRef.current = null;
+                }
+            }, [actionDiagram]);
 
             // Pre-indexed metadata for O(1) lookups in zoomToElement
             const nMetaIndex = useMemo(() => buildMetadataIndex(nDiagram?.metadata), [nDiagram?.metadata]);
