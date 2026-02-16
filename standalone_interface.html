@@ -782,13 +782,34 @@
                 const overloadedLines = result?.lines_overloaded || [];
                 if (overloadedLines.length === 0) return;
 
+                // N-1: highlight all initially overloaded lines
                 if (n1SvgContainerRef.current && n1MetaIndex) {
                     applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
                 }
-                if (actionSvgContainerRef.current && actionMetaIndex) {
-                    applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, overloadedLines);
+
+                // Action: only highlight lines that remain >100% after the action
+                if (actionSvgContainerRef.current && actionMetaIndex && selectedActionId && result?.actions) {
+                    const actionDetail = result.actions[selectedActionId];
+                    if (actionDetail) {
+                        const stillOverloaded = [];
+                        // Keep initially overloaded lines whose rho_after > 1.0
+                        if (actionDetail.rho_after) {
+                            overloadedLines.forEach((name, i) => {
+                                if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
+                                    stillOverloaded.push(name);
+                                }
+                            });
+                        }
+                        // If a different line became the new max and is >100%, highlight it too
+                        if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
+                            if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
+                                stillOverloaded.push(actionDetail.max_rho_line);
+                            }
+                        }
+                        applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                    }
                 }
-            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result?.lines_overloaded]);
+            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId]);
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {

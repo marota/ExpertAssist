@@ -70,6 +70,7 @@ function App() {
             selectedActionId={selectedActionId}
             onDeselectAction={handleDeselectAction}
             linesOverloaded={analysisResult?.lines_overloaded || []}
+            selectedActionDetail={selectedActionId && analysisResult?.actions ? analysisResult.actions[selectedActionId] ?? null : null}
           />
         </div>
       </div>

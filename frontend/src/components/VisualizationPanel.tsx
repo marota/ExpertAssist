@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
-import type { DiagramData } from '../types';
+import type { ActionDetail, DiagramData } from '../types';
 
 interface EdgeMeta {
     equipmentId: string;
@@ -21,6 +21,7 @@ interface VisualizationPanelProps {
     selectedActionId: string | null;
     onDeselectAction: () => void;
     linesOverloaded: string[];
+    selectedActionDetail: ActionDetail | null;
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -30,13 +31,37 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     selectedActionId,
     onDeselectAction,
     linesOverloaded,
+    selectedActionDetail,
 }) => {
     const svgContainerRef = useRef<HTMLDivElement>(null);
 
-    // Highlight overloaded lines in orange after the action SVG is rendered
+    // Highlight lines that are still >100% after the action in orange
     useEffect(() => {
         const container = svgContainerRef.current;
-        if (!container || !actionDiagram?.svg || linesOverloaded.length === 0) return;
+        if (!container || !actionDiagram?.svg) return;
+
+        // Clear previous overloaded highlights
+        container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
+
+        if (linesOverloaded.length === 0 || !selectedActionDetail) return;
+
+        // Compute which lines remain overloaded (>100%) after the action
+        const stillOverloaded: string[] = [];
+        if (selectedActionDetail.rho_after) {
+            linesOverloaded.forEach((name, i) => {
+                if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
+                    stillOverloaded.push(name);
+                }
+            });
+        }
+        // If a different line became the new max and is >100%, highlight it too
+        if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
+            if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
+                stillOverloaded.push(selectedActionDetail.max_rho_line);
+            }
+        }
+
+        if (stillOverloaded.length === 0) return;
 
         // Parse metadata to build equipmentId -> svgId mapping
         const meta: DiagramMetadata = typeof actionDiagram.metadata === 'string'
@@ -47,18 +72,15 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         const edgesByEquipmentId = new Map<string, EdgeMeta>();
         edges.forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
 
-        // Clear previous overloaded highlights
-        container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
-
-        // Apply orange highlight to each overloaded line's SVG edge element
-        linesOverloaded.forEach(lineName => {
+        // Apply orange highlight to each still-overloaded line's SVG edge element
+        stillOverloaded.forEach(lineName => {
             const edge = edgesByEquipmentId.get(lineName);
             if (edge?.svgId) {
                 const el = container.querySelector(`[id="${edge.svgId}"]`);
                 if (el) el.classList.add('nad-overloaded');
             }
         });
-    }, [actionDiagram, linesOverloaded]);
+    }, [actionDiagram, linesOverloaded, selectedActionDetail]);
 
     const showingAction = selectedActionId !== null;
     const showingPdf = !showingAction && pdfUrl !== null;
