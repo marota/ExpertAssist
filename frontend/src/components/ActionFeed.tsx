@@ -46,7 +46,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded }) => 
                             : (detail.is_rho_reduction ? 'green' : 'red');
                         const severityMap = {
                             green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
-                            orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Partial reduction' },
+                            orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
                             red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
                         };
                         const sc = severityMap[severity];
