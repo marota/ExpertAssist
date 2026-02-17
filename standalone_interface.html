@@ -576,12 +576,14 @@
                 const quotedMatches = desc.match(/'([^']+)'/g);
                 if (quotedMatches && quotedMatches.length > 0) {
                     const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
+                    console.log('[action-target] quoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
                     if (nodesByEquipmentId.has(vl)) return vl;
                 }
                 // Try unquoted: "dans le poste VLNAME"
                 const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
                 if (posteMatch) {
                     const vl = posteMatch[1].replace(/['"]/g, '');
+                    console.log('[action-target] unquoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
                     if (nodesByEquipmentId.has(vl)) return vl;
                 }
             }
@@ -589,8 +591,10 @@
             if (actionId) {
                 const parts = actionId.split('_');
                 const candidate = parts[parts.length - 1];
+                console.log('[action-target] actionId suffix candidate:', candidate, '→ in metadata:', nodesByEquipmentId.has(candidate));
                 if (nodesByEquipmentId.has(candidate)) return candidate;
             }
+            console.log('[action-target] no VL found. metadata node keys sample:', [...nodesByEquipmentId.keys()].slice(0, 10));
             return null;
         };
 
@@ -602,6 +606,7 @@
             if (!metaIndex || !actionDetail) return;
 
             const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
+            console.log('[action-target] actionId:', actionId, 'desc:', actionDetail?.description_unitaire);
 
             // Create or find background layer at the root of the SVG
             let backgroundLayer = container.querySelector('#nad-background-layer');
@@ -649,12 +654,17 @@
 
             // 1. Try VL detection first (handles nodal AND coupler actions)
             const vlName = getActionTargetVoltageLevel(actionDetail, actionId, nodesByEquipmentId);
+            console.log('[action-target] VL result:', vlName);
             if (vlName) {
                 const node = nodesByEquipmentId.get(vlName);
+                console.log('[action-target] node svgId:', node?.svgId);
                 if (node && node.svgId) {
                     const el = container.querySelector(`[id="${node.svgId}"]`);
-                    applyHighlight(el);
-                    if (el) return;
+                    console.log('[action-target] SVG element found:', !!el);
+                    if (el) {
+                        el.classList.add('nad-action-target');
+                        return;
+                    }
                 }
             }
 
