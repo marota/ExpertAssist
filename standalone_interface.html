@@ -532,29 +532,47 @@
             return [];
         };
 
-        // Extract the voltage level name from description_unitaire for nodal actions.
-        // Pattern: "... dans le poste 'VL_NAME'" → last single-quoted string is the VL.
-        const getActionTargetVoltageLevel = (actionDetail) => {
+        // Extract the voltage level name for nodal actions.
+        // Tries: 1) quoted "dans le poste 'VL'" 2) unquoted "dans le poste VL" 3) action ID suffix
+        const getActionTargetVoltageLevel = (actionDetail, actionId, nodesByEquipmentId) => {
             const desc = actionDetail?.description_unitaire;
-            if (!desc) return null;
-            const matches = desc.match(/'([^']+)'/g);
-            if (!matches || matches.length === 0) return null;
-            // Last quoted string is the voltage level
-            return matches[matches.length - 1].replace(/'/g, '');
+            if (desc && desc !== 'No description available') {
+                // Try quoted format: last single-quoted string
+                const quotedMatches = desc.match(/'([^']+)'/g);
+                if (quotedMatches && quotedMatches.length > 0) {
+                    const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
+                    if (nodesByEquipmentId.has(vl)) return vl;
+                }
+                // Try unquoted: "dans le poste VLNAME"
+                const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+                if (posteMatch) {
+                    const vl = posteMatch[1].replace(/['"]/g, '');
+                    if (nodesByEquipmentId.has(vl)) return vl;
+                }
+            }
+            // Fallback: last _-separated segment of action ID
+            if (actionId) {
+                const parts = actionId.split('_');
+                const candidate = parts[parts.length - 1];
+                if (nodesByEquipmentId.has(candidate)) return candidate;
+            }
+            return null;
         };
 
         // Apply yellow fluo halo to action targets: edges (line actions) or nodes (nodal actions)
-        const applyActionTargetHighlights = (container, metaIndex, actionDetail) => {
+        const applyActionTargetHighlights = (container, metaIndex, actionDetail, actionId) => {
             if (!container) return;
             container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
             if (!metaIndex || !actionDetail) return;
 
             const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
 
-            // Try line action first
+            // Try line action: only if topology line keys map to actual edges in the diagram
+            // (couplers like COUCHP6_COUCH6COUPL appear in lines_*_bus but are not diagram edges)
             const targetLines = getActionTargetLines(actionDetail);
-            if (targetLines.length > 0) {
-                targetLines.forEach(lineName => {
+            const matchedEdges = targetLines.filter(name => edgesByEquipmentId.has(name));
+            if (matchedEdges.length > 0) {
+                matchedEdges.forEach(lineName => {
                     const edge = edgesByEquipmentId.get(lineName);
                     if (edge && edge.svgId) {
                         const el = container.querySelector(`[id="${edge.svgId}"]`);
@@ -565,7 +583,7 @@
             }
 
             // Nodal action: highlight the voltage level node
-            const vlName = getActionTargetVoltageLevel(actionDetail);
+            const vlName = getActionTargetVoltageLevel(actionDetail, actionId, nodesByEquipmentId);
             if (vlName) {
                 const node = nodesByEquipmentId.get(vlName);
                 if (node && node.svgId) {
@@ -891,12 +909,12 @@
                         applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
 
                         // Yellow fluo halo: line targets or VL node depending on action type
-                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail);
+                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
                     }
                 } else {
                     // Clear action target highlights when no action is selected
                     if (actionSvgContainerRef.current) {
-                        applyActionTargetHighlights(actionSvgContainerRef.current, null, null);
+                        applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
                     }
                 }
             }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId]);

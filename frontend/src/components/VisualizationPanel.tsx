@@ -82,6 +82,9 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 
         // Yellow fluo halo: action targets (lines or voltage level node)
         const topo = selectedActionDetail.action_topology;
+
+        // Determine candidate line names from topology
+        let targetLines: string[] = [];
         if (topo) {
             const lineKeys = new Set([
                 ...Object.keys(topo.lines_ex_bus || {}),
@@ -90,7 +93,6 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             const genKeys = Object.keys(topo.gens_bus || {});
             const loadKeys = Object.keys(topo.loads_bus || {});
 
-            let targetLines: string[] = [];
             if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
                 targetLines = [...lineKeys];
             } else {
@@ -104,25 +106,47 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     targetLines = [...lineKeys];
                 }
             }
+        }
 
-            if (targetLines.length > 0) {
-                // Line action: halo on edges
-                targetLines.forEach(name => {
-                    const edge = edgesByEquipmentId.get(name);
-                    if (edge?.svgId) highlightById(edge.svgId, 'nad-action-target');
-                });
-            } else {
-                // Nodal action: halo on VL node (last quoted string in description)
+        // Only treat as line action if the topology line keys map to actual diagram edges
+        // (couplers like COUCHP6_COUCH6COUPL appear in lines_*_bus but are not diagram edges)
+        const matchedEdges = targetLines.filter(name => edgesByEquipmentId.has(name));
+        if (matchedEdges.length > 0) {
+            matchedEdges.forEach(name => {
+                const edge = edgesByEquipmentId.get(name);
+                if (edge?.svgId) highlightById(edge.svgId, 'nad-action-target');
+            });
+        } else {
+            // Nodal action: extract VL from description or action ID suffix
+            const findVoltageLevel = (): string | null => {
                 const desc = selectedActionDetail.description_unitaire;
-                const matches = desc?.match(/'([^']+)'/g);
-                if (matches && matches.length > 0) {
-                    const vlName = matches[matches.length - 1].replace(/'/g, '');
-                    const node = nodesByEquipmentId.get(vlName);
-                    if (node?.svgId) highlightById(node.svgId, 'nad-action-target');
+                if (desc && desc !== 'No description available') {
+                    const quotedMatches = desc.match(/'([^']+)'/g);
+                    if (quotedMatches && quotedMatches.length > 0) {
+                        const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
+                        if (nodesByEquipmentId.has(vl)) return vl;
+                    }
+                    const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+                    if (posteMatch) {
+                        const vl = posteMatch[1].replace(/['"]/g, '');
+                        if (nodesByEquipmentId.has(vl)) return vl;
+                    }
                 }
+                if (selectedActionId) {
+                    const parts = selectedActionId.split('_');
+                    const candidate = parts[parts.length - 1];
+                    if (nodesByEquipmentId.has(candidate)) return candidate;
+                }
+                return null;
+            };
+
+            const vlName = findVoltageLevel();
+            if (vlName) {
+                const node = nodesByEquipmentId.get(vlName);
+                if (node?.svgId) highlightById(node.svgId, 'nad-action-target');
             }
         }
-    }, [actionDiagram, linesOverloaded, selectedActionDetail]);
+    }, [actionDiagram, linesOverloaded, selectedActionDetail, selectedActionId]);
 
     const showingAction = selectedActionId !== null;
     const showingPdf = !showingAction && pdfUrl !== null;
