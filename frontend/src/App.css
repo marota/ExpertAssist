@@ -11,6 +11,7 @@
 /* Highlight lines acted upon by the selected action with a yellow fluo halo */
 .nad-action-target path,
 .nad-action-target line,
-.nad-action-target polyline {
+.nad-action-target polyline,
+.nad-action-target circle {
     filter: drop-shadow(0 0 4px #ccff00) drop-shadow(0 0 8px #ccff00);
 }

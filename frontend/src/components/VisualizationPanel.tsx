@@ -2,16 +2,15 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import type { ActionDetail, DiagramData } from '../types';
 
-interface EdgeMeta {
+interface ElementMeta {
     equipmentId: string;
     svgId: string;
-    node1: string;
-    node2: string;
+    [key: string]: unknown;
 }
 
 interface DiagramMetadata {
-    nodes?: unknown[];
-    edges?: EdgeMeta[];
+    nodes?: ElementMeta[];
+    edges?: ElementMeta[];
 }
 
 interface VisualizationPanelProps {
@@ -35,7 +34,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 }) => {
     const svgContainerRef = useRef<HTMLDivElement>(null);
 
-    // Highlight overloaded lines (orange) and acted-upon lines (yellow fluo) on action SVG
+    // Highlight overloaded lines (orange) and action targets (yellow fluo halo) on action SVG
     useEffect(() => {
         const container = svgContainerRef.current;
         if (!container || !actionDiagram?.svg) return;
@@ -46,22 +45,18 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 
         if (!selectedActionDetail) return;
 
-        // Parse metadata to build equipmentId -> svgId mapping
+        // Parse metadata to build equipmentId -> svgId mappings
         const meta: DiagramMetadata = typeof actionDiagram.metadata === 'string'
             ? JSON.parse(actionDiagram.metadata)
             : (actionDiagram.metadata as DiagramMetadata) ?? {};
-        const edges = meta.edges || [];
-        const edgesByEquipmentId = new Map<string, EdgeMeta>();
-        edges.forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
+        const edgesByEquipmentId = new Map<string, ElementMeta>();
+        (meta.edges || []).forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
+        const nodesByEquipmentId = new Map<string, ElementMeta>();
+        (meta.nodes || []).forEach(n => nodesByEquipmentId.set(n.equipmentId, n));
 
-        const highlightEdges = (lineNames: string[], className: string) => {
-            lineNames.forEach(lineName => {
-                const edge = edgesByEquipmentId.get(lineName);
-                if (edge?.svgId) {
-                    const el = container.querySelector(`[id="${edge.svgId}"]`);
-                    if (el) el.classList.add(className);
-                }
-            });
+        const highlightById = (svgId: string, className: string) => {
+            const el = container.querySelector(`[id="${svgId}"]`);
+            if (el) el.classList.add(className);
         };
 
         // Orange: lines that remain >100% after the action
@@ -79,10 +74,13 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     stillOverloaded.push(selectedActionDetail.max_rho_line);
                 }
             }
-            highlightEdges(stillOverloaded, 'nad-overloaded');
+            stillOverloaded.forEach(name => {
+                const edge = edgesByEquipmentId.get(name);
+                if (edge?.svgId) highlightById(edge.svgId, 'nad-overloaded');
+            });
         }
 
-        // Yellow fluo: lines the action acts upon (line disconnection/reconnection only)
+        // Yellow fluo halo: action targets (lines or voltage level node)
         const topo = selectedActionDetail.action_topology;
         if (topo) {
             const lineKeys = new Set([
@@ -94,10 +92,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 
             let targetLines: string[] = [];
             if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
-                // No gen/load changes → line-only action
                 targetLines = [...lineKeys];
             } else {
-                // Multiple asset types: check if all values are -1 (pure disconnections)
                 const allValues = [
                     ...Object.values(topo.lines_ex_bus || {}),
                     ...Object.values(topo.lines_or_bus || {}),
@@ -108,7 +104,23 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     targetLines = [...lineKeys];
                 }
             }
-            highlightEdges(targetLines, 'nad-action-target');
+
+            if (targetLines.length > 0) {
+                // Line action: halo on edges
+                targetLines.forEach(name => {
+                    const edge = edgesByEquipmentId.get(name);
+                    if (edge?.svgId) highlightById(edge.svgId, 'nad-action-target');
+                });
+            } else {
+                // Nodal action: halo on VL node (last quoted string in description)
+                const desc = selectedActionDetail.description_unitaire;
+                const matches = desc?.match(/'([^']+)'/g);
+                if (matches && matches.length > 0) {
+                    const vlName = matches[matches.length - 1].replace(/'/g, '');
+                    const node = nodesByEquipmentId.get(vlName);
+                    if (node?.svgId) highlightById(node.svgId, 'nad-action-target');
+                }
+            }
         }
     }, [actionDiagram, linesOverloaded, selectedActionDetail]);
 

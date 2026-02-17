@@ -148,7 +148,8 @@
         /* Highlight lines acted upon by the selected action with a yellow fluo halo */
         .nad-action-target path,
         .nad-action-target line,
-        .nad-action-target polyline {
+        .nad-action-target polyline,
+        .nad-action-target circle {
             filter: drop-shadow(0 0 4px #ccff00) drop-shadow(0 0 8px #ccff00);
         }
 
@@ -512,7 +513,7 @@
             const genKeys = Object.keys(topo.gens_bus || {});
             const loadKeys = Object.keys(topo.loads_bus || {});
 
-            // Single asset across all fields → line action
+            // No gen/load changes → line-only action
             if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
                 return [...lineKeys];
             }
@@ -531,20 +532,47 @@
             return [];
         };
 
-        // Apply yellow fluo highlights to lines the action acts upon
-        const applyActionTargetHighlights = (container, metaIndex, lineNames) => {
+        // Extract the voltage level name from description_unitaire for nodal actions.
+        // Pattern: "... dans le poste 'VL_NAME'" → last single-quoted string is the VL.
+        const getActionTargetVoltageLevel = (actionDetail) => {
+            const desc = actionDetail?.description_unitaire;
+            if (!desc) return null;
+            const matches = desc.match(/'([^']+)'/g);
+            if (!matches || matches.length === 0) return null;
+            // Last quoted string is the voltage level
+            return matches[matches.length - 1].replace(/'/g, '');
+        };
+
+        // Apply yellow fluo halo to action targets: edges (line actions) or nodes (nodal actions)
+        const applyActionTargetHighlights = (container, metaIndex, actionDetail) => {
             if (!container) return;
             container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
-            if (!metaIndex || !lineNames || lineNames.length === 0) return;
+            if (!metaIndex || !actionDetail) return;
 
-            const { edgesByEquipmentId } = metaIndex;
-            lineNames.forEach(lineName => {
-                const edge = edgesByEquipmentId.get(lineName);
-                if (edge && edge.svgId) {
-                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+            const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
+
+            // Try line action first
+            const targetLines = getActionTargetLines(actionDetail);
+            if (targetLines.length > 0) {
+                targetLines.forEach(lineName => {
+                    const edge = edgesByEquipmentId.get(lineName);
+                    if (edge && edge.svgId) {
+                        const el = container.querySelector(`[id="${edge.svgId}"]`);
+                        if (el) el.classList.add('nad-action-target');
+                    }
+                });
+                return;
+            }
+
+            // Nodal action: highlight the voltage level node
+            const vlName = getActionTargetVoltageLevel(actionDetail);
+            if (vlName) {
+                const node = nodesByEquipmentId.get(vlName);
+                if (node && node.svgId) {
+                    const el = container.querySelector(`[id="${node.svgId}"]`);
                     if (el) el.classList.add('nad-action-target');
                 }
-            });
+            }
         };
 
         function App() {
@@ -862,14 +890,13 @@
                         }
                         applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
 
-                        // Yellow fluo: lines the action acts upon (line disconnection/reconnection only)
-                        const targetLines = getActionTargetLines(actionDetail);
-                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, targetLines);
+                        // Yellow fluo halo: line targets or VL node depending on action type
+                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail);
                     }
                 } else {
                     // Clear action target highlights when no action is selected
                     if (actionSvgContainerRef.current) {
-                        applyActionTargetHighlights(actionSvgContainerRef.current, null, []);
+                        applyActionTargetHighlights(actionSvgContainerRef.current, null, null);
                     }
                 }
             }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId]);
