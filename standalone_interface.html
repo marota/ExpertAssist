@@ -567,30 +567,28 @@
 
             const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
 
-            // Try line action: only if topology line keys map to actual edges in the diagram
-            // (couplers like COUCHP6_COUCH6COUPL appear in lines_*_bus but are not diagram edges)
-            const targetLines = getActionTargetLines(actionDetail);
-            const matchedEdges = targetLines.filter(name => edgesByEquipmentId.has(name));
-            if (matchedEdges.length > 0) {
-                matchedEdges.forEach(lineName => {
-                    const edge = edgesByEquipmentId.get(lineName);
-                    if (edge && edge.svgId) {
-                        const el = container.querySelector(`[id="${edge.svgId}"]`);
-                        if (el) el.classList.add('nad-action-target');
-                    }
-                });
-                return;
-            }
-
-            // Nodal action: highlight the voltage level node
+            // 1. Try VL detection first (handles nodal AND coupler actions)
             const vlName = getActionTargetVoltageLevel(actionDetail, actionId, nodesByEquipmentId);
             if (vlName) {
                 const node = nodesByEquipmentId.get(vlName);
                 if (node && node.svgId) {
                     const el = container.querySelector(`[id="${node.svgId}"]`);
-                    if (el) el.classList.add('nad-action-target');
+                    if (el) {
+                        el.classList.add('nad-action-target');
+                        return;
+                    }
                 }
             }
+
+            // 2. Fall back to line action: highlight edges from topology
+            const targetLines = getActionTargetLines(actionDetail);
+            targetLines.forEach(lineName => {
+                const edge = edgesByEquipmentId.get(lineName);
+                if (edge && edge.svgId) {
+                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+                    if (el) el.classList.add('nad-action-target');
+                }
+            });
         };
 
         function App() {
