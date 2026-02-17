@@ -146,11 +146,46 @@
         }
 
         /* Highlight lines acted upon by the selected action with a yellow fluo halo */
+        /* Highlight lines acted upon by the selected action with a yellow fluo halo */
+        .nad-action-target {
+            /* Keep the glow on the group */
+            filter: drop-shadow(0 0 15px #ccff00) drop-shadow(0 0 30px #ccff00) !important;
+        }
+
+        /* Pulse animation for high visibility */
+        @keyframes nad-pulse {
+            0% {
+                stroke-width: 80px;
+                stroke-opacity: 0.6;
+            }
+
+            50% {
+                stroke-width: 150px;
+                stroke-opacity: 1;
+            }
+
+            100% {
+                stroke-width: 80px;
+                stroke-opacity: 0.6;
+            }
+        }
+
+        /* Force thick stroke on ALL children */
         .nad-action-target path,
         .nad-action-target line,
         .nad-action-target polyline,
-        .nad-action-target circle {
-            filter: drop-shadow(0 0 4px #ccff00) drop-shadow(0 0 8px #ccff00);
+        .nad-action-target circle,
+        .nad-action-target rect,
+        .nad-action-target polygon {
+            stroke: #ccff00 !important;
+            fill: none !important;
+            animation: nad-pulse 2s infinite !important;
+        }
+
+        /* Special case for nodes (circles/rects) to keep their fill */
+        .nad-action-target circle,
+        .nad-action-target rect {
+            fill: #444 !important;
         }
 
         /* Hide text on large grids at full zoom — revealed by removing this class.
@@ -563,9 +598,54 @@
         const applyActionTargetHighlights = (container, metaIndex, actionDetail, actionId) => {
             if (!container) return;
             container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
+            container.querySelectorAll('.nad-highlight-clone').forEach(el => el.remove());
             if (!metaIndex || !actionDetail) return;
 
             const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
+
+            // Create or find background layer at the root of the SVG
+            let backgroundLayer = container.querySelector('#nad-background-layer');
+            if (!backgroundLayer) {
+                // backgroundLayer must be child of the SVG element, which is `container` in standalone?
+                // Wait, in standalone `container` is the wrapper div. The SVG is inside.
+                const svg = container.querySelector('svg');
+                if (svg) {
+                    backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    backgroundLayer.setAttribute('id', 'nad-background-layer');
+                    if (svg.firstChild) {
+                        svg.insertBefore(backgroundLayer, svg.firstChild);
+                    } else {
+                        svg.appendChild(backgroundLayer);
+                    }
+                }
+            }
+
+            // Helper to apply highlight
+            const applyHighlight = (el) => {
+                if (!el) return;
+
+                // Clone and move to background layer
+                if (backgroundLayer) {
+                    const clone = el.cloneNode(true);
+                    clone.removeAttribute('id');
+                    clone.classList.add('nad-action-target');
+                    clone.classList.add('nad-highlight-clone');
+
+                    try {
+                        const ctm = el.getCTM();
+                        if (ctm) {
+                            const matrixStr = `matrix(${ctm.a}, ${ctm.b}, ${ctm.c}, ${ctm.d}, ${ctm.e}, ${ctm.f})`;
+                            clone.setAttribute('transform', matrixStr);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to get CTM for highlight:', e);
+                    }
+                    backgroundLayer.appendChild(clone);
+                } else {
+                    // Fallback if no background layer (shouldn't happen)
+                    el.classList.add('nad-action-target');
+                }
+            };
 
             // 1. Try VL detection first (handles nodal AND coupler actions)
             const vlName = getActionTargetVoltageLevel(actionDetail, actionId, nodesByEquipmentId);
@@ -573,10 +653,8 @@
                 const node = nodesByEquipmentId.get(vlName);
                 if (node && node.svgId) {
                     const el = container.querySelector(`[id="${node.svgId}"]`);
-                    if (el) {
-                        el.classList.add('nad-action-target');
-                        return;
-                    }
+                    applyHighlight(el);
+                    if (el) return;
                 }
             }
 
@@ -586,7 +664,7 @@
                 const edge = edgesByEquipmentId.get(lineName);
                 if (edge && edge.svgId) {
                     const el = container.querySelector(`[id="${edge.svgId}"]`);
-                    if (el) el.classList.add('nad-action-target');
+                    applyHighlight(el);
                 }
             });
         };
@@ -847,8 +925,8 @@
                 // Find the source viewBox from the previous tab
                 const sourceVB = prevTab === 'n' ? nPZ.viewBox
                     : prevTab === 'n-1' ? n1PZ.viewBox
-                    : prevTab === 'action' ? actionPZ.viewBox
-                    : null;
+                        : prevTab === 'action' ? actionPZ.viewBox
+                            : null;
                 if (!sourceVB) return;
 
                 // Apply to the new active tab
@@ -1212,9 +1290,9 @@
                                         ? (details.max_rho > 1.0 ? 'red' : details.max_rho > 0.9 ? 'orange' : 'green')
                                         : (details.is_rho_reduction ? 'green' : 'red');
                                     const severityColors = {
-                                        green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
                                         orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
-                                        red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
+                                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
                                     };
                                     const sc = severityColors[severity];
                                     const formatRho = (arr) => {
@@ -1223,38 +1301,38 @@
                                     };
                                     const isSelected = selectedActionId === id;
                                     return (
-                                    <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
-                                        borderLeftColor: isSelected ? '#007bff' : sc.border,
-                                        cursor: 'pointer',
-                                        background: isSelected ? '#e7f1ff' : 'white',
-                                        boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
-                                        transition: 'all 0.15s ease'
-                                    }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
-                                            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                                {isSelected && (
-                                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
-                                                        VIEWING
+                                        <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
+                                            borderLeftColor: isSelected ? '#007bff' : sc.border,
+                                            cursor: 'pointer',
+                                            background: isSelected ? '#e7f1ff' : 'white',
+                                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                                            transition: 'all 0.15s ease'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
+                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                    {isSelected && (
+                                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                                            VIEWING
+                                                        </span>
+                                                    )}
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                                        {sc.label}
                                                     </span>
+                                                </div>
+                                            </div>
+                                            <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                                <div>Rho before: {formatRho(details.rho_before)}</div>
+                                                <div>Rho after: {formatRho(details.rho_after)}</div>
+                                                {maxRhoPct != null && (
+                                                    <div style={{ marginTop: '3px' }}>
+                                                        Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                                        {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                                    </div>
                                                 )}
-                                                <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
-                                                    {sc.label}
-                                                </span>
                                             </div>
                                         </div>
-                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
-                                        <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                            <div>Rho before: {formatRho(details.rho_before)}</div>
-                                            <div>Rho after: {formatRho(details.rho_after)}</div>
-                                            {maxRhoPct != null && (
-                                                <div style={{ marginTop: '3px' }}>
-                                                    Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                                    {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
                                     );
                                 })
                             ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}

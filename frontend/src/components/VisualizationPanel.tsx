@@ -42,6 +42,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         // Clear previous highlights
         container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
         container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
+        // Remove old background clones
+        container.querySelectorAll('.nad-highlight-clone').forEach(el => el.remove());
 
         if (!selectedActionDetail) return;
 
@@ -54,9 +56,57 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         const nodesByEquipmentId = new Map<string, ElementMeta>();
         (meta.nodes || []).forEach(n => nodesByEquipmentId.set(n.equipmentId, n));
 
+        // Create or find background layer at the root of the SVG
+        let backgroundLayer = container.querySelector('#nad-background-layer');
+        if (!backgroundLayer) {
+            const svg = container.querySelector('svg');
+            if (svg) {
+                backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                backgroundLayer.setAttribute('id', 'nad-background-layer');
+                // Insert as first child to be behind everything else
+                if (svg.firstChild) {
+                    svg.insertBefore(backgroundLayer, svg.firstChild);
+                } else {
+                    svg.appendChild(backgroundLayer);
+                }
+            }
+        }
+
         const highlightById = (svgId: string, className: string) => {
-            const el = container.querySelector(`[id="${svgId}"]`);
-            if (el) el.classList.add(className);
+            const el = container.querySelector(`[id="${svgId}"]`) as SVGGraphicsElement;
+            if (el) {
+                // Determine if we should clone for background effect
+                if (className === 'nad-action-target') {
+                    // Clone and move to background layer
+                    if (backgroundLayer) {
+                        const clone = el.cloneNode(true) as SVGGraphicsElement;
+                        clone.removeAttribute('id');
+                        clone.classList.add(className);
+                        clone.classList.add('nad-highlight-clone'); // Marker for cleanup
+
+                        // Calculate transformation to root coordinate system
+                        try {
+                            // getCTM returns the matrix from current user units to viewport
+                            // We want to apply this matrix to the clone at the root level
+                            const ctm = el.getCTM();
+                            if (ctm) {
+                                // Apply CTM as transform
+                                const matrixStr = `matrix(${ctm.a}, ${ctm.b}, ${ctm.c}, ${ctm.d}, ${ctm.e}, ${ctm.f})`;
+                                clone.setAttribute('transform', matrixStr);
+                            }
+                        } catch (e) {
+                            console.warn('Failed to get CTM for highlight:', e);
+                        }
+
+                        backgroundLayer.appendChild(clone);
+                    }
+                } else {
+                    // For overloaded lines, keep existing behavior
+                    el.classList.add(className);
+                }
+            } else {
+                console.warn(`VisualizationPanel: Could not find SVG element with id="${svgId}" to apply class "${className}"`);
+            }
         };
 
         // Orange: lines that remain >100% after the action

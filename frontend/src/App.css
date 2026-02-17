@@ -9,9 +9,47 @@
 }
 
 /* Highlight lines acted upon by the selected action with a yellow fluo halo */
+/* Highlight lines acted upon by the selected action with a yellow fluo halo */
+.nad-action-target {
+    /* Keep the glow on the group */
+    filter: drop-shadow(0 0 15px #ccff00) drop-shadow(0 0 30px #ccff00) !important;
+}
+
+/* Pulse animation for high visibility */
+@keyframes nad-pulse {
+    0% {
+        stroke-width: 80px;
+        stroke-opacity: 0.6;
+    }
+
+    50% {
+        stroke-width: 150px;
+        stroke-opacity: 1;
+    }
+
+    100% {
+        stroke-width: 80px;
+        stroke-opacity: 0.6;
+    }
+}
+
+/* Force thick stroke on ALL children */
 .nad-action-target path,
 .nad-action-target line,
 .nad-action-target polyline,
-.nad-action-target circle {
-    filter: drop-shadow(0 0 4px #ccff00) drop-shadow(0 0 8px #ccff00);
+.nad-action-target circle,
+.nad-action-target rect,
+.nad-action-target polygon {
+    stroke: #ccff00 !important;
+    fill: none !important;
+    /* Ensure fill doesn't hide inner details if we apply to everything, or maybe risky */
+    animation: nad-pulse 2s infinite !important;
+    /* Removed vector-effect as it confuses zoom-dependent sizing */
+}
+
+/* Special case for nodes (circles/rects) to keep their fill */
+.nad-action-target circle,
+.nad-action-target rect {
+    fill: #444 !important;
+    /* Provide a dark fill background for contrast, or 'initial' */
 }
