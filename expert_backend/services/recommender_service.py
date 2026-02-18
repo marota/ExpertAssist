@@ -49,6 +49,27 @@ class RecommenderService:
         # Load and cache the action dictionary immediately
         self._dict_action = load_actions(config.ACTION_FILE_PATH)
 
+        # Auto-generate disco actions if none exist
+        has_disco = any(k.startswith("disco_") for k in self._dict_action)
+        if not has_disco:
+            from expert_backend.services.network_service import network_service
+            branches = network_service.get_disconnectable_elements()
+            for branch in branches:
+                action_id = f"disco_{branch}"
+                self._dict_action[action_id] = {
+                    "description": f"Disconnection of line/transformer '{branch}'",
+                    "description_unitaire": f"Ouverture de la ligne '{branch}'",
+                    "content": {
+                        "set_bus": {
+                            "lines_or_id": {branch: -1},
+                            "lines_ex_id": {branch: -1},
+                            "loads_id": {},
+                            "generators_id": {},
+                        }
+                    },
+                }
+            print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
+
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True
         # Don't check all actions
