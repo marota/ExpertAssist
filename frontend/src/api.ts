@@ -29,7 +29,7 @@ export const api = {
         let buffer = '';
         let result: Partial<AnalysisResult> = {};
 
-        for (;;) {
+        for (; ;) {
             const { value, done } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
@@ -55,6 +55,28 @@ export const api = {
         const response = await axios.post<DiagramData>(
             `${API_BASE_URL}/api/action-variant-diagram`,
             { action_id: actionId }
+        );
+        return response.data;
+    },
+    getAvailableActions: async (): Promise<{ id: string; description: string }[]> => {
+        const response = await axios.get<{ actions: { id: string; description: string }[] }>(
+            `${API_BASE_URL}/api/actions`
+        );
+        return response.data.actions;
+    },
+    simulateManualAction: async (actionId: string, disconnectedElement: string): Promise<{
+        action_id: string;
+        description_unitaire: string;
+        rho_before: number[] | null;
+        rho_after: number[] | null;
+        max_rho: number | null;
+        max_rho_line: string;
+        is_rho_reduction: boolean;
+        lines_overloaded: string[];
+    }> => {
+        const response = await axios.post(
+            `${API_BASE_URL}/api/simulate-manual-action`,
+            { action_id: actionId, disconnected_element: disconnectedElement }
         );
         return response.data;
     },

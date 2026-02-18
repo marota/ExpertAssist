@@ -4,7 +4,7 @@ import Select from 'react-select';
 import { api } from '../api';
 
 interface ConfigurationPanelProps {
-    onAnalysisRun: (result: any) => void;
+    onAnalysisRun: (result: any, disconnectedElement: string) => void;
 }
 
 const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ onAnalysisRun }) => {
@@ -35,7 +35,7 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ onAnalysisRun }
         setError(null);
         try {
             const result = await api.runAnalysis(selectedBranch.value);
-            onAnalysisRun(result);
+            onAnalysisRun(result, selectedBranch.value);
         } catch (err: any) {
             setError(err.message || 'Analysis failed');
         } finally {

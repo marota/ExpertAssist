@@ -1,6 +1,7 @@
 import expert_op4grid_recommender
 from expert_op4grid_recommender import config
 from expert_op4grid_recommender.main import Backend, run_analysis
+from expert_op4grid_recommender.data_loader import load_actions
 from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import os
 import glob
@@ -34,6 +35,7 @@ class RecommenderService:
     def __init__(self):
         self._last_result = None
         self._last_disconnected_element = None
+        self._dict_action = None
 
     def update_config(self, network_path: str, action_file_path: str):
         # Update the global config of the package
@@ -44,6 +46,9 @@ class RecommenderService:
         
         config.ACTION_FILE_PATH = Path(action_file_path)
         
+        # Load and cache the action dictionary immediately
+        self._dict_action = load_actions(config.ACTION_FILE_PATH)
+
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True
         # Don't check all actions
@@ -336,5 +341,130 @@ class RecommenderService:
         diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["action_id"] = action_id
         return diagram
+
+    def get_all_action_ids(self):
+        """Return a list of {id, description} for every action in the loaded dictionary."""
+        if not self._dict_action:
+            raise ValueError("No action dictionary loaded. Load a config first.")
+        result = []
+        for action_id, action_desc in self._dict_action.items():
+            result.append({
+                "id": action_id,
+                "description": action_desc.get("description_unitaire",
+                                               action_desc.get("description", "")),
+            })
+        return result
+
+    def simulate_manual_action(self, action_id: str, disconnected_element: str):
+        """Simulate a single action from the loaded dictionary and return its impact.
+
+        Reuses the environment/simulation setup from the last analysis when possible.
+        Falls back to creating a fresh environment if no prior analysis exists.
+        """
+        if not self._dict_action:
+            raise ValueError("No action dictionary loaded. Load a config first.")
+        if action_id not in self._dict_action:
+            raise ValueError(f"Action '{action_id}' not found in the loaded action dictionary.")
+
+        action_desc = self._dict_action[action_id]
+
+        # Setup environment (lightweight – same logic as run_analysis init)
+        from expert_op4grid_recommender.environment_pypowsybl import (
+            get_env_first_obs_pypowsybl,
+        )
+        from expert_op4grid_recommender.utils.simulation_pypowsybl import (
+            create_default_action,
+            simulate_contingency,
+            compute_baseline_simulation,
+        )
+
+        env, obs, _ = get_env_first_obs_pypowsybl(
+            config.ENV_FOLDER, config.ENV_NAME, is_DC=config.USE_DC_LOAD_FLOW
+        )
+
+        # Fix thermal limits if needed (same as in run_analysis)
+        if np.mean(env.get_thermal_limit()) >= 10 ** 4:
+            from expert_op4grid_recommender.main import set_thermal_limits
+            n_grid = env.network_manager.network
+            env = set_thermal_limits(n_grid, env, thresold_thermal_limit=0.95)
+            obs = env.get_obs()
+
+        # Simulate the N-1 contingency
+        act_reco_maintenance = env.action_space({})
+        obs_simu_defaut, has_converged = simulate_contingency(
+            env, obs, [disconnected_element], act_reco_maintenance, 0
+        )
+        if not has_converged:
+            raise RuntimeError(f"Contingency simulation for '{disconnected_element}' failed.")
+
+        lines_we_care_about = obs.name_line
+        lines_overloaded_ids = [
+            i for i, l in enumerate(obs_simu_defaut.name_line)
+            if l in lines_we_care_about and obs_simu_defaut.rho[i] >= 1
+        ]
+        lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+
+        # Build the action object from its content
+        try:
+            action = env.action_space(action_desc["content"])
+        except Exception as e:
+            raise ValueError(f"Could not create action from description: {e}")
+
+        # Create contingency action and compute baseline rho
+        act_defaut = create_default_action(env.action_space, [disconnected_element])
+        baseline_rho, _ = compute_baseline_simulation(
+            obs, 0, act_defaut, act_reco_maintenance, lines_overloaded_ids
+        )
+
+        # Simulate contingency + candidate action
+        obs_simu_action, _, _, info_action = obs.simulate(
+            action + act_defaut + act_reco_maintenance,
+            time_step=0,
+            keep_variant=True,
+        )
+
+        rho_before = baseline_rho
+        rho_after = None
+        max_rho = 0.0
+        max_rho_line = "N/A"
+        is_rho_reduction = False
+        description_unitaire = action_desc.get(
+            "description_unitaire", action_desc.get("description", "No description")
+        )
+
+        if not info_action["exception"]:
+            rho_after = obs_simu_action.rho[lines_overloaded_ids]
+            if rho_before is not None:
+                is_rho_reduction = bool(np.all(rho_after + 0.01 < rho_before))
+            if lines_we_care_about is not None and len(lines_we_care_about) > 0:
+                care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
+                if np.any(care_mask):
+                    rhos_of_interest = obs_simu_action.rho[care_mask]
+                    max_rho = float(np.max(rhos_of_interest))
+                    max_rho_line_idx = np.where(obs_simu_action.rho == max_rho)[0]
+                    if max_rho_line_idx.size > 0 and max_rho_line_idx[0] < len(obs.name_line):
+                        max_rho_line = obs.name_line[max_rho_line_idx[0]]
+
+        # Store the observation so get_action_variant_diagram can generate the NAD
+        if not info_action["exception"] and obs_simu_action is not None:
+            if self._last_result is None:
+                self._last_result = {"prioritized_actions": {}}
+            if "prioritized_actions" not in self._last_result:
+                self._last_result["prioritized_actions"] = {}
+            self._last_result["prioritized_actions"][action_id] = {
+                "observation": obs_simu_action,
+                "description_unitaire": description_unitaire,
+            }
+
+        return {
+            "action_id": action_id,
+            "description_unitaire": description_unitaire,
+            "rho_before": sanitize_for_json(rho_before),
+            "rho_after": sanitize_for_json(rho_after),
+            "max_rho": sanitize_for_json(max_rho),
+            "max_rho_line": max_rho_line,
+            "is_rho_reduction": is_rho_reduction,
+            "lines_overloaded": sanitize_for_json(lines_overloaded_names),
+        }
 
 recommender_service = RecommenderService()
