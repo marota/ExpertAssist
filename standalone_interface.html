@@ -1141,7 +1141,7 @@
                                 if (cls) el.classList.add(cls);
                             }
 
-                            // Replace edge info text labels with the delta value
+                            // Replace edge info text labels with the delta value (same at both ends)
                             const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
                             const edgeInfoIds = [
                                 edge.edgeInfo1?.svgId,

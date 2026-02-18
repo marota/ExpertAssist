@@ -89,7 +89,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     if (cls) el.classList.add(cls);
                 }
 
-                // Replace edge info text labels with the delta value
+                // Replace edge info text labels with the delta value (same at both ends)
                 const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
                 const edgeInfoIds = [
                     edge.edgeInfo1?.svgId,
@@ -99,7 +99,6 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 for (const infoSvgId of edgeInfoIds) {
                     const infoEl = container.querySelector(`[id="${infoSvgId}"]`);
                     if (!infoEl) continue;
-                    // Replace all text content in foreignObject or text elements
                     const textTargets = infoEl.querySelectorAll('foreignObject, text');
                     textTargets.forEach(t => {
                         t.textContent = `Δ ${deltaStr}`;

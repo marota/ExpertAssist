@@ -332,12 +332,18 @@ class RecommenderService:
         diagram["lf_status"] = lf_status
         return diagram
 
-    def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0):
+    def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0, mode="network"):
         """Generate a NAD showing the network state after applying a remedial action.
 
         Uses the variant ID and network manager stored in the observation from
         the last analysis run to switch to the post-action network state
         directly, avoiding the need to replay disconnections on a fresh network.
+
+        Args:
+            action_id: ID of the action to visualize
+            voltage_level_ids: list of VL IDs to center on (None = full grid)
+            depth: number of hops from center VLs to include
+            mode: "network" for bare NAD, "delta" to include flow deltas vs N-1
         """
         if not self._last_result or not self._last_result.get("prioritized_actions"):
             raise ValueError("No analysis result available. Run analysis first.")
@@ -361,7 +367,121 @@ class RecommenderService:
 
         diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["action_id"] = action_id
+
+        if mode == "delta":
+            diagram["flow_deltas"] = self._compute_flow_deltas(action_id)
+
         return diagram
+
+    def _compute_flow_deltas(self, action_id):
+        """Compute per-line flow deltas between action-variant and N-1 networks.
+
+        Returns a dict mapping line_id -> {delta, category} where category is
+        'positive' (flow increased, orange), 'negative' (flow decreased, blue),
+        or 'grey' (below threshold).
+
+        The threshold follows expert_op4grid_recommender's pattern:
+        max_overload = max(|all_deltas|) * 0.05
+        """
+        import pypowsybl as pp
+
+        actions = self._last_result["prioritized_actions"]
+        action_data = actions[action_id]
+        obs_action = action_data["observation"]
+
+        # --- Get post-action flows (action variant is already the working variant) ---
+        nm = obs_action._network_manager
+        action_network = nm.network
+
+        action_lines = action_network.get_lines()[['p1', 'p2']]
+        action_trafos = action_network.get_2_windings_transformers()[['p1', 'p2']]
+
+        action_p1 = {}
+        action_p2 = {}
+        for lid in action_lines.index:
+            v1 = action_lines.loc[lid, 'p1']
+            v2 = action_lines.loc[lid, 'p2']
+            action_p1[lid] = v1 if not np.isnan(v1) else 0.0
+            action_p2[lid] = v2 if not np.isnan(v2) else 0.0
+        for tid in action_trafos.index:
+            v1 = action_trafos.loc[tid, 'p1']
+            v2 = action_trafos.loc[tid, 'p2']
+            action_p1[tid] = v1 if not np.isnan(v1) else 0.0
+            action_p2[tid] = v2 if not np.isnan(v2) else 0.0
+
+        # --- Get N-1 flows (re-simulate contingency on a fresh network) ---
+        n1_network = self._load_network()
+        disconnected_element = self._last_disconnected_element
+        if disconnected_element:
+            try:
+                n1_network.disconnect(disconnected_element)
+            except Exception:
+                pass  # If disconnect fails, use base network flows
+
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n1_network, params)
+
+        n1_lines = n1_network.get_lines()[['p1', 'p2']]
+        n1_trafos = n1_network.get_2_windings_transformers()[['p1', 'p2']]
+
+        n1_p1 = {}
+        n1_p2 = {}
+        for lid in n1_lines.index:
+            v1 = n1_lines.loc[lid, 'p1']
+            v2 = n1_lines.loc[lid, 'p2']
+            n1_p1[lid] = v1 if not np.isnan(v1) else 0.0
+            n1_p2[lid] = v2 if not np.isnan(v2) else 0.0
+        for tid in n1_trafos.index:
+            v1 = n1_trafos.loc[tid, 'p1']
+            v2 = n1_trafos.loc[tid, 'p2']
+            n1_p1[tid] = v1 if not np.isnan(v1) else 0.0
+            n1_p2[tid] = v2 if not np.isnan(v2) else 0.0
+
+        # --- Compute deltas ---
+        # Use the terminal where flow ENTERS in the action state (positive p value).
+        # This ensures the delta always has the same sign at both ends.
+        # category based on magnitude change: |action_p| - |n1_p|
+        #   positive → line got more loaded (orange)
+        #   negative → line got less loaded (blue)
+        all_line_ids = set(action_p1.keys()) | set(n1_p1.keys())
+        deltas = {}
+        for lid in all_line_ids:
+            ap1 = action_p1.get(lid, 0.0)
+            ap2 = action_p2.get(lid, 0.0)
+            np1 = n1_p1.get(lid, 0.0)
+            np2 = n1_p2.get(lid, 0.0)
+
+            # Pick the entering terminal in the action state (positive p)
+            if ap1 >= ap2:
+                # Flow enters at terminal 1
+                delta = ap1 - np1
+            else:
+                # Flow enters at terminal 2
+                delta = ap2 - np2
+            deltas[lid] = delta
+
+        # --- Apply threshold (same as ThresholdReportOfLine = 0.05) ---
+        if deltas:
+            max_abs_delta = max(abs(d) for d in deltas.values())
+        else:
+            max_abs_delta = 0.0
+        threshold = max_abs_delta * 0.05  # 5% of max delta
+
+        flow_deltas = {}
+        for lid, delta in deltas.items():
+            if abs(delta) < threshold:
+                category = "grey"
+            elif delta > 0:
+                category = "positive"  # orange: line more loaded
+            else:
+                category = "negative"  # blue: line less loaded
+
+            flow_deltas[lid] = {
+                "delta": round(float(delta), 1),
+                "category": category,
+            }
+
+        return flow_deltas
 
     def get_all_action_ids(self):
         """Return a list of {id, description} for every action in the loaded dictionary."""
