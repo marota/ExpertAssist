@@ -1038,6 +1038,10 @@
             // Re-fetch action diagram when view mode changes
             useEffect(() => {
                 if (!selectedActionId) return;
+
+                // Capture current zoom state so it can be restored after re-fetch
+                actionSyncSourceRef.current = actionPZ.viewBox || n1PZ.viewBox || nPZ.viewBox;
+
                 const fetchDelta = async () => {
                     setActionDiagramLoading(true);
                     setActionDiagram(null);
