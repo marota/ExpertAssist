@@ -38,6 +38,7 @@ class FocusedDiagramRequest(BaseModel):
 
 class ActionVariantRequest(BaseModel):
     action_id: str
+    mode: str = "network"  # "network" or "delta"
 
 class ManualActionRequest(BaseModel):
     action_id: str
@@ -144,7 +145,9 @@ def get_action_variant_diagram(request: ActionVariantRequest):
     Requires a prior call to /api/run-analysis so the observation is available.
     """
     try:
-        diagram = recommender_service.get_action_variant_diagram(request.action_id)
+        diagram = recommender_service.get_action_variant_diagram(
+            request.action_id, mode=request.mode
+        )
         return diagram
     except Exception as e:
         import traceback

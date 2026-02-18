@@ -196,6 +196,32 @@
         .svg-container.text-hidden .nad-text-edges {
             display: none !important;
         }
+
+        /* ===== Delta flow visualization ===== */
+
+        /* Positive delta: flow increased after action (orange) */
+        .nad-delta-positive path,
+        .nad-delta-positive line,
+        .nad-delta-positive polyline {
+            stroke: #ff8c00 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* Negative delta: flow decreased after action (blue) */
+        .nad-delta-negative path,
+        .nad-delta-negative line,
+        .nad-delta-negative polyline {
+            stroke: #2196F3 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* Grey: negligible change (below threshold) */
+        .nad-delta-grey path,
+        .nad-delta-grey line,
+        .nad-delta-grey polyline {
+            stroke: #999 !important;
+            stroke-opacity: 0.4 !important;
+        }
     </style>
 </head>
 
@@ -718,6 +744,9 @@
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
 
+            // Delta visualization mode
+            const [actionViewMode, setActionViewMode] = useState('network'); // 'network' or 'delta'
+
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
             // Independent Refs for N, N-1, and Action Variant
@@ -915,7 +944,7 @@
                 setActionDiagramLoading(true);
                 setActiveTab('action');
                 try {
-                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
+                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId, mode: actionViewMode });
                     const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                     setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) {
@@ -1006,6 +1035,25 @@
                     .slice(0, 20);
             }, [searchQuery, availableActions, result?.actions]);
 
+            // Re-fetch action diagram when view mode changes
+            useEffect(() => {
+                if (!selectedActionId) return;
+                const fetchDelta = async () => {
+                    setActionDiagramLoading(true);
+                    setActionDiagram(null);
+                    try {
+                        const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: selectedActionId, mode: actionViewMode });
+                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
+                        setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
+                    } catch (err) {
+                        console.error('Failed to fetch action variant diagram:', err);
+                    } finally {
+                        setActionDiagramLoading(false);
+                    }
+                };
+                fetchDelta();
+            }, [actionViewMode]);
+
 
 
 
@@ -1066,7 +1114,51 @@
                 // Action diagram highlights
                 if (actionSvgContainerRef.current && actionMetaIndex && selectedActionId && result?.actions) {
                     const actionDetail = result.actions[selectedActionId];
-                    if (actionDetail) {
+
+                    // Clear delta classes before re-applying
+                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
+                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
+                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
+
+                    // ===== DELTA MODE =====
+                    if (actionViewMode === 'delta' && actionDiagram?.flow_deltas) {
+                        const { edgesByEquipmentId } = actionMetaIndex;
+                        const flowDeltas = actionDiagram.flow_deltas;
+
+                        for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
+                            const edge = edgesByEquipmentId.get(lineId);
+                            if (!edge || !edge.svgId) continue;
+
+                            // Apply delta color class on the edge path group
+                            const el = actionSvgContainerRef.current.querySelector(`[id="${edge.svgId}"]`);
+                            if (el) {
+                                const classMap = {
+                                    positive: 'nad-delta-positive',
+                                    negative: 'nad-delta-negative',
+                                    grey: 'nad-delta-grey',
+                                };
+                                const cls = classMap[deltaInfo.category];
+                                if (cls) el.classList.add(cls);
+                            }
+
+                            // Replace edge info text labels with the delta value
+                            const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
+                            const edgeInfoIds = [
+                                edge.edgeInfo1?.svgId,
+                                edge.edgeInfo2?.svgId,
+                            ].filter(Boolean);
+
+                            for (const infoSvgId of edgeInfoIds) {
+                                const infoEl = actionSvgContainerRef.current.querySelector(`[id="${infoSvgId}"]`);
+                                if (!infoEl) continue;
+                                const textTargets = infoEl.querySelectorAll('foreignObject, text');
+                                textTargets.forEach(t => {
+                                    t.textContent = `Δ ${deltaStr}`;
+                                });
+                            }
+                        }
+                    } else if (actionDetail) {
+                        // ===== NETWORK MODE (existing behavior) =====
                         // Orange: lines that remain >100% after the action
                         const stillOverloaded = [];
                         if (overloadedLines.length > 0 && actionDetail.rho_after) {
@@ -1092,7 +1184,7 @@
                         applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
                     }
                 }
-            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId]);
+            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode]);
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
@@ -1473,6 +1565,58 @@
                             {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
                                 <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
                                     <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}
+                                </div>
+                            )}
+
+                            {/* View mode toggle - only visible when an action is selected */}
+                            {selectedActionId && (
+                                <div style={{
+                                    marginBottom: '10px',
+                                    padding: '6px 10px',
+                                    backgroundColor: '#f8f9fa',
+                                    border: '1px solid #dee2e6',
+                                    borderRadius: '6px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
+                                    <div style={{
+                                        display: 'flex',
+                                        borderRadius: '6px',
+                                        overflow: 'hidden',
+                                        border: '1px solid #ccc',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                    }}>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setActionViewMode('network'); }}
+                                            style={{
+                                                padding: '3px 10px',
+                                                border: 'none',
+                                                cursor: 'pointer',
+                                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                                color: actionViewMode === 'network' ? '#fff' : '#555',
+                                                transition: 'all 0.15s ease',
+                                            }}
+                                        >
+                                            Network
+                                        </button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
+                                            style={{
+                                                padding: '3px 10px',
+                                                border: 'none',
+                                                borderLeft: '1px solid #ccc',
+                                                cursor: 'pointer',
+                                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                                color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                                transition: 'all 0.15s ease',
+                                            }}
+                                        >
+                                            Δ Flows
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             {result?.actions && Object.keys(result.actions).length > 0 ? (

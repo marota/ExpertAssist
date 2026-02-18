@@ -9,6 +9,8 @@ interface ActionFeedProps {
     onActionSelect: (actionId: string | null) => void;
     disconnectedElement: string | null;
     onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
+    actionViewMode: 'network' | 'delta';
+    onViewModeChange: (mode: 'network' | 'delta') => void;
 }
 
 const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
@@ -27,6 +29,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     onActionSelect,
     disconnectedElement,
     onManualActionAdded,
+    actionViewMode,
+    onViewModeChange,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -230,6 +234,60 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 }}>
                     <strong>Overloaded lines:</strong>{' '}
                     {linesOverloaded.join(', ')}
+                </div>
+            )}
+
+            {/* View mode toggle - only visible when an action is selected */}
+            {selectedActionId && (
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#f8f9fa',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555' }}>View:</span>
+                    <div
+                        style={{
+                            display: 'flex',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            border: '1px solid #ccc',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                        }}
+                    >
+                        <button
+                            onClick={() => onViewModeChange('network')}
+                            style={{
+                                padding: '4px 12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'network' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            Network
+                        </button>
+                        <button
+                            onClick={() => onViewModeChange('delta')}
+                            style={{
+                                padding: '4px 12px',
+                                border: 'none',
+                                borderLeft: '1px solid #ccc',
+                                cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            Δ Flows
+                        </button>
+                    </div>
                 </div>
             )}
 

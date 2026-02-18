@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
@@ -12,6 +12,7 @@ function App() {
   const [actionDiagram, setActionDiagram] = useState<DiagramData | null>(null);
   const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
   const [disconnectedElement, setDisconnectedElement] = useState<string | null>(null);
+  const [actionViewMode, setActionViewMode] = useState<'network' | 'delta'>('network');
 
   const handleAnalysisRun = (result: AnalysisResult, element: string) => {
     setAnalysisResult(result);
@@ -19,7 +20,23 @@ function App() {
     // Clear any previously selected action when a new analysis runs
     setSelectedActionId(null);
     setActionDiagram(null);
+    setActionViewMode('network');
   };
+
+  // Fetch diagram for currently selected action and view mode
+  const fetchDiagram = useCallback(async (actionId: string, mode: 'network' | 'delta') => {
+    setActionDiagramLoading(true);
+    setActionDiagram(null);
+    try {
+      const diagram = await api.getActionVariantDiagram(actionId, mode);
+      setActionDiagram(diagram);
+    } catch (err) {
+      console.error('Failed to fetch action variant diagram:', err);
+      setActionDiagram(null);
+    } finally {
+      setActionDiagramLoading(false);
+    }
+  }, []);
 
   const handleActionSelect = useCallback(async (actionId: string | null) => {
     setSelectedActionId(actionId);
@@ -29,18 +46,15 @@ function App() {
       return;
     }
 
-    setActionDiagramLoading(true);
-    setActionDiagram(null);
-    try {
-      const diagram = await api.getActionVariantDiagram(actionId);
-      setActionDiagram(diagram);
-    } catch (err) {
-      console.error('Failed to fetch action variant diagram:', err);
-      setActionDiagram(null);
-    } finally {
-      setActionDiagramLoading(false);
+    fetchDiagram(actionId, actionViewMode);
+  }, [actionViewMode, fetchDiagram]);
+
+  // Re-fetch diagram when view mode changes (and an action is selected)
+  useEffect(() => {
+    if (selectedActionId) {
+      fetchDiagram(selectedActionId, actionViewMode);
     }
-  }, []);
+  }, [actionViewMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeselectAction = useCallback(() => {
     setSelectedActionId(null);
@@ -62,6 +76,10 @@ function App() {
     setSelectedActionId(actionId);
   }, []);
 
+  const handleViewModeChange = useCallback((mode: 'network' | 'delta') => {
+    setActionViewMode(mode);
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
       <header style={{ padding: '0.5rem', borderBottom: '1px solid #ddd', backgroundColor: '#333', color: 'white' }}>
@@ -79,6 +97,8 @@ function App() {
             onActionSelect={handleActionSelect}
             disconnectedElement={disconnectedElement}
             onManualActionAdded={handleManualActionAdded}
+            actionViewMode={actionViewMode}
+            onViewModeChange={handleViewModeChange}
           />
         </div>
         <div style={{ width: '75%', backgroundColor: '#fff', position: 'relative' }}>
@@ -90,6 +110,7 @@ function App() {
             onDeselectAction={handleDeselectAction}
             linesOverloaded={analysisResult?.lines_overloaded || []}
             selectedActionDetail={selectedActionId && analysisResult?.actions ? analysisResult.actions[selectedActionId] ?? null : null}
+            actionViewMode={actionViewMode}
           />
         </div>
       </div>

@@ -51,10 +51,10 @@ export const api = {
 
         return result as AnalysisResult;
     },
-    getActionVariantDiagram: async (actionId: string): Promise<DiagramData> => {
+    getActionVariantDiagram: async (actionId: string, mode: string = 'network'): Promise<DiagramData> => {
         const response = await axios.post<DiagramData>(
             `${API_BASE_URL}/api/action-variant-diagram`,
-            { action_id: actionId }
+            { action_id: actionId, mode }
         );
         return response.data;
     },
