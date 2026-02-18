@@ -271,7 +271,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                 transition: 'all 0.15s ease',
                             }}
                         >
-                            Network
+                            Flows
                         </button>
                         <button
                             onClick={() => onViewModeChange('delta')}

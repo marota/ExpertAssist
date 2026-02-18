@@ -69,7 +69,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         const nodesByEquipmentId = new Map<string, ElementMeta>();
         (meta.nodes || []).forEach(n => nodesByEquipmentId.set(n.equipmentId, n));
 
-        // ===== DELTA MODE =====
+        // ===== DELTA MODE: apply delta coloring =====
         if (actionViewMode === 'delta' && actionDiagram.flow_deltas) {
             const flowDeltas = actionDiagram.flow_deltas;
 
@@ -105,11 +105,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     });
                 }
             }
-
-            return; // Skip network-mode highlights
         }
 
-        // ===== NETWORK MODE (existing behavior) =====
         if (!selectedActionDetail) return;
 
         // Create or find background layer at the root of the SVG
@@ -165,28 +162,31 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             }
         };
 
-        // Orange: lines that remain >100% after the action
-        if (linesOverloaded.length > 0) {
-            const stillOverloaded: string[] = [];
-            if (selectedActionDetail.rho_after) {
-                linesOverloaded.forEach((name, i) => {
-                    if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
-                        stillOverloaded.push(name);
+        // ===== NETWORK MODE ONLY: overloaded line highlights =====
+        if (actionViewMode !== 'delta') {
+            // Orange: lines that remain >100% after the action
+            if (linesOverloaded.length > 0) {
+                const stillOverloaded: string[] = [];
+                if (selectedActionDetail.rho_after) {
+                    linesOverloaded.forEach((name, i) => {
+                        if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
+                            stillOverloaded.push(name);
+                        }
+                    });
+                }
+                if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
+                    if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
+                        stillOverloaded.push(selectedActionDetail.max_rho_line);
                     }
+                }
+                stillOverloaded.forEach(name => {
+                    const edge = edgesByEquipmentId.get(name);
+                    if (edge?.svgId) highlightById(edge.svgId, 'nad-overloaded');
                 });
             }
-            if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
-                if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
-                    stillOverloaded.push(selectedActionDetail.max_rho_line);
-                }
-            }
-            stillOverloaded.forEach(name => {
-                const edge = edgesByEquipmentId.get(name);
-                if (edge?.svgId) highlightById(edge.svgId, 'nad-overloaded');
-            });
         }
 
-        // Yellow fluo halo: action targets (VL node or line edges)
+        // ===== BOTH MODES: action target highlights (yellow fluo halo) =====
         // 1. Try VL detection first (handles nodal AND coupler actions)
         const findVoltageLevel = (): string | null => {
             const desc = selectedActionDetail.description_unitaire;

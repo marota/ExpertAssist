@@ -1124,7 +1124,7 @@
                     actionSvgContainerRef.current.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
                     actionSvgContainerRef.current.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
 
-                    // ===== DELTA MODE =====
+                    // ===== DELTA MODE: apply delta coloring =====
                     if (actionViewMode === 'delta' && actionDiagram?.flow_deltas) {
                         const { edgesByEquipmentId } = actionMetaIndex;
                         const flowDeltas = actionDiagram.flow_deltas;
@@ -1161,9 +1161,10 @@
                                 });
                             }
                         }
-                    } else if (actionDetail) {
-                        // ===== NETWORK MODE (existing behavior) =====
-                        // Orange: lines that remain >100% after the action
+                    }
+
+                    // ===== FLOWS MODE ONLY: overloaded line highlights =====
+                    if (actionViewMode !== 'delta' && actionDetail) {
                         const stillOverloaded = [];
                         if (overloadedLines.length > 0 && actionDetail.rho_after) {
                             overloadedLines.forEach((name, i) => {
@@ -1178,8 +1179,10 @@
                             }
                         }
                         applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                    }
 
-                        // Yellow fluo halo: line targets or VL node depending on action type
+                    // ===== BOTH MODES: action target highlights (yellow fluo halo) =====
+                    if (actionDetail) {
                         applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
                     }
                 } else {
@@ -1604,7 +1607,7 @@
                                                 transition: 'all 0.15s ease',
                                             }}
                                         >
-                                            Network
+                                            Flows
                                         </button>
                                         <button
                                             onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
