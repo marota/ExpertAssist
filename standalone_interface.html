@@ -708,6 +708,16 @@
             const [actionDiagram, setActionDiagram] = useState(null);
             const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
 
+            // Manual action search state
+            const [searchOpen, setSearchOpen] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [availableActions, setAvailableActions] = useState([]);
+            const [loadingAvailableActions, setLoadingAvailableActions] = useState(false);
+            const [simulatingActionId, setSimulatingActionId] = useState(null);
+            const [searchError, setSearchError] = useState('');
+            const searchDropdownRef = useRef(null);
+            const searchInputRef = useRef(null);
+
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
             // Independent Refs for N, N-1, and Action Variant
@@ -916,6 +926,85 @@
                 }
             };
 
+            // --- Manual Action Search Logic ---
+            const handleOpenSearch = async () => {
+                if (searchOpen) { setSearchOpen(false); return; }
+                setSearchOpen(true);
+                setSearchQuery('');
+                setSearchError('');
+                if (availableActions.length === 0) {
+                    setLoadingAvailableActions(true);
+                    try {
+                        const res = await axios.get(API_BASE + '/api/actions');
+                        setAvailableActions(res.data.actions || []);
+                    } catch (err) {
+                        setSearchError('Failed to load actions');
+                    } finally {
+                        setLoadingAvailableActions(false);
+                    }
+                }
+                setTimeout(() => searchInputRef.current?.focus(), 50);
+            };
+
+            const handleAddManualAction = async (actionId) => {
+                if (!selectedBranch) { setSearchError('Run an analysis first'); return; }
+                setSimulatingActionId(actionId);
+                setSearchError('');
+                try {
+                    const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                        action_id: actionId,
+                        disconnected_element: selectedBranch
+                    });
+                    const detail = res.data;
+                    // Merge into result
+                    setResult(prev => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            actions: {
+                                ...prev.actions,
+                                [actionId]: {
+                                    description_unitaire: detail.description_unitaire,
+                                    rho_before: detail.rho_before,
+                                    rho_after: detail.rho_after,
+                                    max_rho: detail.max_rho,
+                                    max_rho_line: detail.max_rho_line,
+                                    is_rho_reduction: detail.is_rho_reduction,
+                                }
+                            }
+                        };
+                    });
+                    setSearchOpen(false);
+                    setSearchQuery('');
+                    handleActionSelect(actionId);
+                } catch (err) {
+                    setSearchError(err?.response?.data?.detail || 'Simulation failed');
+                } finally {
+                    setSimulatingActionId(null);
+                }
+            };
+
+            // Close search dropdown on outside click
+            useEffect(() => {
+                if (!searchOpen) return;
+                const handler = (e) => {
+                    if (searchDropdownRef.current && !searchDropdownRef.current.contains(e.target)) {
+                        setSearchOpen(false);
+                    }
+                };
+                document.addEventListener('mousedown', handler);
+                return () => document.removeEventListener('mousedown', handler);
+            }, [searchOpen]);
+
+            // Filter available actions for dropdown
+            const filteredSearchActions = useMemo(() => {
+                const q = searchQuery.toLowerCase();
+                const existingIds = new Set(result?.actions ? Object.keys(result.actions) : []);
+                return availableActions
+                    .filter(a => !existingIds.has(a.id))
+                    .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
+                    .slice(0, 20);
+            }, [searchQuery, availableActions, result?.actions]);
 
 
 
@@ -1285,7 +1374,102 @@
                     </div>
                     <div className="main-content">
                         <div className="action-feed">
-                            <h3>Actions</h3>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
+                                <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
+                                <button
+                                    onClick={handleOpenSearch}
+                                    style={{
+                                        background: searchOpen ? '#007bff' : '#e9ecef',
+                                        color: searchOpen ? 'white' : '#333',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '4px 10px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    + Add
+                                </button>
+
+                                {searchOpen && (
+                                    <div
+                                        ref={searchDropdownRef}
+                                        style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            right: 0,
+                                            left: 0,
+                                            zIndex: 100,
+                                            backgroundColor: 'white',
+                                            border: '1px solid #ccc',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                                            marginTop: '4px',
+                                            overflow: 'hidden',
+                                        }}
+                                    >
+                                        <div style={{ padding: '8px' }}>
+                                            <input
+                                                ref={searchInputRef}
+                                                type="text"
+                                                placeholder="Search action by ID or description..."
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #ccc',
+                                                    borderRadius: '4px',
+                                                    fontSize: '13px',
+                                                    boxSizing: 'border-box',
+                                                }}
+                                            />
+                                        </div>
+                                        {searchError && (
+                                            <div style={{ padding: '6px 8px', fontSize: '12px', color: '#dc3545', borderTop: '1px solid #eee' }}>
+                                                {searchError}
+                                            </div>
+                                        )}
+                                        <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                                            {loadingAvailableActions ? (
+                                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                    Loading actions...
+                                                </div>
+                                            ) : filteredSearchActions.length === 0 ? (
+                                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
+                                                </div>
+                                            ) : (
+                                                filteredSearchActions.map(a => (
+                                                    <div
+                                                        key={a.id}
+                                                        onClick={() => handleAddManualAction(a.id)}
+                                                        style={{
+                                                            padding: '6px 10px',
+                                                            cursor: simulatingActionId ? 'wait' : 'pointer',
+                                                            borderTop: '1px solid #eee',
+                                                            backgroundColor: simulatingActionId === a.id ? '#e7f1ff' : 'transparent',
+                                                            opacity: simulatingActionId && simulatingActionId !== a.id ? 0.5 : 1,
+                                                        }}
+                                                        onMouseEnter={(e) => { if (!simulatingActionId) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+                                                        onMouseLeave={(e) => { if (simulatingActionId !== a.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                                    >
+                                                        <div style={{ fontWeight: 600, fontSize: '12px', color: '#333' }}>
+                                                            {simulatingActionId === a.id ? '⏳ Simulating...' : a.id}
+                                                        </div>
+                                                        {a.description && (
+                                                            <div style={{ fontSize: '11px', color: '#777', marginTop: '2px' }}>
+                                                                {a.description}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                             {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
                                 <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
                                     <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}

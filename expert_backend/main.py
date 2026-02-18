@@ -39,6 +39,10 @@ class FocusedDiagramRequest(BaseModel):
 class ActionVariantRequest(BaseModel):
     action_id: str
 
+class ManualActionRequest(BaseModel):
+    action_id: str
+    disconnected_element: str
+
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
     try:
@@ -184,6 +188,28 @@ def get_focused_diagram(request: FocusedDiagramRequest):
         return diagram
     except HTTPException:
         raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/actions")
+def get_actions():
+    """Return all available action IDs and descriptions from the loaded dictionary."""
+    try:
+        actions = recommender_service.get_all_action_ids()
+        return {"actions": actions}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/simulate-manual-action")
+def simulate_manual_action(request: ManualActionRequest):
+    """Simulate a specific action from the loaded dictionary against a contingency."""
+    try:
+        result = recommender_service.simulate_manual_action(
+            request.action_id, request.disconnected_element
+        )
+        return result
     except Exception as e:
         import traceback
         traceback.print_exc()

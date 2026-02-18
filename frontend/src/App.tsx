@@ -4,16 +4,18 @@ import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
 import { api } from './api';
-import type { AnalysisResult, DiagramData } from './types';
+import type { ActionDetail, AnalysisResult, DiagramData } from './types';
 
 function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const [actionDiagram, setActionDiagram] = useState<DiagramData | null>(null);
   const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
+  const [disconnectedElement, setDisconnectedElement] = useState<string | null>(null);
 
-  const handleAnalysisRun = (result: AnalysisResult) => {
+  const handleAnalysisRun = (result: AnalysisResult, element: string) => {
     setAnalysisResult(result);
+    setDisconnectedElement(element);
     // Clear any previously selected action when a new analysis runs
     setSelectedActionId(null);
     setActionDiagram(null);
@@ -45,6 +47,21 @@ function App() {
     setActionDiagram(null);
   }, []);
 
+  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail) => {
+    setAnalysisResult(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        actions: {
+          ...prev.actions,
+          [actionId]: detail,
+        },
+      };
+    });
+    // Auto-select the newly added action
+    setSelectedActionId(actionId);
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
       <header style={{ padding: '0.5rem', borderBottom: '1px solid #ddd', backgroundColor: '#333', color: 'white' }}>
@@ -60,6 +77,8 @@ function App() {
             linesOverloaded={analysisResult?.lines_overloaded || []}
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}
+            disconnectedElement={disconnectedElement}
+            onManualActionAdded={handleManualActionAdded}
           />
         </div>
         <div style={{ width: '75%', backgroundColor: '#fff', position: 'relative' }}>
