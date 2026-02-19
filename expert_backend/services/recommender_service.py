@@ -455,13 +455,47 @@ class RecommenderService:
             np1 = n1_p1.get(lid, 0.0)
             np2 = n1_p2.get(lid, 0.0)
 
-            # Pick the entering terminal in the action state (positive p)
+            # Determine entering terminal and value for Action state
             if ap1 >= ap2:
-                # Flow enters at terminal 1
-                delta = ap1 - np1
+                action_idx = 1
+                action_val = ap1
+                baseline_val_aligned = np1
+                action_val_aligned = ap1
             else:
-                # Flow enters at terminal 2
-                delta = ap2 - np2
+                action_idx = 2
+                action_val = ap2
+                baseline_val_aligned = np2
+                action_val_aligned = ap2
+            
+            # Determine entering terminal and value for Baseline (N-1) state
+            if np1 >= np2:
+                baseline_idx = 1
+                baseline_val = np1
+            else:
+                baseline_idx = 2
+                baseline_val = np2
+
+            # Compute delta
+            # Default: use Action direction (same as before)
+            # But if direction flipped and Baseline is stronger, use Baseline direction
+            if action_idx != baseline_idx and baseline_val > action_val:
+                # Flipped & Baseline stronger → use Baseline direction
+                # Delta = Action flow (aligned to Baseline) - Baseline flow
+                # Since we align to Baseline entering, action_val_aligned will be the "leaving" value seen as entering (so likely negative)
+                # But we must be careful: action_val_aligned is simply P at the node corresponding to baseline entering.
+                # If baseline entered at 1 (np1 > 0), we use ap1 - np1.
+                if baseline_idx == 1:
+                    delta = ap1 - np1
+                else:
+                    delta = ap2 - np2
+            else:
+                 # Standard case: use Action direction
+                 # if action entered at 1, ap1 - np1
+                 if action_idx == 1:
+                     delta = ap1 - np1
+                 else:
+                     delta = ap2 - np2
+            
             deltas[lid] = delta
 
         # --- Apply threshold (same as ThresholdReportOfLine = 0.05) ---
