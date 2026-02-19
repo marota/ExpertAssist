@@ -49,6 +49,16 @@ class NetworkService:
             return sorted(voltage_levels.index.tolist())
         return []
 
+    def get_nominal_voltages(self):
+        """Return {vl_id: nominal_v_kv} mapping for all voltage levels."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        voltage_levels = self.network.get_voltage_levels()
+        if voltage_levels is not None and not voltage_levels.empty:
+            return {vl_id: float(row['nominal_v']) for vl_id, row in voltage_levels.iterrows()}
+        return {}
+
     def get_element_voltage_levels(self, element_id: str):
         """Resolve an equipment ID (line, transformer, or VL) to its voltage level IDs."""
         if not self.network:
