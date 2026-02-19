@@ -225,19 +225,19 @@
 
         /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
         .voltage-sidebar {
-           position: absolute;
-           top: 0;
-           right: 0;
-           bottom: 0;
-           width: 62px;
-           background: rgba(244, 244, 244, 0.92);
-           border-left: 1px solid #ccc;
-           display: flex;
-           flex-direction: column;
-           align-items: center;
-           z-index: 15;
-           padding: 8px 0;
-           box-sizing: border-box;
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 62px;
+            background: rgba(244, 244, 244, 0.92);
+            border-left: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 15;
+            padding: 8px 0;
+            box-sizing: border-box;
         }
 
         .voltage-sidebar .vs-label {
@@ -1233,6 +1233,12 @@
                     actionSvgContainerRef.current.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
                     actionSvgContainerRef.current.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
 
+                    // Restore original text labels if they were modified (switching back from Delta mode)
+                    actionSvgContainerRef.current.querySelectorAll('[data-original-text]').forEach(el => {
+                        el.textContent = el.getAttribute('data-original-text');
+                        el.removeAttribute('data-original-text');
+                    });
+
                     // ===== DELTA MODE: apply delta coloring =====
                     if (actionViewMode === 'delta' && actionDiagram?.flow_deltas) {
                         const { edgesByEquipmentId } = actionMetaIndex;
@@ -1273,6 +1279,9 @@
                                 if (!infoEl) continue;
                                 const textTargets = infoEl.querySelectorAll('foreignObject, text');
                                 textTargets.forEach(t => {
+                                    if (!t.hasAttribute('data-original-text')) {
+                                        t.setAttribute('data-original-text', t.textContent);
+                                    }
                                     t.textContent = `Δ ${deltaStr}`;
                                 });
                             }
