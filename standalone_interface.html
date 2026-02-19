@@ -223,58 +223,82 @@
             stroke-opacity: 0.4 !important;
         }
 
-        /* ===== Voltage Range Slider ===== */
-        .voltage-slider-bar {
-            background: #f4f4f4;
-            border-bottom: 1px solid #ccc;
-            padding: 6px 20px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-size: 0.82rem;
+        /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
+        .voltage-sidebar {
+           position: absolute;
+           top: 0;
+           right: 0;
+           bottom: 0;
+           width: 62px;
+           background: rgba(244, 244, 244, 0.92);
+           border-left: 1px solid #ccc;
+           display: flex;
+           flex-direction: column;
+           align-items: center;
+           z-index: 15;
+           padding: 8px 0;
+           box-sizing: border-box;
         }
 
-        .voltage-slider-bar label {
+        .voltage-sidebar .vs-label {
+            font-size: 0.65rem;
             font-weight: bold;
-            white-space: nowrap;
             color: #2c3e50;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .voltage-sidebar .vs-range-label {
+            font-size: 0.6rem;
+            font-weight: bold;
+            color: #2c3e50;
+            background: #e8f0fe;
+            border-radius: 3px;
+            padding: 2px 4px;
+            margin-bottom: 6px;
+            text-align: center;
+            line-height: 1.2;
         }
 
         .voltage-slider-container {
             position: relative;
             flex: 1;
-            height: 28px;
-            max-width: 500px;
+            width: 28px;
+            min-height: 0;
         }
 
         .voltage-slider-track {
             position: absolute;
-            top: 12px;
-            left: 0;
-            right: 0;
-            height: 4px;
+            left: 12px;
+            top: 0;
+            bottom: 0;
+            width: 4px;
             background: #ddd;
             border-radius: 2px;
         }
 
         .voltage-slider-range {
             position: absolute;
-            top: 12px;
-            height: 4px;
+            left: 12px;
+            width: 4px;
             background: #3498db;
             border-radius: 2px;
         }
 
         .voltage-slider-container input[type=range] {
             position: absolute;
-            top: 0;
-            width: 100%;
-            height: 28px;
+            left: 0;
+            width: 28px;
             -webkit-appearance: none;
             appearance: none;
             background: transparent;
             pointer-events: none;
             margin: 0;
+            /* Rotate to vertical: slider runs bottom-to-top */
+            writing-mode: vertical-lr;
+            direction: rtl;
         }
 
         .voltage-slider-container input[type=range]::-webkit-slider-thumb {
@@ -302,24 +326,19 @@
 
         .voltage-slider-ticks {
             position: absolute;
-            top: 20px;
-            left: 0;
-            right: 0;
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.65rem;
-            color: #888;
-            padding: 0 2px;
+            top: 0;
+            bottom: 0;
+            left: 28px;
+            width: 24px;
         }
 
-        .voltage-range-label {
-            font-weight: bold;
-            color: #2c3e50;
-            min-width: 110px;
-            text-align: center;
-            background: #e8f0fe;
-            border-radius: 4px;
-            padding: 2px 8px;
+        .voltage-slider-ticks span {
+            position: absolute;
+            font-size: 0.58rem;
+            color: #666;
+            white-space: nowrap;
+            transform: translateY(-50%);
+            left: 2px;
         }
     </style>
 </head>
@@ -1569,6 +1588,56 @@
                                 )
                             }
                         </div>
+                        {uniqueVoltages.length > 1 && (() => {
+                            const minV = uniqueVoltages[0];
+                            const maxV = uniqueVoltages[uniqueVoltages.length - 1];
+                            const logMin = Math.log(minV);
+                            const logMax = Math.log(maxV);
+                            const logScale = (kv) => ((Math.log(kv) - logMin) / (logMax - logMin)) * 100;
+                            // For the vertical slider: 0% = bottom (low kV), 100% = top (high kV)
+                            const pctLow = logScale(voltageRange[0]);
+                            const pctHigh = logScale(voltageRange[1]);
+                            return (
+                                <div className="voltage-sidebar">
+                                    <span className="vs-label">kV Filter</span>
+                                    <span className="vs-range-label">
+                                        {voltageRange[1]}<br />{voltageRange[0]}
+                                    </span>
+                                    <div className="voltage-slider-container">
+                                        <div className="voltage-slider-track" />
+                                        <div className="voltage-slider-range" style={{ bottom: pctLow + '%', top: (100 - pctHigh) + '%' }} />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[0])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const kv = Math.exp(logV);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped <= voltageRange[1]) setVoltageRange([snapped, voltageRange[1]]);
+                                            }}
+                                            style={{ zIndex: 3, height: '100%' }}
+                                        />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[1])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped >= voltageRange[0]) setVoltageRange([voltageRange[0], snapped]);
+                                            }}
+                                            style={{ zIndex: 4, height: '100%' }}
+                                        />
+                                        <div className="voltage-slider-ticks">
+                                            {uniqueVoltages.map(kv => (
+                                                <span key={kv} style={{
+                                                    bottom: logScale(kv) + '%'
+                                                }}>{kv}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             };
@@ -1635,54 +1704,7 @@
                             Reset View
                         </button>
                     </div>
-                    {uniqueVoltages.length > 1 && (() => {
-                        const minV = uniqueVoltages[0];
-                        const maxV = uniqueVoltages[uniqueVoltages.length - 1];
-                        const pctLow = ((voltageRange[0] - minV) / (maxV - minV)) * 100;
-                        const pctHigh = ((voltageRange[1] - minV) / (maxV - minV)) * 100;
-                        return (
-                            <div className="voltage-slider-bar">
-                                <label>Voltage Filter (kV)</label>
-                                <span className="voltage-range-label">
-                                    {voltageRange[0]} — {voltageRange[1]} kV
-                                </span>
-                                <div className="voltage-slider-container">
-                                    <div className="voltage-slider-track" />
-                                    <div className="voltage-slider-range" style={{ left: pctLow + '%', right: (100 - pctHigh) + '%' }} />
-                                    <input type="range"
-                                        min={minV} max={maxV} step="any"
-                                        value={voltageRange[0]}
-                                        onChange={e => {
-                                            const v = parseFloat(e.target.value);
-                                            // Snap to nearest real voltage
-                                            const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(uv - v) < Math.abs(best - v) ? uv : best);
-                                            if (snapped <= voltageRange[1]) setVoltageRange([snapped, voltageRange[1]]);
-                                        }}
-                                        style={{ zIndex: 3 }}
-                                    />
-                                    <input type="range"
-                                        min={minV} max={maxV} step="any"
-                                        value={voltageRange[1]}
-                                        onChange={e => {
-                                            const v = parseFloat(e.target.value);
-                                            const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(uv - v) < Math.abs(best - v) ? uv : best);
-                                            if (snapped >= voltageRange[0]) setVoltageRange([voltageRange[0], snapped]);
-                                        }}
-                                        style={{ zIndex: 4 }}
-                                    />
-                                    <div className="voltage-slider-ticks">
-                                        {uniqueVoltages.map(kv => (
-                                            <span key={kv} style={{
-                                                position: 'absolute',
-                                                left: ((kv - minV) / (maxV - minV) * 100) + '%',
-                                                transform: 'translateX(-50%)'
-                                            }}>{kv}</span>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        );
-                    })()}
+
                     <div className="main-content">
                         <div className="action-feed">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
