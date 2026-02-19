@@ -944,7 +944,7 @@
                 setActionDiagramLoading(true);
                 setActiveTab('action');
                 try {
-                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId, mode: actionViewMode });
+                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
                     const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                     setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) {
@@ -1035,30 +1035,6 @@
                     .slice(0, 20);
             }, [searchQuery, availableActions, result?.actions]);
 
-            // Re-fetch action diagram when view mode changes
-            useEffect(() => {
-                if (!selectedActionId) return;
-
-                // Capture current zoom state so it can be restored after re-fetch
-                actionSyncSourceRef.current = actionPZ.viewBox || n1PZ.viewBox || nPZ.viewBox;
-
-                const fetchDelta = async () => {
-                    setActionDiagramLoading(true);
-                    setActionDiagram(null);
-                    try {
-                        const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: selectedActionId, mode: actionViewMode });
-                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
-                        setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
-                    } catch (err) {
-                        console.error('Failed to fetch action variant diagram:', err);
-                    } finally {
-                        setActionDiagramLoading(false);
-                    }
-                };
-                fetchDelta();
-            }, [actionViewMode]);
-
-
 
 
             // --- Synchronization Logic ---
@@ -1129,12 +1105,19 @@
                         const { edgesByEquipmentId } = actionMetaIndex;
                         const flowDeltas = actionDiagram.flow_deltas;
 
+                        // Build id→element index in a single DOM traversal (O(n) once)
+                        // instead of thousands of querySelector calls (O(n) each)
+                        const idMap = new Map();
+                        actionSvgContainerRef.current.querySelectorAll('[id]').forEach(el => {
+                            idMap.set(el.id, el);
+                        });
+
                         for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
                             const edge = edgesByEquipmentId.get(lineId);
                             if (!edge || !edge.svgId) continue;
 
                             // Apply delta color class on the edge path group
-                            const el = actionSvgContainerRef.current.querySelector(`[id="${edge.svgId}"]`);
+                            const el = idMap.get(edge.svgId);
                             if (el) {
                                 const classMap = {
                                     positive: 'nad-delta-positive',
@@ -1153,7 +1136,7 @@
                             ].filter(Boolean);
 
                             for (const infoSvgId of edgeInfoIds) {
-                                const infoEl = actionSvgContainerRef.current.querySelector(`[id="${infoSvgId}"]`);
+                                const infoEl = idMap.get(infoSvgId);
                                 if (!infoEl) continue;
                                 const textTargets = infoEl.querySelectorAll('foreignObject, text');
                                 textTargets.forEach(t => {

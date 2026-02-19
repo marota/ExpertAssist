@@ -73,12 +73,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         if (actionViewMode === 'delta' && actionDiagram.flow_deltas) {
             const flowDeltas = actionDiagram.flow_deltas;
 
+            // Build id→element index in a single DOM traversal (O(n) once)
+            // instead of thousands of querySelector calls (O(n) each)
+            const idMap = new Map<string, Element>();
+            container.querySelectorAll('[id]').forEach(el => {
+                idMap.set(el.id, el);
+            });
+
             for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
                 const edge = edgesByEquipmentId.get(lineId);
                 if (!edge?.svgId) continue;
 
                 // Apply delta color class on the edge path group
-                const el = container.querySelector(`[id="${edge.svgId}"]`);
+                const el = idMap.get(edge.svgId);
                 if (el) {
                     const classMap: Record<string, string> = {
                         positive: 'nad-delta-positive',
@@ -97,7 +104,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 ].filter(Boolean) as string[];
 
                 for (const infoSvgId of edgeInfoIds) {
-                    const infoEl = container.querySelector(`[id="${infoSvgId}"]`);
+                    const infoEl = idMap.get(infoSvgId);
                     if (!infoEl) continue;
                     const textTargets = infoEl.querySelectorAll('foreignObject, text');
                     textTargets.forEach(t => {

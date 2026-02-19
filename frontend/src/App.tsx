@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import './App.css';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
@@ -23,12 +23,12 @@ function App() {
     setActionViewMode('network');
   };
 
-  // Fetch diagram for currently selected action and view mode
-  const fetchDiagram = useCallback(async (actionId: string, mode: 'network' | 'delta') => {
+  // Fetch diagram for currently selected action (flow_deltas always included)
+  const fetchDiagram = useCallback(async (actionId: string) => {
     setActionDiagramLoading(true);
     setActionDiagram(null);
     try {
-      const diagram = await api.getActionVariantDiagram(actionId, mode);
+      const diagram = await api.getActionVariantDiagram(actionId);
       setActionDiagram(diagram);
     } catch (err) {
       console.error('Failed to fetch action variant diagram:', err);
@@ -46,15 +46,8 @@ function App() {
       return;
     }
 
-    fetchDiagram(actionId, actionViewMode);
-  }, [actionViewMode, fetchDiagram]);
-
-  // Re-fetch diagram when view mode changes (and an action is selected)
-  useEffect(() => {
-    if (selectedActionId) {
-      fetchDiagram(selectedActionId, actionViewMode);
-    }
-  }, [actionViewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchDiagram(actionId);
+  }, [fetchDiagram]);
 
   const handleDeselectAction = useCallback(() => {
     setSelectedActionId(null);

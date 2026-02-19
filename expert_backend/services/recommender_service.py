@@ -368,8 +368,12 @@ class RecommenderService:
         diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["action_id"] = action_id
 
-        if mode == "delta":
+        # Always include flow deltas so mode switching is instant on the frontend
+        try:
             diagram["flow_deltas"] = self._compute_flow_deltas(action_id)
+        except Exception as e:
+            logger.warning(f"Failed to compute flow deltas: {e}")
+            diagram["flow_deltas"] = {}
 
         return diagram
 
