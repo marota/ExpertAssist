@@ -12,6 +12,7 @@ function App() {
   const [actionDiagram, setActionDiagram] = useState<DiagramData | null>(null);
   const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
   const [disconnectedElement, setDisconnectedElement] = useState<string | null>(null);
+  const [actionViewMode, setActionViewMode] = useState<'network' | 'delta'>('network');
 
   const handleAnalysisRun = (result: AnalysisResult, element: string) => {
     setAnalysisResult(result);
@@ -19,16 +20,11 @@ function App() {
     // Clear any previously selected action when a new analysis runs
     setSelectedActionId(null);
     setActionDiagram(null);
+    setActionViewMode('network');
   };
 
-  const handleActionSelect = useCallback(async (actionId: string | null) => {
-    setSelectedActionId(actionId);
-
-    if (actionId === null) {
-      setActionDiagram(null);
-      return;
-    }
-
+  // Fetch diagram for currently selected action (flow_deltas always included)
+  const fetchDiagram = useCallback(async (actionId: string) => {
     setActionDiagramLoading(true);
     setActionDiagram(null);
     try {
@@ -41,6 +37,17 @@ function App() {
       setActionDiagramLoading(false);
     }
   }, []);
+
+  const handleActionSelect = useCallback(async (actionId: string | null) => {
+    setSelectedActionId(actionId);
+
+    if (actionId === null) {
+      setActionDiagram(null);
+      return;
+    }
+
+    fetchDiagram(actionId);
+  }, [fetchDiagram]);
 
   const handleDeselectAction = useCallback(() => {
     setSelectedActionId(null);
@@ -62,6 +69,10 @@ function App() {
     setSelectedActionId(actionId);
   }, []);
 
+  const handleViewModeChange = useCallback((mode: 'network' | 'delta') => {
+    setActionViewMode(mode);
+  }, []);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: 'Arial, sans-serif' }}>
       <header style={{ padding: '0.5rem', borderBottom: '1px solid #ddd', backgroundColor: '#333', color: 'white' }}>
@@ -79,6 +90,8 @@ function App() {
             onActionSelect={handleActionSelect}
             disconnectedElement={disconnectedElement}
             onManualActionAdded={handleManualActionAdded}
+            actionViewMode={actionViewMode}
+            onViewModeChange={handleViewModeChange}
           />
         </div>
         <div style={{ width: '75%', backgroundColor: '#fff', position: 'relative' }}>
@@ -90,6 +103,7 @@ function App() {
             onDeselectAction={handleDeselectAction}
             linesOverloaded={analysisResult?.lines_overloaded || []}
             selectedActionDetail={selectedActionId && analysisResult?.actions ? analysisResult.actions[selectedActionId] ?? null : null}
+            actionViewMode={actionViewMode}
           />
         </div>
       </div>

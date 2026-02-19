@@ -2,9 +2,18 @@ import React, { useRef, useCallback, useEffect } from 'react';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import type { ActionDetail, DiagramData } from '../types';
 
+interface EdgeInfoMeta {
+    svgId: string;
+    infoType?: string;
+    direction?: string;
+    externalLabel?: string;
+}
+
 interface ElementMeta {
     equipmentId: string;
     svgId: string;
+    edgeInfo1?: EdgeInfoMeta;
+    edgeInfo2?: EdgeInfoMeta;
     [key: string]: unknown;
 }
 
@@ -21,6 +30,7 @@ interface VisualizationPanelProps {
     onDeselectAction: () => void;
     linesOverloaded: string[];
     selectedActionDetail: ActionDetail | null;
+    actionViewMode: 'network' | 'delta';
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -31,21 +41,24 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onDeselectAction,
     linesOverloaded,
     selectedActionDetail,
+    actionViewMode,
 }) => {
     const svgContainerRef = useRef<HTMLDivElement>(null);
 
     // Highlight overloaded lines (orange) and action targets (yellow fluo halo) on action SVG
+    // OR apply delta coloring (orange/blue/grey) when in delta mode
     useEffect(() => {
         const container = svgContainerRef.current;
         if (!container || !actionDiagram?.svg) return;
 
-        // Clear previous highlights
+        // Clear ALL previous highlights (both modes)
         container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
         container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
+        container.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
+        container.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
+        container.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
         // Remove old background clones
         container.querySelectorAll('.nad-highlight-clone').forEach(el => el.remove());
-
-        if (!selectedActionDetail) return;
 
         // Parse metadata to build equipmentId -> svgId mappings
         const meta: DiagramMetadata = typeof actionDiagram.metadata === 'string'
@@ -55,6 +68,53 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         (meta.edges || []).forEach(e => edgesByEquipmentId.set(e.equipmentId, e));
         const nodesByEquipmentId = new Map<string, ElementMeta>();
         (meta.nodes || []).forEach(n => nodesByEquipmentId.set(n.equipmentId, n));
+
+        // ===== DELTA MODE: apply delta coloring =====
+        if (actionViewMode === 'delta' && actionDiagram.flow_deltas) {
+            const flowDeltas = actionDiagram.flow_deltas;
+
+            // Build id→element index in a single DOM traversal (O(n) once)
+            // instead of thousands of querySelector calls (O(n) each)
+            const idMap = new Map<string, Element>();
+            container.querySelectorAll('[id]').forEach(el => {
+                idMap.set(el.id, el);
+            });
+
+            for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
+                const edge = edgesByEquipmentId.get(lineId);
+                if (!edge?.svgId) continue;
+
+                // Apply delta color class on the edge path group
+                const el = idMap.get(edge.svgId);
+                if (el) {
+                    const classMap: Record<string, string> = {
+                        positive: 'nad-delta-positive',
+                        negative: 'nad-delta-negative',
+                        grey: 'nad-delta-grey',
+                    };
+                    const cls = classMap[deltaInfo.category];
+                    if (cls) el.classList.add(cls);
+                }
+
+                // Replace edge info text labels with the delta value (same at both ends)
+                const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
+                const edgeInfoIds = [
+                    edge.edgeInfo1?.svgId,
+                    edge.edgeInfo2?.svgId,
+                ].filter(Boolean) as string[];
+
+                for (const infoSvgId of edgeInfoIds) {
+                    const infoEl = idMap.get(infoSvgId);
+                    if (!infoEl) continue;
+                    const textTargets = infoEl.querySelectorAll('foreignObject, text');
+                    textTargets.forEach(t => {
+                        t.textContent = `Δ ${deltaStr}`;
+                    });
+                }
+            }
+        }
+
+        if (!selectedActionDetail) return;
 
         // Create or find background layer at the root of the SVG
         let backgroundLayer = container.querySelector('#nad-background-layer');
@@ -109,28 +169,31 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             }
         };
 
-        // Orange: lines that remain >100% after the action
-        if (linesOverloaded.length > 0) {
-            const stillOverloaded: string[] = [];
-            if (selectedActionDetail.rho_after) {
-                linesOverloaded.forEach((name, i) => {
-                    if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
-                        stillOverloaded.push(name);
+        // ===== NETWORK MODE ONLY: overloaded line highlights =====
+        if (actionViewMode !== 'delta') {
+            // Orange: lines that remain >100% after the action
+            if (linesOverloaded.length > 0) {
+                const stillOverloaded: string[] = [];
+                if (selectedActionDetail.rho_after) {
+                    linesOverloaded.forEach((name, i) => {
+                        if (selectedActionDetail.rho_after![i] != null && selectedActionDetail.rho_after![i] > 1.0) {
+                            stillOverloaded.push(name);
+                        }
+                    });
+                }
+                if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
+                    if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
+                        stillOverloaded.push(selectedActionDetail.max_rho_line);
                     }
+                }
+                stillOverloaded.forEach(name => {
+                    const edge = edgesByEquipmentId.get(name);
+                    if (edge?.svgId) highlightById(edge.svgId, 'nad-overloaded');
                 });
             }
-            if (selectedActionDetail.max_rho != null && selectedActionDetail.max_rho > 1.0 && selectedActionDetail.max_rho_line) {
-                if (!stillOverloaded.includes(selectedActionDetail.max_rho_line)) {
-                    stillOverloaded.push(selectedActionDetail.max_rho_line);
-                }
-            }
-            stillOverloaded.forEach(name => {
-                const edge = edgesByEquipmentId.get(name);
-                if (edge?.svgId) highlightById(edge.svgId, 'nad-overloaded');
-            });
         }
 
-        // Yellow fluo halo: action targets (VL node or line edges)
+        // ===== BOTH MODES: action target highlights (yellow fluo halo) =====
         // 1. Try VL detection first (handles nodal AND coupler actions)
         const findVoltageLevel = (): string | null => {
             const desc = selectedActionDetail.description_unitaire;
@@ -189,7 +252,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 });
             }
         }
-    }, [actionDiagram, linesOverloaded, selectedActionDetail, selectedActionId]);
+    }, [actionDiagram, linesOverloaded, selectedActionDetail, selectedActionId, actionViewMode]);
 
     const showingAction = selectedActionId !== null;
     const showingPdf = !showingAction && pdfUrl !== null;

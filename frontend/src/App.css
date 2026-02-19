@@ -53,3 +53,29 @@
     fill: #444 !important;
     /* Provide a dark fill background for contrast, or 'initial' */
 }
+
+/* ===== Delta flow visualization ===== */
+
+/* Positive delta: flow increased after action (orange) */
+.nad-delta-positive path,
+.nad-delta-positive line,
+.nad-delta-positive polyline {
+    stroke: #ff8c00 !important;
+    stroke-width: 3px !important;
+}
+
+/* Negative delta: flow decreased after action (blue) */
+.nad-delta-negative path,
+.nad-delta-negative line,
+.nad-delta-negative polyline {
+    stroke: #2196F3 !important;
+    stroke-width: 3px !important;
+}
+
+/* Grey: negligible change (below threshold) */
+.nad-delta-grey path,
+.nad-delta-grey line,
+.nad-delta-grey polyline {
+    stroke: #999 !important;
+    stroke-opacity: 0.4 !important;
+}

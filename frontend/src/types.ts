@@ -43,4 +43,10 @@ export interface DiagramData {
     lf_converged?: boolean;
     lf_status?: string;
     action_id?: string;
+    flow_deltas?: Record<string, FlowDelta>;
+}
+
+export interface FlowDelta {
+    delta: number;
+    category: 'positive' | 'negative' | 'grey';
 }
