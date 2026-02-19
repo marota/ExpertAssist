@@ -222,6 +222,124 @@
             stroke: #999 !important;
             stroke-opacity: 0.4 !important;
         }
+
+        /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
+        .voltage-sidebar {
+           position: absolute;
+           top: 0;
+           right: 0;
+           bottom: 0;
+           width: 62px;
+           background: rgba(244, 244, 244, 0.92);
+           border-left: 1px solid #ccc;
+           display: flex;
+           flex-direction: column;
+           align-items: center;
+           z-index: 15;
+           padding: 8px 0;
+           box-sizing: border-box;
+        }
+
+        .voltage-sidebar .vs-label {
+            font-size: 0.65rem;
+            font-weight: bold;
+            color: #2c3e50;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .voltage-sidebar .vs-range-label {
+            font-size: 0.6rem;
+            font-weight: bold;
+            color: #2c3e50;
+            background: #e8f0fe;
+            border-radius: 3px;
+            padding: 2px 4px;
+            margin-bottom: 6px;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .voltage-slider-container {
+            position: relative;
+            flex: 1;
+            width: 28px;
+            min-height: 0;
+        }
+
+        .voltage-slider-track {
+            position: absolute;
+            left: 12px;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #ddd;
+            border-radius: 2px;
+        }
+
+        .voltage-slider-range {
+            position: absolute;
+            left: 12px;
+            width: 4px;
+            background: #3498db;
+            border-radius: 2px;
+        }
+
+        .voltage-slider-container input[type=range] {
+            position: absolute;
+            left: 0;
+            width: 28px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            pointer-events: none;
+            margin: 0;
+            /* Rotate to vertical: slider runs bottom-to-top */
+            writing-mode: vertical-lr;
+            direction: rtl;
+        }
+
+        .voltage-slider-container input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3498db;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            pointer-events: all;
+        }
+
+        .voltage-slider-container input[type=range]::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3498db;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            pointer-events: all;
+        }
+
+        .voltage-slider-ticks {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 28px;
+            width: 24px;
+        }
+
+        .voltage-slider-ticks span {
+            position: absolute;
+            font-size: 0.58rem;
+            color: #666;
+            white-space: nowrap;
+            transform: translateY(-50%);
+            left: 2px;
+        }
     </style>
 </head>
 
@@ -710,6 +828,11 @@
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
             const [branches, setBranches] = useState([]);
             const [voltageLevels, setVoltageLevels] = useState([]);
+
+            // Nominal voltage filter state
+            const [nominalVoltageMap, setNominalVoltageMap] = useState({});  // {vl_id: kv}
+            const [uniqueVoltages, setUniqueVoltages] = useState([]);       // sorted [kv1, kv2, ...]
+            const [voltageRange, setVoltageRange] = useState([0, 400]);     // [minKv, maxKv] cursor positions
             const [selectedBranch, setSelectedBranch] = useState('');
             const [configLoading, setConfigLoading] = useState(false);
             const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -791,13 +914,23 @@
                 try {
                     await axios.post(API_BASE + '/api/config', { network_path: networkPath, action_file_path: actionPath });
 
-                    const [branchesRes, vlRes] = await Promise.all([
+                    const [branchesRes, vlRes, nomVRes] = await Promise.all([
                         axios.get(API_BASE + '/api/branches'),
-                        axios.get(API_BASE + '/api/voltage-levels')
+                        axios.get(API_BASE + '/api/voltage-levels'),
+                        axios.get(API_BASE + '/api/nominal-voltages')
                     ]);
 
                     setBranches(branchesRes.data.branches);
                     setVoltageLevels(vlRes.data.voltage_levels);
+
+                    // Set up nominal voltage filter
+                    const nvMap = nomVRes.data.mapping;
+                    const uniqueKv = nomVRes.data.unique_kv;
+                    setNominalVoltageMap(nvMap);
+                    setUniqueVoltages(uniqueKv);
+                    if (uniqueKv.length > 0) {
+                        setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
+                    }
 
                     fetchBaseDiagram(vlRes.data.voltage_levels.length);
                 } catch (err) {
@@ -1176,6 +1309,73 @@
                 }
             }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode]);
 
+            // ===== VOLTAGE RANGE FILTER =====
+            // Hide/show SVG nodes and edges based on the nominal voltage range slider.
+            useEffect(() => {
+                if (uniqueVoltages.length === 0 || Object.keys(nominalVoltageMap).length === 0) return;
+
+                const [minKv, maxKv] = voltageRange;
+
+                // Helper: check if a voltage level ID falls within the range
+                const isInRange = (vlId) => {
+                    const kv = nominalVoltageMap[vlId];
+                    return kv != null && kv >= minKv && kv <= maxKv;
+                };
+
+                // Apply filter to a single SVG container + its metadata index
+                const applyFilter = (container, metaIndex) => {
+                    if (!container || !metaIndex) return;
+                    const { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode } = metaIndex;
+
+                    // Single DOM traversal for id→element map
+                    const idMap = new Map();
+                    container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
+
+                    // Filter nodes (VL substations)
+                    for (const [vlId, node] of nodesByEquipmentId) {
+                        const visible = isInRange(vlId);
+                        const show = visible ? '' : 'none';
+                        const el = idMap.get(node.svgId);
+                        if (el) el.style.display = show;
+                        // Also hide legend box and legend edge
+                        if (node.legendSvgId) {
+                            const leg = idMap.get(node.legendSvgId);
+                            if (leg) leg.style.display = show;
+                        }
+                        if (node.legendEdgeSvgId) {
+                            const legE = idMap.get(node.legendEdgeSvgId);
+                            if (legE) legE.style.display = show;
+                        }
+                    }
+
+                    // Filter edges: hide only if BOTH endpoint VLs are outside range
+                    for (const [eqId, edge] of edgesByEquipmentId) {
+                        const node1 = nodesBySvgId.get(edge.node1);
+                        const node2 = nodesBySvgId.get(edge.node2);
+                        const vl1InRange = node1 ? isInRange(node1.equipmentId) : true;
+                        const vl2InRange = node2 ? isInRange(node2.equipmentId) : true;
+                        const edgeVisible = vl1InRange || vl2InRange;
+                        const show = edgeVisible ? '' : 'none';
+
+                        const el = idMap.get(edge.svgId);
+                        if (el) el.style.display = show;
+                        // Edge info labels
+                        if (edge.edgeInfo1?.svgId) {
+                            const ei = idMap.get(edge.edgeInfo1.svgId);
+                            if (ei) ei.style.display = show;
+                        }
+                        if (edge.edgeInfo2?.svgId) {
+                            const ei = idMap.get(edge.edgeInfo2.svgId);
+                            if (ei) ei.style.display = show;
+                        }
+                    }
+                };
+
+                applyFilter(nSvgContainerRef.current, nMetaIndex);
+                applyFilter(n1SvgContainerRef.current, n1MetaIndex);
+                applyFilter(actionSvgContainerRef.current, actionMetaIndex);
+            }, [voltageRange, nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, nominalVoltageMap, uniqueVoltages]);
+
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
                 const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
@@ -1388,6 +1588,56 @@
                                 )
                             }
                         </div>
+                        {uniqueVoltages.length > 1 && (() => {
+                            const minV = uniqueVoltages[0];
+                            const maxV = uniqueVoltages[uniqueVoltages.length - 1];
+                            const logMin = Math.log(minV);
+                            const logMax = Math.log(maxV);
+                            const logScale = (kv) => ((Math.log(kv) - logMin) / (logMax - logMin)) * 100;
+                            // For the vertical slider: 0% = bottom (low kV), 100% = top (high kV)
+                            const pctLow = logScale(voltageRange[0]);
+                            const pctHigh = logScale(voltageRange[1]);
+                            return (
+                                <div className="voltage-sidebar">
+                                    <span className="vs-label">kV Filter</span>
+                                    <span className="vs-range-label">
+                                        {voltageRange[1]}<br />{voltageRange[0]}
+                                    </span>
+                                    <div className="voltage-slider-container">
+                                        <div className="voltage-slider-track" />
+                                        <div className="voltage-slider-range" style={{ bottom: pctLow + '%', top: (100 - pctHigh) + '%' }} />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[0])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const kv = Math.exp(logV);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped <= voltageRange[1]) setVoltageRange([snapped, voltageRange[1]]);
+                                            }}
+                                            style={{ zIndex: 3, height: '100%' }}
+                                        />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[1])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped >= voltageRange[0]) setVoltageRange([voltageRange[0], snapped]);
+                                            }}
+                                            style={{ zIndex: 4, height: '100%' }}
+                                        />
+                                        <div className="voltage-slider-ticks">
+                                            {uniqueVoltages.map(kv => (
+                                                <span key={kv} style={{
+                                                    bottom: logScale(kv) + '%'
+                                                }}>{kv}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             };
@@ -1454,6 +1704,7 @@
                             Reset View
                         </button>
                     </div>
+
                     <div className="main-content">
                         <div className="action-feed">
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>

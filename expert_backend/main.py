@@ -71,6 +71,16 @@ def get_voltage_levels():
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+@app.get("/api/nominal-voltages")
+def get_nominal_voltages():
+    """Return VL ID → nominal voltage (kV) mapping and sorted unique kV values."""
+    try:
+        mapping = network_service.get_nominal_voltages()
+        unique_kv = sorted(set(mapping.values()))
+        return {"mapping": mapping, "unique_kv": unique_kv}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/pick-path")
 def pick_path(type: str = Query("file", enum=["file", "dir"])):
     """
