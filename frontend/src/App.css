@@ -8,50 +8,40 @@
     stroke-width: 3px !important;
 }
 
-/* Highlight lines acted upon by the selected action with a yellow fluo halo */
-/* Highlight lines acted upon by the selected action with a yellow fluo halo */
+/* Apply drop-shadow to the parent clone group to create a glowing halo effect */
 .nad-action-target {
-    /* Keep the glow on the group */
-    filter: drop-shadow(0 0 15px #ccff00) drop-shadow(0 0 30px #ccff00) !important;
+    filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
 }
 
-/* Pulse animation for high visibility */
-@keyframes nad-pulse {
-    0% {
-        stroke-width: 80px;
-        stroke-opacity: 0.6;
-    }
-
-    50% {
-        stroke-width: 150px;
-        stroke-opacity: 1;
-    }
-
-    100% {
-        stroke-width: 80px;
-        stroke-opacity: 0.6;
-    }
-}
-
-/* Force thick stroke on ALL children */
+/* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
 .nad-action-target path,
 .nad-action-target line,
 .nad-action-target polyline,
-.nad-action-target circle,
 .nad-action-target rect,
 .nad-action-target polygon {
-    stroke: #ccff00 !important;
+    stroke: #fffb00 !important;
+    stroke-width: 150px !important;
+    stroke-opacity: 0.3 !important;
     fill: none !important;
-    /* Ensure fill doesn't hide inner details if we apply to everything, or maybe risky */
-    animation: nad-pulse 2s infinite !important;
-    /* Removed vector-effect as it confuses zoom-dependent sizing */
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
 }
 
-/* Special case for nodes (circles/rects) to keep their fill */
+/* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
 .nad-action-target circle,
 .nad-action-target rect {
-    fill: #444 !important;
-    /* Provide a dark fill background for contrast, or 'initial' */
+    stroke: #ffe600 !important;
+    stroke-width: 45px !important;
+    stroke-opacity: 0.6 !important;
+    fill: #ffe600 !important;
+    fill-opacity: 0.8 !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+/* Hide text and foreignObjects in the background clone to avoid messy overlays */
+.nad-action-target text,
+.nad-action-target foreignObject {
+    display: none !important;
 }
 
 /* ===== Delta flow visualization ===== */

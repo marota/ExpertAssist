@@ -145,47 +145,40 @@
             stroke-width: 3px !important;
         }
 
-        /* Highlight lines acted upon by the selected action with a yellow fluo halo */
-        /* Highlight lines acted upon by the selected action with a yellow fluo halo */
+        /* Apply drop-shadow to the parent clone group to create a glowing halo effect */
         .nad-action-target {
-            /* Keep the glow on the group */
-            filter: drop-shadow(0 0 15px #ccff00) drop-shadow(0 0 30px #ccff00) !important;
+            filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
         }
 
-        /* Pulse animation for high visibility */
-        @keyframes nad-pulse {
-            0% {
-                stroke-width: 80px;
-                stroke-opacity: 0.6;
-            }
-
-            50% {
-                stroke-width: 150px;
-                stroke-opacity: 1;
-            }
-
-            100% {
-                stroke-width: 80px;
-                stroke-opacity: 0.6;
-            }
-        }
-
-        /* Force thick stroke on ALL children */
+        /* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
         .nad-action-target path,
         .nad-action-target line,
         .nad-action-target polyline,
-        .nad-action-target circle,
         .nad-action-target rect,
         .nad-action-target polygon {
-            stroke: #ccff00 !important;
+            stroke: #fffb00 !important;
+            stroke-width: 150px !important;
+            stroke-opacity: 0.8 !important;
             fill: none !important;
-            animation: nad-pulse 2s infinite !important;
+            stroke-linecap: round !important;
+            stroke-linejoin: round !important;
         }
 
-        /* Special case for nodes (circles/rects) to keep their fill */
+        /* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
         .nad-action-target circle,
         .nad-action-target rect {
-            fill: #444 !important;
+            stroke: #ffe600 !important;
+            stroke-width: 45px !important;
+            stroke-opacity: 0.6 !important;
+            fill: #ffe600 !important;
+            fill-opacity: 0.8 !important;
+            vector-effect: non-scaling-stroke !important;
+        }
+
+        /* Hide text and foreignObjects in the background clone to avoid messy overlays */
+        .nad-action-target text,
+        .nad-action-target foreignObject {
+            display: none !important;
         }
 
         /* Hide text on large grids at full zoom — revealed by removing this class.
@@ -681,31 +674,40 @@
 
         // Determine which lines an action acts upon (for line disconnection/reconnection actions).
         // Returns an array of line names, or empty array if the action is not line-only.
-        const getActionTargetLines = (actionDetail) => {
+        const getActionTargetLines = (actionDetail, actionId, edgesByEquipmentId) => {
             const topo = actionDetail?.action_topology;
-            if (!topo) return [];
+            if (topo) {
+                const lineKeys = new Set([
+                    ...Object.keys(topo.lines_ex_bus || {}),
+                    ...Object.keys(topo.lines_or_bus || {}),
+                ]);
+                const genKeys = Object.keys(topo.gens_bus || {});
+                const loadKeys = Object.keys(topo.loads_bus || {});
 
-            const lineKeys = new Set([
-                ...Object.keys(topo.lines_ex_bus || {}),
-                ...Object.keys(topo.lines_or_bus || {}),
-            ]);
-            const genKeys = Object.keys(topo.gens_bus || {});
-            const loadKeys = Object.keys(topo.loads_bus || {});
+                // No gen/load changes → line-only action
+                if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
+                    return [...lineKeys];
+                }
 
-            // No gen/load changes → line-only action
-            if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
-                return [...lineKeys];
+                // Multiple assets but ALL values are -1 → multiple line disconnections
+                const allValues = [
+                    ...Object.values(topo.lines_ex_bus || {}),
+                    ...Object.values(topo.lines_or_bus || {}),
+                    ...Object.values(topo.gens_bus || {}),
+                    ...Object.values(topo.loads_bus || {}),
+                ];
+                if (allValues.length > 0 && allValues.every(v => v === -1)) {
+                    return [...lineKeys];
+                }
             }
 
-            // Multiple assets but ALL values are -1 → multiple line disconnections
-            const allValues = [
-                ...Object.values(topo.lines_ex_bus || {}),
-                ...Object.values(topo.lines_or_bus || {}),
-                ...Object.values(topo.gens_bus || {}),
-                ...Object.values(topo.loads_bus || {}),
-            ];
-            if (allValues.length > 0 && allValues.every(v => v === -1)) {
-                return [...lineKeys];
+            // Fallback: parse actionId if topology yielded nothing (e.g. reco_CHALOL31LOUHA)
+            if (actionId) {
+                const parts = actionId.split('_');
+                const candidate = parts[parts.length - 1];
+                if (edgesByEquipmentId && edgesByEquipmentId.has(candidate)) {
+                    return [candidate];
+                }
             }
 
             return [];
@@ -781,9 +783,11 @@
                     clone.classList.add('nad-highlight-clone');
 
                     try {
-                        const ctm = el.getCTM();
-                        if (ctm) {
-                            const matrixStr = `matrix(${ctm.a}, ${ctm.b}, ${ctm.c}, ${ctm.d}, ${ctm.e}, ${ctm.f})`;
+                        const elCTM = el.getScreenCTM();
+                        const bgCTM = backgroundLayer.getScreenCTM();
+                        if (elCTM && bgCTM) {
+                            const relativeCTM = bgCTM.inverse().multiply(elCTM);
+                            const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
                             clone.setAttribute('transform', matrixStr);
                         }
                     } catch (e) {
@@ -806,14 +810,14 @@
                     const el = container.querySelector(`[id="${node.svgId}"]`);
                     console.log('[action-target] SVG element found:', !!el);
                     if (el) {
-                        el.classList.add('nad-action-target');
+                        applyHighlight(el);
                         return;
                     }
                 }
             }
 
-            // 2. Fall back to line action: highlight edges from topology
-            const targetLines = getActionTargetLines(actionDetail);
+            // 2. Fall back to line action: highlight edges from topology or action ID
+            const targetLines = getActionTargetLines(actionDetail, actionId, edgesByEquipmentId);
             targetLines.forEach(lineName => {
                 const edge = edgesByEquipmentId.get(lineName);
                 if (edge && edge.svgId) {

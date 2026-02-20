@@ -146,12 +146,11 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 
                         // Calculate transformation to root coordinate system
                         try {
-                            // getCTM returns the matrix from current user units to viewport
-                            // We want to apply this matrix to the clone at the root level
-                            const ctm = el.getCTM();
-                            if (ctm) {
-                                // Apply CTM as transform
-                                const matrixStr = `matrix(${ctm.a}, ${ctm.b}, ${ctm.c}, ${ctm.d}, ${ctm.e}, ${ctm.f})`;
+                            const elCTM = el.getScreenCTM();
+                            const bgCTM = (backgroundLayer as SVGGraphicsElement).getScreenCTM();
+                            if (elCTM && bgCTM) {
+                                const relativeCTM = bgCTM.inverse().multiply(elCTM);
+                                const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
                                 clone.setAttribute('transform', matrixStr);
                             }
                         } catch (e) {
@@ -222,7 +221,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             const node = nodesByEquipmentId.get(vlName);
             if (node?.svgId) highlightById(node.svgId, 'nad-action-target');
         } else {
-            // 2. Fall back to line action: highlight edges from topology
+            // 2. Fall back to line action: highlight edges from topology or action ID
+            let targetLines: string[] = [];
             const topo = selectedActionDetail.action_topology;
             if (topo) {
                 const lineKeys = new Set([
@@ -232,7 +232,6 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 const genKeys = Object.keys(topo.gens_bus || {});
                 const loadKeys = Object.keys(topo.loads_bus || {});
 
-                let targetLines: string[] = [];
                 if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
                     targetLines = [...lineKeys];
                 } else {
@@ -246,11 +245,21 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         targetLines = [...lineKeys];
                     }
                 }
-                targetLines.forEach(name => {
-                    const edge = edgesByEquipmentId.get(name);
-                    if (edge?.svgId) highlightById(edge.svgId, 'nad-action-target');
-                });
             }
+
+            // Fallback: parse action ID if topology yielded nothing
+            if (targetLines.length === 0 && selectedActionId) {
+                const parts = selectedActionId.split('_');
+                const candidate = parts[parts.length - 1];
+                if (edgesByEquipmentId.has(candidate)) {
+                    targetLines.push(candidate);
+                }
+            }
+
+            targetLines.forEach(name => {
+                const edge = edgesByEquipmentId.get(name);
+                if (edge?.svgId) highlightById(edge.svgId, 'nad-action-target');
+            });
         }
     }, [actionDiagram, linesOverloaded, selectedActionDetail, selectedActionId, actionViewMode]);
 
