@@ -62,7 +62,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
     // Filter actions for dropdown
     const filteredActions = useMemo(() => {
-        if (!searchQuery) return [];
         const q = searchQuery.toLowerCase();
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
@@ -247,12 +246,17 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     )}
 
                                     {/* Search Results */}
-                                    {searchQuery && filteredActions.length === 0 && (
+                                    {(!searchQuery && scoredActionsList.length === 0 && filteredActions.length === 0) && (
+                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                            All actions already added
+                                        </div>
+                                    )}
+                                    {(searchQuery && filteredActions.length === 0) && (
                                         <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
                                             No matching actions
                                         </div>
                                     )}
-                                    {searchQuery && filteredActions.map(a => (
+                                    {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredActions.map(a => (
                                         <div
                                             key={a.id}
                                             onClick={() => handleAddAction(a.id)}
@@ -264,12 +268,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 opacity: simulating && simulating !== a.id ? 0.5 : 1,
                                                 transition: 'background-color 0.1s ease',
                                             }}
-                                            onMouseEnter={(e) => {
-                                                if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0';
-                                            }}
-                                            onMouseLeave={(e) => {
-                                                if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
-                                            }}
+                                            onMouseEnter={(e) => { if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0'; }}
+                                            onMouseLeave={(e) => { if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; }}
                                         >
                                             <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
                                                 {simulating === a.id ? '⏳ Simulating...' : a.id}

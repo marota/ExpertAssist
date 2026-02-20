@@ -1164,7 +1164,6 @@
 
             // Filter available actions for dropdown
             const filteredSearchActions = useMemo(() => {
-                if (!searchQuery) return [];
                 const q = searchQuery.toLowerCase();
                 const existingIds = new Set(result?.actions ? Object.keys(result.actions) : []);
                 return availableActions
@@ -1894,12 +1893,17 @@
                                                     )}
 
                                                     {/* Search Results */}
-                                                    {searchQuery && filteredSearchActions.length === 0 && (
+                                                    {(!searchQuery && scoredActionsList.length === 0 && filteredSearchActions.length === 0) && (
+                                                        <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                            All actions already added
+                                                        </div>
+                                                    )}
+                                                    {(searchQuery && filteredSearchActions.length === 0) && (
                                                         <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
                                                             No matching actions
                                                         </div>
                                                     )}
-                                                    {searchQuery && filteredSearchActions.map(a => (
+                                                    {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredSearchActions.map(a => (
                                                         <div
                                                             key={a.id}
                                                             onClick={() => handleAddManualAction(a.id)}
