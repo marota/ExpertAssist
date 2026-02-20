@@ -85,6 +85,7 @@ function App() {
         <div style={{ width: '25%', borderRight: '1px solid #ddd', overflowY: 'auto', backgroundColor: '#f4f4f4' }}>
           <ActionFeed
             actions={analysisResult?.actions || {}}
+            actionScores={analysisResult?.action_scores}
             linesOverloaded={analysisResult?.lines_overloaded || []}
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}

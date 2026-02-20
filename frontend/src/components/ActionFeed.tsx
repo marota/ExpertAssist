@@ -4,6 +4,7 @@ import { api } from '../api';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
+    actionScores?: Record<string, any>;
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
@@ -24,6 +25,7 @@ const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
     actions,
+    actionScores,
     linesOverloaded,
     selectedActionId,
     onActionSelect,
@@ -60,6 +62,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
     // Filter actions for dropdown
     const filteredActions = useMemo(() => {
+        if (!searchQuery) return [];
         const q = searchQuery.toLowerCase();
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
@@ -67,6 +70,22 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
             .slice(0, 20);
     }, [searchQuery, availableActions, actions]);
+
+    // Format scored actions
+    const scoredActionsList = useMemo(() => {
+        if (!actionScores) return [];
+        const list: { type: string; actionId: string; score: number }[] = [];
+        for (const [type, data] of Object.entries(actionScores)) {
+            const scores = data?.scores || {};
+            for (const [actionId, score] of Object.entries(scores)) {
+                list.push({ type, actionId, score: Number(score) });
+            }
+        }
+        return list.sort((a, b) => {
+            if (a.type !== b.type) return a.type.localeCompare(b.type);
+            return b.score - a.score;
+        });
+    }, [actionScores]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -183,40 +202,86 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                 <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
                                     Loading actions...
                                 </div>
-                            ) : filteredActions.length === 0 ? (
-                                <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
-                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
-                                </div>
                             ) : (
-                                filteredActions.map(a => (
-                                    <div
-                                        key={a.id}
-                                        onClick={() => handleAddAction(a.id)}
-                                        style={{
-                                            padding: '0.5rem 0.75rem',
-                                            cursor: simulating ? 'wait' : 'pointer',
-                                            borderTop: '1px solid #eee',
-                                            backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
-                                            opacity: simulating && simulating !== a.id ? 0.5 : 1,
-                                            transition: 'background-color 0.1s ease',
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
-                                        }}
-                                    >
-                                        <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
-                                            {simulating === a.id ? '⏳ Simulating...' : a.id}
-                                        </div>
-                                        {a.description && (
-                                            <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
-                                                {a.description}
+                                <>
+                                    {/* Action Scores Table */}
+                                    {scoredActionsList.length > 0 && !searchQuery && (
+                                        <div style={{ padding: '0 0.5rem', marginBottom: '0.5rem' }}>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
+                                                Scored Actions
                                             </div>
-                                        )}
-                                    </div>
-                                ))
+                                            <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+                                                <thead>
+                                                    <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
+                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Type</th>
+                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Action</th>
+                                                        <th style={{ textAlign: 'right', padding: '4px' }}>Score</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {scoredActionsList.map(item => {
+                                                        const isComputed = !!actions[item.actionId];
+                                                        return (
+                                                            <tr key={`${item.type}-${item.actionId}`}
+                                                                onClick={() => !isComputed && handleAddAction(item.actionId)}
+                                                                style={{
+                                                                    borderBottom: '1px solid #eee',
+                                                                    cursor: (isComputed || simulating) ? 'not-allowed' : 'pointer',
+                                                                    opacity: isComputed ? 0.6 : (simulating === item.actionId ? 0.7 : 1),
+                                                                    background: simulating === item.actionId ? '#e7f1ff' : 'transparent',
+                                                                }}>
+                                                                <td style={{ padding: '4px', color: '#666' }}>{item.type.replace('_', ' ')}</td>
+                                                                <td style={{ padding: '4px', fontWeight: 600 }}>
+                                                                    {item.actionId}
+                                                                    {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '1px 4px', borderRadius: '4px', fontSize: '0.65rem' }}>computed</span>}
+                                                                </td>
+                                                                <td style={{ padding: '4px', textAlign: 'right', fontFamily: 'monospace' }}>
+                                                                    {item.score.toFixed(2)}
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+
+                                    {/* Search Results */}
+                                    {searchQuery && filteredActions.length === 0 && (
+                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                            No matching actions
+                                        </div>
+                                    )}
+                                    {searchQuery && filteredActions.map(a => (
+                                        <div
+                                            key={a.id}
+                                            onClick={() => handleAddAction(a.id)}
+                                            style={{
+                                                padding: '0.5rem 0.75rem',
+                                                cursor: simulating ? 'wait' : 'pointer',
+                                                borderTop: '1px solid #eee',
+                                                backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
+                                                opacity: simulating && simulating !== a.id ? 0.5 : 1,
+                                                transition: 'background-color 0.1s ease',
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
+                                            }}
+                                        >
+                                            <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
+                                                {simulating === a.id ? '⏳ Simulating...' : a.id}
+                                            </div>
+                                            {a.description && (
+                                                <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
+                                                    {a.description}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </>
                             )}
                         </div>
                     </div>

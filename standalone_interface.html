@@ -1164,6 +1164,7 @@
 
             // Filter available actions for dropdown
             const filteredSearchActions = useMemo(() => {
+                if (!searchQuery) return [];
                 const q = searchQuery.toLowerCase();
                 const existingIds = new Set(result?.actions ? Object.keys(result.actions) : []);
                 return availableActions
@@ -1171,6 +1172,22 @@
                     .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
                     .slice(0, 20);
             }, [searchQuery, availableActions, result?.actions]);
+
+            // Format scored actions
+            const scoredActionsList = useMemo(() => {
+                if (!result?.action_scores) return [];
+                const list = [];
+                for (const [type, data] of Object.entries(result.action_scores)) {
+                    const scores = data?.scores || {};
+                    for (const [actionId, score] of Object.entries(scores)) {
+                        list.push({ type, actionId, score: Number(score) });
+                    }
+                }
+                return list.sort((a, b) => {
+                    if (a.type !== b.type) return a.type.localeCompare(b.type);
+                    return b.score - a.score;
+                });
+            }, [result?.action_scores]);
 
 
 
@@ -1832,35 +1849,81 @@
                                                 <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
                                                     Loading actions...
                                                 </div>
-                                            ) : filteredSearchActions.length === 0 ? (
-                                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
-                                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
-                                                </div>
                                             ) : (
-                                                filteredSearchActions.map(a => (
-                                                    <div
-                                                        key={a.id}
-                                                        onClick={() => handleAddManualAction(a.id)}
-                                                        style={{
-                                                            padding: '6px 10px',
-                                                            cursor: simulatingActionId ? 'wait' : 'pointer',
-                                                            borderTop: '1px solid #eee',
-                                                            backgroundColor: simulatingActionId === a.id ? '#e7f1ff' : 'transparent',
-                                                            opacity: simulatingActionId && simulatingActionId !== a.id ? 0.5 : 1,
-                                                        }}
-                                                        onMouseEnter={(e) => { if (!simulatingActionId) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
-                                                        onMouseLeave={(e) => { if (simulatingActionId !== a.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                                    >
-                                                        <div style={{ fontWeight: 600, fontSize: '12px', color: '#333' }}>
-                                                            {simulatingActionId === a.id ? '⏳ Simulating...' : a.id}
-                                                        </div>
-                                                        {a.description && (
-                                                            <div style={{ fontSize: '11px', color: '#777', marginTop: '2px' }}>
-                                                                {a.description}
+                                                <>
+                                                    {/* Action Scores Table */}
+                                                    {scoredActionsList.length > 0 && !searchQuery && (
+                                                        <div style={{ padding: '0 8px', marginBottom: '8px' }}>
+                                                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
+                                                                Scored Actions
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                ))
+                                                            <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse' }}>
+                                                                <thead>
+                                                                    <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
+                                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Type</th>
+                                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Action</th>
+                                                                        <th style={{ textAlign: 'right', padding: '4px' }}>Score</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {scoredActionsList.map(item => {
+                                                                        const isComputed = !!(result?.actions && result.actions[item.actionId]);
+                                                                        return (
+                                                                            <tr key={`${item.type}-${item.actionId}`}
+                                                                                onClick={() => !isComputed && handleAddManualAction(item.actionId)}
+                                                                                style={{
+                                                                                    borderBottom: '1px solid #eee',
+                                                                                    cursor: (isComputed || simulatingActionId) ? 'not-allowed' : 'pointer',
+                                                                                    opacity: isComputed ? 0.6 : (simulatingActionId === item.actionId ? 0.7 : 1),
+                                                                                    background: simulatingActionId === item.actionId ? '#e7f1ff' : 'transparent',
+                                                                                }}>
+                                                                                <td style={{ padding: '4px', color: '#666' }}>{item.type.replace('_', ' ')}</td>
+                                                                                <td style={{ padding: '4px', fontWeight: 600 }}>
+                                                                                    {item.actionId}
+                                                                                    {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px' }}>computed</span>}
+                                                                                </td>
+                                                                                <td style={{ padding: '4px', textAlign: 'right', fontFamily: 'monospace' }}>
+                                                                                    {item.score.toFixed(2)}
+                                                                                </td>
+                                                                            </tr>
+                                                                        );
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Search Results */}
+                                                    {searchQuery && filteredSearchActions.length === 0 && (
+                                                        <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                            No matching actions
+                                                        </div>
+                                                    )}
+                                                    {searchQuery && filteredSearchActions.map(a => (
+                                                        <div
+                                                            key={a.id}
+                                                            onClick={() => handleAddManualAction(a.id)}
+                                                            style={{
+                                                                padding: '6px 10px',
+                                                                cursor: simulatingActionId ? 'wait' : 'pointer',
+                                                                borderTop: '1px solid #eee',
+                                                                backgroundColor: simulatingActionId === a.id ? '#e7f1ff' : 'transparent',
+                                                                opacity: simulatingActionId && simulatingActionId !== a.id ? 0.5 : 1,
+                                                            }}
+                                                            onMouseEnter={(e) => { if (!simulatingActionId) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+                                                            onMouseLeave={(e) => { if (simulatingActionId !== a.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                                        >
+                                                            <div style={{ fontWeight: 600, fontSize: '12px', color: '#333' }}>
+                                                                {simulatingActionId === a.id ? '⏳ Simulating...' : a.id}
+                                                            </div>
+                                                            {a.description && (
+                                                                <div style={{ fontSize: '11px', color: '#777', marginTop: '2px' }}>
+                                                                    {a.description}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </>
                                             )}
                                         </div>
                                     </div>
