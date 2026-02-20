@@ -4,6 +4,7 @@ import { api } from '../api';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
+    actionScores?: Record<string, any>;
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
@@ -24,6 +25,7 @@ const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
     actions,
+    actionScores,
     linesOverloaded,
     selectedActionId,
     onActionSelect,
@@ -67,6 +69,26 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
             .slice(0, 20);
     }, [searchQuery, availableActions, actions]);
+
+    // Format scored actions
+    const scoredActionsList = useMemo(() => {
+        if (!actionScores) return [];
+        const list: { type: string; actionId: string; score: number }[] = [];
+        for (const [type, data] of Object.entries(actionScores)) {
+            const scores = data?.scores || {};
+            for (const [actionId, score] of Object.entries(scores)) {
+                list.push({ type, actionId, score: Number(score) });
+            }
+        }
+        return list.sort((a, b) => {
+            if (a.type !== b.type) {
+                if (a.type === 'line_disconnection') return 1;
+                if (b.type === 'line_disconnection') return -1;
+                return a.type.localeCompare(b.type);
+            }
+            return b.score - a.score;
+        });
+    }, [actionScores]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -183,40 +205,138 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                 <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
                                     Loading actions...
                                 </div>
-                            ) : filteredActions.length === 0 ? (
-                                <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
-                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
-                                </div>
                             ) : (
-                                filteredActions.map(a => (
-                                    <div
-                                        key={a.id}
-                                        onClick={() => handleAddAction(a.id)}
-                                        style={{
-                                            padding: '0.5rem 0.75rem',
-                                            cursor: simulating ? 'wait' : 'pointer',
-                                            borderTop: '1px solid #eee',
-                                            backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
-                                            opacity: simulating && simulating !== a.id ? 0.5 : 1,
-                                            transition: 'background-color 0.1s ease',
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
-                                        }}
-                                    >
-                                        <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
-                                            {simulating === a.id ? '⏳ Simulating...' : a.id}
-                                        </div>
-                                        {a.description && (
-                                            <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
-                                                {a.description}
+                                <>
+                                    {/* Action Scores Table */}
+                                    {scoredActionsList.length > 0 && !searchQuery && (
+                                        <div style={{ padding: '0 0.5rem', marginBottom: '0.5rem' }}>
+                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
+                                                Scored Actions
                                             </div>
-                                        )}
-                                    </div>
-                                ))
+                                            <style>{`
+                                                .score-param-tooltip { position: relative; display: inline-flex; align-items: center; cursor: help; margin-left: 6px; }
+                                                .score-param-tooltip .tooltip-text {
+                                                    visibility: hidden; background-color: #343a40; color: #fff; text-align: left; border-radius: 4px;
+                                                    padding: 6px 8px; position: absolute; z-index: 1000; top: 100%; right: 0; margin-top: 5px; opacity: 0;
+                                                    transition: opacity 0.2s; font-size: 0.65rem; font-weight: normal; white-space: nowrap;
+                                                    box-shadow: 0 2px 5px rgba(0,0,0,0.3); text-transform: none; line-height: 1.4;
+                                                }
+                                                .score-param-tooltip.left-align .tooltip-text { right: auto; left: 0; }
+                                                .score-param-tooltip:hover .tooltip-text { visibility: visible; opacity: 1; }
+                                            `}</style>
+                                            {Array.from(new Set(scoredActionsList.map(item => item.type))).map(type => {
+                                                const typeData = actionScores?.[type] || {};
+                                                const scoresKeys = Object.keys(typeData.scores || {});
+                                                const paramsKeys = Object.keys(typeData.params || {});
+                                                const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some(k => scoresKeys.includes(k));
+                                                const globalParams = isPerActionParams ? null : (paramsKeys.length > 0 ? typeData.params : null);
+
+                                                return (
+                                                    <div key={type} style={{ marginBottom: '8px' }}>
+                                                        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                            <span>{type.replace('_', ' ').toUpperCase()}</span>
+                                                            {globalParams && (
+                                                                <div className="score-param-tooltip">
+                                                                    <span style={{ color: '#6c757d', fontSize: '0.8rem' }}>ⓘ</span>
+                                                                    <div className="tooltip-text">
+                                                                        <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Scoring Parameters</div>
+                                                                        {Object.entries(globalParams).map(([k, v]) => (
+                                                                            <div key={k}>
+                                                                                <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
+                                                            <thead>
+                                                                <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
+                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: '70%' }}>Action</th>
+                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '30%' }}>Score</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                {scoredActionsList.filter(item => item.type === type).map(item => {
+                                                                    const isComputed = !!actions[item.actionId];
+                                                                    return (
+                                                                        <tr key={item.actionId}
+                                                                            onClick={() => !isComputed && handleAddAction(item.actionId)}
+                                                                            style={{
+                                                                                borderBottom: '1px solid #eee',
+                                                                                cursor: (isComputed || simulating) ? 'not-allowed' : 'pointer',
+                                                                                color: isComputed ? '#888' : 'inherit',
+                                                                                opacity: simulating === item.actionId ? 0.7 : 1,
+                                                                                background: simulating === item.actionId ? '#e7f1ff' : 'transparent',
+                                                                            }}>
+                                                                            <td style={{ padding: '4px 6px', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
+                                                                                {item.actionId}
+                                                                                {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '1px 4px', borderRadius: '4px', fontSize: '0.65rem', opacity: 0.8 }}>computed</span>}
+                                                                                {isPerActionParams && typeData.params[item.actionId] && (
+                                                                                    <div className="score-param-tooltip left-align" onClick={(e) => e.stopPropagation()}>
+                                                                                        <span style={{ color: '#6c757d', fontSize: '0.8rem' }}>ⓘ</span>
+                                                                                        <div className="tooltip-text">
+                                                                                            <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
+                                                                                            {Object.entries(typeData.params[item.actionId]).map(([k, v]) => (
+                                                                                                <div key={k}>
+                                                                                                    <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                                                                                </div>
+                                                                                            ))}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+                                                                            </td>
+                                                                            <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                                                                                {item.score.toFixed(2)}
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* Search Results */}
+                                    {(!searchQuery && scoredActionsList.length === 0 && filteredActions.length === 0) && (
+                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                            All actions already added
+                                        </div>
+                                    )}
+                                    {(searchQuery && filteredActions.length === 0) && (
+                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                            No matching actions
+                                        </div>
+                                    )}
+                                    {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredActions.map(a => (
+                                        <div
+                                            key={a.id}
+                                            onClick={() => handleAddAction(a.id)}
+                                            style={{
+                                                padding: '0.5rem 0.75rem',
+                                                cursor: simulating ? 'wait' : 'pointer',
+                                                borderTop: '1px solid #eee',
+                                                backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
+                                                opacity: simulating && simulating !== a.id ? 0.5 : 1,
+                                                transition: 'background-color 0.1s ease',
+                                            }}
+                                            onMouseEnter={(e) => { if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0'; }}
+                                            onMouseLeave={(e) => { if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; }}
+                                        >
+                                            <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
+                                                {simulating === a.id ? '⏳ Simulating...' : a.id}
+                                            </div>
+                                            {a.description && (
+                                                <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
+                                                    {a.description}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </>
                             )}
                         </div>
                     </div>

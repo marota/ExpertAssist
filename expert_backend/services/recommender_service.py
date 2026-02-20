@@ -69,6 +69,11 @@ class RecommenderService:
                     },
                 }
             print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
+            
+            # Save the updated dictionary back to file so the core analysis engine can load it
+            import json
+            with open(config.ACTION_FILE_PATH, 'w') as f:
+                json.dump(self._dict_action, f, indent=2)
 
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True
@@ -197,9 +202,11 @@ class RecommenderService:
                 analysis_message = "Analysis finished but no recommendations were found."
             enriched_actions = {}
             lines_overloaded = []
+            action_scores = {}
         else:
             lines_overloaded = result.get("lines_overloaded_names", [])
             prioritized = result.get("prioritized_actions", {})
+            action_scores = sanitize_for_json(result.get("action_scores", {}))
 
             enriched_actions = {}
             for action_id, action_data in prioritized.items():
@@ -227,6 +234,7 @@ class RecommenderService:
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
             "actions": enriched_actions,
+            "action_scores": action_scores,
             "lines_overloaded": sanitize_for_json(lines_overloaded),
             "message": analysis_message,
             "dc_fallback": dc_fallback_used

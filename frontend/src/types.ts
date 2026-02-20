@@ -28,6 +28,7 @@ export interface AnalysisResult {
     pdf_path: string | null;
     pdf_url: string | null;
     actions: Record<string, ActionDetail>;
+    action_scores?: Record<string, any>;
     lines_overloaded: string[];
     message: string;
     dc_fallback: boolean;
