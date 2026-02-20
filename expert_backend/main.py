@@ -38,6 +38,11 @@ class FocusedDiagramRequest(BaseModel):
 
 class ActionVariantRequest(BaseModel):
     action_id: str
+    mode: str = "network"  # "network" or "delta"
+
+class ManualActionRequest(BaseModel):
+    action_id: str
+    disconnected_element: str
 
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
@@ -63,6 +68,16 @@ def get_voltage_levels():
     try:
         voltage_levels = network_service.get_voltage_levels()
         return {"voltage_levels": voltage_levels}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/nominal-voltages")
+def get_nominal_voltages():
+    """Return VL ID → nominal voltage (kV) mapping and sorted unique kV values."""
+    try:
+        mapping = network_service.get_nominal_voltages()
+        unique_kv = sorted(set(mapping.values()))
+        return {"mapping": mapping, "unique_kv": unique_kv}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -140,7 +155,9 @@ def get_action_variant_diagram(request: ActionVariantRequest):
     Requires a prior call to /api/run-analysis so the observation is available.
     """
     try:
-        diagram = recommender_service.get_action_variant_diagram(request.action_id)
+        diagram = recommender_service.get_action_variant_diagram(
+            request.action_id, mode=request.mode
+        )
         return diagram
     except Exception as e:
         import traceback
@@ -184,6 +201,28 @@ def get_focused_diagram(request: FocusedDiagramRequest):
         return diagram
     except HTTPException:
         raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/api/actions")
+def get_actions():
+    """Return all available action IDs and descriptions from the loaded dictionary."""
+    try:
+        actions = recommender_service.get_all_action_ids()
+        return {"actions": actions}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/simulate-manual-action")
+def simulate_manual_action(request: ManualActionRequest):
+    """Simulate a specific action from the loaded dictionary against a contingency."""
+    try:
+        result = recommender_service.simulate_manual_action(
+            request.action_id, request.disconnected_element
+        )
+        return result
     except Exception as e:
         import traceback
         traceback.print_exc()

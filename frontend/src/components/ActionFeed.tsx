@@ -1,11 +1,16 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { ActionDetail } from '../types';
+import { api } from '../api';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
+    disconnectedElement: string | null;
+    onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
+    actionViewMode: 'network' | 'delta';
+    onViewModeChange: (mode: 'network' | 'delta') => void;
 }
 
 const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
@@ -17,10 +22,206 @@ const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
     }).join(', ');
 };
 
-const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded, selectedActionId, onActionSelect }) => {
+const ActionFeed: React.FC<ActionFeedProps> = ({
+    actions,
+    linesOverloaded,
+    selectedActionId,
+    onActionSelect,
+    disconnectedElement,
+    onManualActionAdded,
+    actionViewMode,
+    onViewModeChange,
+}) => {
+    const [searchOpen, setSearchOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [availableActions, setAvailableActions] = useState<{ id: string; description: string }[]>([]);
+    const [loadingActions, setLoadingActions] = useState(false);
+    const [simulating, setSimulating] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const dropdownRef = useRef<HTMLDivElement>(null);
+
+    // Fetch available actions when search is opened
+    useEffect(() => {
+        if (searchOpen && availableActions.length === 0 && !loadingActions) {
+            setLoadingActions(true);
+            api.getAvailableActions()
+                .then(setAvailableActions)
+                .catch((e) => {
+                    console.error('Failed to fetch actions:', e);
+                    setError('Failed to load actions list');
+                })
+                .finally(() => setLoadingActions(false));
+        }
+        if (searchOpen) {
+            setTimeout(() => searchInputRef.current?.focus(), 50);
+        }
+    }, [searchOpen]);
+
+    // Filter actions for dropdown
+    const filteredActions = useMemo(() => {
+        const q = searchQuery.toLowerCase();
+        const alreadyShown = new Set(Object.keys(actions));
+        return availableActions
+            .filter(a => !alreadyShown.has(a.id))
+            .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
+            .slice(0, 20);
+    }, [searchQuery, availableActions, actions]);
+
+    // Close dropdown on outside click
+    useEffect(() => {
+        if (!searchOpen) return;
+        const handler = (e: MouseEvent) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+                setSearchOpen(false);
+                setSearchQuery('');
+                setError(null);
+            }
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [searchOpen]);
+
+    const handleAddAction = async (actionId: string) => {
+        if (!disconnectedElement) {
+            setError('Run an analysis first (need a contingency).');
+            return;
+        }
+        setSimulating(actionId);
+        setError(null);
+        try {
+            const result = await api.simulateManualAction(actionId, disconnectedElement);
+            const detail: ActionDetail = {
+                description_unitaire: result.description_unitaire,
+                rho_before: result.rho_before,
+                rho_after: result.rho_after,
+                max_rho: result.max_rho,
+                max_rho_line: result.max_rho_line,
+                is_rho_reduction: result.is_rho_reduction,
+            };
+            onManualActionAdded(actionId, detail);
+            setSearchOpen(false);
+            setSearchQuery('');
+        } catch (e: any) {
+            console.error('Simulation failed:', e);
+            setError(e?.response?.data?.detail || 'Simulation failed');
+        } finally {
+            setSimulating(null);
+        }
+    };
+
     return (
         <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
-            <h3 style={{ marginTop: 0 }}>Prioritized Actions</h3>
+            {/* Header with search */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', position: 'relative' }}>
+                <h3 style={{ margin: 0, flex: 1 }}>Prioritized Actions</h3>
+                <button
+                    onClick={() => setSearchOpen(!searchOpen)}
+                    title="Add an action from dictionary"
+                    style={{
+                        background: searchOpen ? '#007bff' : '#e9ecef',
+                        color: searchOpen ? 'white' : '#333',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                        fontWeight: 600,
+                        transition: 'all 0.15s ease',
+                    }}
+                >
+                    + Add
+                </button>
+
+                {/* Search dropdown */}
+                {searchOpen && (
+                    <div
+                        ref={dropdownRef}
+                        style={{
+                            position: 'absolute',
+                            top: '100%',
+                            right: 0,
+                            left: 0,
+                            zIndex: 100,
+                            backgroundColor: 'white',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                            marginTop: '4px',
+                            overflow: 'hidden',
+                        }}
+                    >
+                        <div style={{ padding: '0.5rem' }}>
+                            <input
+                                ref={searchInputRef}
+                                type="text"
+                                placeholder="Search action by ID or description..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '6px 10px',
+                                    border: '1px solid #ccc',
+                                    borderRadius: '4px',
+                                    fontSize: '0.85rem',
+                                    boxSizing: 'border-box',
+                                }}
+                            />
+                        </div>
+                        {error && (
+                            <div style={{
+                                padding: '0.5rem',
+                                fontSize: '0.8rem',
+                                color: '#dc3545',
+                                borderTop: '1px solid #eee',
+                            }}>
+                                {error}
+                            </div>
+                        )}
+                        <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                            {loadingActions ? (
+                                <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                    Loading actions...
+                                </div>
+                            ) : filteredActions.length === 0 ? (
+                                <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
+                                </div>
+                            ) : (
+                                filteredActions.map(a => (
+                                    <div
+                                        key={a.id}
+                                        onClick={() => handleAddAction(a.id)}
+                                        style={{
+                                            padding: '0.5rem 0.75rem',
+                                            cursor: simulating ? 'wait' : 'pointer',
+                                            borderTop: '1px solid #eee',
+                                            backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
+                                            opacity: simulating && simulating !== a.id ? 0.5 : 1,
+                                            transition: 'background-color 0.1s ease',
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent';
+                                        }}
+                                    >
+                                        <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
+                                            {simulating === a.id ? '⏳ Simulating...' : a.id}
+                                        </div>
+                                        {a.description && (
+                                            <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
+                                                {a.description}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {linesOverloaded.length > 0 && (
                 <div style={{
@@ -36,6 +237,60 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded, selec
                 </div>
             )}
 
+            {/* View mode toggle - only visible when an action is selected */}
+            {selectedActionId && (
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.5rem 0.75rem',
+                    backgroundColor: '#f8f9fa',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555' }}>View:</span>
+                    <div
+                        style={{
+                            display: 'flex',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            border: '1px solid #ccc',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                        }}
+                    >
+                        <button
+                            onClick={() => onViewModeChange('network')}
+                            style={{
+                                padding: '4px 12px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'network' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            Flows
+                        </button>
+                        <button
+                            onClick={() => onViewModeChange('delta')}
+                            style={{
+                                padding: '4px 12px',
+                                border: 'none',
+                                borderLeft: '1px solid #ccc',
+                                cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease',
+                            }}
+                        >
+                            Δ Flows
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {Object.entries(actions).length === 0 ? (
                 <div style={{ color: '#666', fontStyle: 'italic' }}>No actions found.</div>
             ) : (
@@ -46,9 +301,9 @@ const ActionFeed: React.FC<ActionFeedProps> = ({ actions, linesOverloaded, selec
                             ? (detail.max_rho > 1.0 ? 'red' : detail.max_rho > 0.9 ? 'orange' : 'green')
                             : (detail.is_rho_reduction ? 'green' : 'red');
                         const severityMap = {
-                            green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                            green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
                             orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
-                            red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
+                            red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
                         };
                         const sc = severityMap[severity];
                         const isSelected = selectedActionId === id;

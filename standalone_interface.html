@@ -115,12 +115,8 @@
         /* Keep lines/paths visible at any zoom level without breaking fills/colors */
         .svg-container svg path,
         .svg-container svg line,
-<<<<<<< HEAD
         .svg-container svg polyline,
         .svg-container svg rect {
-=======
-        .svg-container svg polyline {
->>>>>>> 12b1cb6680ca8d82ff828a24edf64dea2530a363
             vector-effect: non-scaling-stroke;
         }
 
@@ -141,6 +137,50 @@
             fill: #e74c3c !important;
         }
 
+        /* Highlight overloaded lines in orange */
+        .nad-overloaded path,
+        .nad-overloaded line,
+        .nad-overloaded polyline {
+            stroke: #ff8c00 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* Apply drop-shadow to the parent clone group to create a glowing halo effect */
+        .nad-action-target {
+            filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
+        }
+
+        /* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
+        .nad-action-target path,
+        .nad-action-target line,
+        .nad-action-target polyline,
+        .nad-action-target rect,
+        .nad-action-target polygon {
+            stroke: #fffb00 !important;
+            stroke-width: 150px !important;
+            stroke-opacity: 0.8 !important;
+            fill: none !important;
+            stroke-linecap: round !important;
+            stroke-linejoin: round !important;
+        }
+
+        /* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
+        .nad-action-target circle,
+        .nad-action-target rect {
+            stroke: #ffe600 !important;
+            stroke-width: 45px !important;
+            stroke-opacity: 0.6 !important;
+            fill: #ffe600 !important;
+            fill-opacity: 0.8 !important;
+            vector-effect: non-scaling-stroke !important;
+        }
+
+        /* Hide text and foreignObjects in the background clone to avoid messy overlays */
+        .nad-action-target text,
+        .nad-action-target foreignObject {
+            display: none !important;
+        }
+
         /* Hide text on large grids at full zoom — revealed by removing this class.
            display:none removes elements from layout entirely, so the browser
            skips layout/paint for thousands of text nodes at initial load. */
@@ -148,6 +188,150 @@
         .svg-container.text-hidden .nad-edge-infos,
         .svg-container.text-hidden .nad-text-edges {
             display: none !important;
+        }
+
+        /* ===== Delta flow visualization ===== */
+
+        /* Positive delta: flow increased after action (orange) */
+        .nad-delta-positive path,
+        .nad-delta-positive line,
+        .nad-delta-positive polyline {
+            stroke: #ff8c00 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* Negative delta: flow decreased after action (blue) */
+        .nad-delta-negative path,
+        .nad-delta-negative line,
+        .nad-delta-negative polyline {
+            stroke: #2196F3 !important;
+            stroke-width: 3px !important;
+        }
+
+        /* Grey: negligible change (below threshold) */
+        .nad-delta-grey path,
+        .nad-delta-grey line,
+        .nad-delta-grey polyline {
+            stroke: #999 !important;
+            stroke-opacity: 0.4 !important;
+        }
+
+        /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
+        .voltage-sidebar {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 62px;
+            background: rgba(244, 244, 244, 0.92);
+            border-left: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 15;
+            padding: 8px 0;
+            box-sizing: border-box;
+        }
+
+        .voltage-sidebar .vs-label {
+            font-size: 0.65rem;
+            font-weight: bold;
+            color: #2c3e50;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .voltage-sidebar .vs-range-label {
+            font-size: 0.6rem;
+            font-weight: bold;
+            color: #2c3e50;
+            background: #e8f0fe;
+            border-radius: 3px;
+            padding: 2px 4px;
+            margin-bottom: 6px;
+            text-align: center;
+            line-height: 1.2;
+        }
+
+        .voltage-slider-container {
+            position: relative;
+            flex: 1;
+            width: 28px;
+            min-height: 0;
+        }
+
+        .voltage-slider-track {
+            position: absolute;
+            left: 12px;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #ddd;
+            border-radius: 2px;
+        }
+
+        .voltage-slider-range {
+            position: absolute;
+            left: 12px;
+            width: 4px;
+            background: #3498db;
+            border-radius: 2px;
+        }
+
+        .voltage-slider-container input[type=range] {
+            position: absolute;
+            left: 0;
+            width: 28px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: transparent;
+            pointer-events: none;
+            margin: 0;
+            /* Rotate to vertical: slider runs bottom-to-top */
+            writing-mode: vertical-lr;
+            direction: rtl;
+        }
+
+        .voltage-slider-container input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3498db;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            pointer-events: all;
+        }
+
+        .voltage-slider-container input[type=range]::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3498db;
+            border: 2px solid white;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+            cursor: pointer;
+            pointer-events: all;
+        }
+
+        .voltage-slider-ticks {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 28px;
+            width: 24px;
+        }
+
+        .voltage-slider-ticks span {
+            position: absolute;
+            font-size: 0.58rem;
+            color: #666;
+            white-space: nowrap;
+            transform: translateY(-50%);
+            left: 2px;
         }
     </style>
 </head>
@@ -471,11 +655,188 @@
             return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
         };
 
+        // Apply orange highlights to overloaded line edges on a given SVG container
+        const applyOverloadedHighlights = (container, metaIndex, overloadedLines) => {
+            if (!container || !metaIndex || !overloadedLines || overloadedLines.length === 0) return;
+
+            // Clear previous overloaded highlights
+            container.querySelectorAll('.nad-overloaded').forEach(el => el.classList.remove('nad-overloaded'));
+
+            const { edgesByEquipmentId } = metaIndex;
+            overloadedLines.forEach(lineName => {
+                const edge = edgesByEquipmentId.get(lineName);
+                if (edge && edge.svgId) {
+                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+                    if (el) el.classList.add('nad-overloaded');
+                }
+            });
+        };
+
+        // Determine which lines an action acts upon (for line disconnection/reconnection actions).
+        // Returns an array of line names, or empty array if the action is not line-only.
+        const getActionTargetLines = (actionDetail, actionId, edgesByEquipmentId) => {
+            const topo = actionDetail?.action_topology;
+            if (topo) {
+                const lineKeys = new Set([
+                    ...Object.keys(topo.lines_ex_bus || {}),
+                    ...Object.keys(topo.lines_or_bus || {}),
+                ]);
+                const genKeys = Object.keys(topo.gens_bus || {});
+                const loadKeys = Object.keys(topo.loads_bus || {});
+
+                // No gen/load changes → line-only action
+                if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
+                    return [...lineKeys];
+                }
+
+                // Multiple assets but ALL values are -1 → multiple line disconnections
+                const allValues = [
+                    ...Object.values(topo.lines_ex_bus || {}),
+                    ...Object.values(topo.lines_or_bus || {}),
+                    ...Object.values(topo.gens_bus || {}),
+                    ...Object.values(topo.loads_bus || {}),
+                ];
+                if (allValues.length > 0 && allValues.every(v => v === -1)) {
+                    return [...lineKeys];
+                }
+            }
+
+            // Fallback: parse actionId if topology yielded nothing (e.g. reco_CHALOL31LOUHA)
+            if (actionId) {
+                const parts = actionId.split('_');
+                const candidate = parts[parts.length - 1];
+                if (edgesByEquipmentId && edgesByEquipmentId.has(candidate)) {
+                    return [candidate];
+                }
+            }
+
+            return [];
+        };
+
+        // Extract the voltage level name for nodal actions.
+        // Tries: 1) quoted "dans le poste 'VL'" 2) unquoted "dans le poste VL" 3) action ID suffix
+        const getActionTargetVoltageLevel = (actionDetail, actionId, nodesByEquipmentId) => {
+            const desc = actionDetail?.description_unitaire;
+            if (desc && desc !== 'No description available') {
+                // Try quoted format: last single-quoted string
+                const quotedMatches = desc.match(/'([^']+)'/g);
+                if (quotedMatches && quotedMatches.length > 0) {
+                    const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
+                    console.log('[action-target] quoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
+                    if (nodesByEquipmentId.has(vl)) return vl;
+                }
+                // Try unquoted: "dans le poste VLNAME"
+                const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+                if (posteMatch) {
+                    const vl = posteMatch[1].replace(/['"]/g, '');
+                    console.log('[action-target] unquoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
+                    if (nodesByEquipmentId.has(vl)) return vl;
+                }
+            }
+            // Fallback: last _-separated segment of action ID
+            if (actionId) {
+                const parts = actionId.split('_');
+                const candidate = parts[parts.length - 1];
+                console.log('[action-target] actionId suffix candidate:', candidate, '→ in metadata:', nodesByEquipmentId.has(candidate));
+                if (nodesByEquipmentId.has(candidate)) return candidate;
+            }
+            console.log('[action-target] no VL found. metadata node keys sample:', [...nodesByEquipmentId.keys()].slice(0, 10));
+            return null;
+        };
+
+        // Apply yellow fluo halo to action targets: edges (line actions) or nodes (nodal actions)
+        const applyActionTargetHighlights = (container, metaIndex, actionDetail, actionId) => {
+            if (!container) return;
+            container.querySelectorAll('.nad-action-target').forEach(el => el.classList.remove('nad-action-target'));
+            container.querySelectorAll('.nad-highlight-clone').forEach(el => el.remove());
+            if (!metaIndex || !actionDetail) return;
+
+            const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;
+            console.log('[action-target] actionId:', actionId, 'desc:', actionDetail?.description_unitaire);
+
+            // Create or find background layer at the root of the SVG
+            let backgroundLayer = container.querySelector('#nad-background-layer');
+            if (!backgroundLayer) {
+                // backgroundLayer must be child of the SVG element, which is `container` in standalone?
+                // Wait, in standalone `container` is the wrapper div. The SVG is inside.
+                const svg = container.querySelector('svg');
+                if (svg) {
+                    backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    backgroundLayer.setAttribute('id', 'nad-background-layer');
+                    if (svg.firstChild) {
+                        svg.insertBefore(backgroundLayer, svg.firstChild);
+                    } else {
+                        svg.appendChild(backgroundLayer);
+                    }
+                }
+            }
+
+            // Helper to apply highlight
+            const applyHighlight = (el) => {
+                if (!el) return;
+
+                // Clone and move to background layer
+                if (backgroundLayer) {
+                    const clone = el.cloneNode(true);
+                    clone.removeAttribute('id');
+                    clone.classList.add('nad-action-target');
+                    clone.classList.add('nad-highlight-clone');
+
+                    try {
+                        const elCTM = el.getScreenCTM();
+                        const bgCTM = backgroundLayer.getScreenCTM();
+                        if (elCTM && bgCTM) {
+                            const relativeCTM = bgCTM.inverse().multiply(elCTM);
+                            const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
+                            clone.setAttribute('transform', matrixStr);
+                        }
+                    } catch (e) {
+                        console.warn('Failed to get CTM for highlight:', e);
+                    }
+                    backgroundLayer.appendChild(clone);
+                } else {
+                    // Fallback if no background layer (shouldn't happen)
+                    el.classList.add('nad-action-target');
+                }
+            };
+
+            // 1. Try VL detection first (handles nodal AND coupler actions)
+            const vlName = getActionTargetVoltageLevel(actionDetail, actionId, nodesByEquipmentId);
+            console.log('[action-target] VL result:', vlName);
+            if (vlName) {
+                const node = nodesByEquipmentId.get(vlName);
+                console.log('[action-target] node svgId:', node?.svgId);
+                if (node && node.svgId) {
+                    const el = container.querySelector(`[id="${node.svgId}"]`);
+                    console.log('[action-target] SVG element found:', !!el);
+                    if (el) {
+                        applyHighlight(el);
+                        return;
+                    }
+                }
+            }
+
+            // 2. Fall back to line action: highlight edges from topology or action ID
+            const targetLines = getActionTargetLines(actionDetail, actionId, edgesByEquipmentId);
+            targetLines.forEach(lineName => {
+                const edge = edgesByEquipmentId.get(lineName);
+                if (edge && edge.svgId) {
+                    const el = container.querySelector(`[id="${edge.svgId}"]`);
+                    applyHighlight(el);
+                }
+            });
+        };
+
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
             const [branches, setBranches] = useState([]);
             const [voltageLevels, setVoltageLevels] = useState([]);
+
+            // Nominal voltage filter state
+            const [nominalVoltageMap, setNominalVoltageMap] = useState({});  // {vl_id: kv}
+            const [uniqueVoltages, setUniqueVoltages] = useState([]);       // sorted [kv1, kv2, ...]
+            const [voltageRange, setVoltageRange] = useState([0, 400]);     // [minKv, maxKv] cursor positions
             const [selectedBranch, setSelectedBranch] = useState('');
             const [configLoading, setConfigLoading] = useState(false);
             const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -499,6 +860,19 @@
             const [selectedActionId, setSelectedActionId] = useState(null);
             const [actionDiagram, setActionDiagram] = useState(null);
             const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
+
+            // Manual action search state
+            const [searchOpen, setSearchOpen] = useState(false);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [availableActions, setAvailableActions] = useState([]);
+            const [loadingAvailableActions, setLoadingAvailableActions] = useState(false);
+            const [simulatingActionId, setSimulatingActionId] = useState(null);
+            const [searchError, setSearchError] = useState('');
+            const searchDropdownRef = useRef(null);
+            const searchInputRef = useRef(null);
+
+            // Delta visualization mode
+            const [actionViewMode, setActionViewMode] = useState('network'); // 'network' or 'delta'
 
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
@@ -544,13 +918,23 @@
                 try {
                     await axios.post(API_BASE + '/api/config', { network_path: networkPath, action_file_path: actionPath });
 
-                    const [branchesRes, vlRes] = await Promise.all([
+                    const [branchesRes, vlRes, nomVRes] = await Promise.all([
                         axios.get(API_BASE + '/api/branches'),
-                        axios.get(API_BASE + '/api/voltage-levels')
+                        axios.get(API_BASE + '/api/voltage-levels'),
+                        axios.get(API_BASE + '/api/nominal-voltages')
                     ]);
 
                     setBranches(branchesRes.data.branches);
                     setVoltageLevels(vlRes.data.voltage_levels);
+
+                    // Set up nominal voltage filter
+                    const nvMap = nomVRes.data.mapping;
+                    const uniqueKv = nomVRes.data.unique_kv;
+                    setNominalVoltageMap(nvMap);
+                    setUniqueVoltages(uniqueKv);
+                    if (uniqueKv.length > 0) {
+                        setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
+                    }
 
                     fetchBaseDiagram(vlRes.data.voltage_levels.length);
                 } catch (err) {
@@ -708,7 +1092,85 @@
                 }
             };
 
+            // --- Manual Action Search Logic ---
+            const handleOpenSearch = async () => {
+                if (searchOpen) { setSearchOpen(false); return; }
+                setSearchOpen(true);
+                setSearchQuery('');
+                setSearchError('');
+                if (availableActions.length === 0) {
+                    setLoadingAvailableActions(true);
+                    try {
+                        const res = await axios.get(API_BASE + '/api/actions');
+                        setAvailableActions(res.data.actions || []);
+                    } catch (err) {
+                        setSearchError('Failed to load actions');
+                    } finally {
+                        setLoadingAvailableActions(false);
+                    }
+                }
+                setTimeout(() => searchInputRef.current?.focus(), 50);
+            };
 
+            const handleAddManualAction = async (actionId) => {
+                if (!selectedBranch) { setSearchError('Run an analysis first'); return; }
+                setSimulatingActionId(actionId);
+                setSearchError('');
+                try {
+                    const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                        action_id: actionId,
+                        disconnected_element: selectedBranch
+                    });
+                    const detail = res.data;
+                    // Merge into result
+                    setResult(prev => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            actions: {
+                                ...prev.actions,
+                                [actionId]: {
+                                    description_unitaire: detail.description_unitaire,
+                                    rho_before: detail.rho_before,
+                                    rho_after: detail.rho_after,
+                                    max_rho: detail.max_rho,
+                                    max_rho_line: detail.max_rho_line,
+                                    is_rho_reduction: detail.is_rho_reduction,
+                                }
+                            }
+                        };
+                    });
+                    setSearchOpen(false);
+                    setSearchQuery('');
+                    handleActionSelect(actionId);
+                } catch (err) {
+                    setSearchError(err?.response?.data?.detail || 'Simulation failed');
+                } finally {
+                    setSimulatingActionId(null);
+                }
+            };
+
+            // Close search dropdown on outside click
+            useEffect(() => {
+                if (!searchOpen) return;
+                const handler = (e) => {
+                    if (searchDropdownRef.current && !searchDropdownRef.current.contains(e.target)) {
+                        setSearchOpen(false);
+                    }
+                };
+                document.addEventListener('mousedown', handler);
+                return () => document.removeEventListener('mousedown', handler);
+            }, [searchOpen]);
+
+            // Filter available actions for dropdown
+            const filteredSearchActions = useMemo(() => {
+                const q = searchQuery.toLowerCase();
+                const existingIds = new Set(result?.actions ? Object.keys(result.actions) : []);
+                return availableActions
+                    .filter(a => !existingIds.has(a.id))
+                    .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
+                    .slice(0, 20);
+            }, [searchQuery, availableActions, result?.actions]);
 
 
 
@@ -727,8 +1189,8 @@
                 // Find the source viewBox from the previous tab
                 const sourceVB = prevTab === 'n' ? nPZ.viewBox
                     : prevTab === 'n-1' ? n1PZ.viewBox
-                    : prevTab === 'action' ? actionPZ.viewBox
-                    : null;
+                        : prevTab === 'action' ? actionPZ.viewBox
+                            : null;
                 if (!sourceVB) return;
 
                 // Apply to the new active tab
@@ -755,6 +1217,179 @@
             const nMetaIndex = useMemo(() => buildMetadataIndex(nDiagram?.metadata), [nDiagram?.metadata]);
             const n1MetaIndex = useMemo(() => buildMetadataIndex(n1Diagram?.metadata), [n1Diagram?.metadata]);
             const actionMetaIndex = useMemo(() => buildMetadataIndex(actionDiagram?.metadata), [actionDiagram?.metadata]);
+
+            // Highlight overloaded lines in orange on N-1 and Action diagrams,
+            // and highlight acted-upon lines in yellow fluo on Action diagram.
+            useEffect(() => {
+                const overloadedLines = result?.lines_overloaded || [];
+
+                // Helper to apply delta visuals
+                const applyDeltaVisuals = (container, diagram, metaIndex) => {
+                    if (!container || !diagram || !metaIndex) return;
+
+                    // Clear delta classes
+                    container.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
+                    container.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
+                    container.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
+
+                    // Restore original text labels
+                    container.querySelectorAll('[data-original-text]').forEach(el => {
+                        el.textContent = el.getAttribute('data-original-text');
+                        el.removeAttribute('data-original-text');
+                    });
+
+                    // Resize delta logic
+                    if (actionViewMode === 'delta' && diagram.flow_deltas) {
+                        const { edgesByEquipmentId } = metaIndex;
+                        const flowDeltas = diagram.flow_deltas;
+                        const idMap = new Map();
+                        container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
+
+                        for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
+                            const edge = edgesByEquipmentId.get(lineId);
+                            if (!edge || !edge.svgId) continue;
+
+                            const el = idMap.get(edge.svgId);
+                            if (el) {
+                                const classMap = {
+                                    positive: 'nad-delta-positive',
+                                    negative: 'nad-delta-negative',
+                                    grey: 'nad-delta-grey',
+                                };
+                                const cls = classMap[deltaInfo.category];
+                                if (cls) el.classList.add(cls);
+                            }
+
+                            const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
+                            const edgeInfoIds = [edge.edgeInfo1?.svgId, edge.edgeInfo2?.svgId].filter(Boolean);
+
+                            for (const infoSvgId of edgeInfoIds) {
+                                const infoEl = idMap.get(infoSvgId);
+                                if (!infoEl) continue;
+                                const textTargets = infoEl.querySelectorAll('foreignObject, text');
+                                textTargets.forEach(t => {
+                                    if (!t.hasAttribute('data-original-text')) {
+                                        t.setAttribute('data-original-text', t.textContent);
+                                    }
+                                    t.textContent = `Δ ${deltaStr}`;
+                                });
+                            }
+                        }
+                    }
+                };
+
+                // 1. N-1 Tab Logic
+                if (activeTab === 'n-1') {
+                    // Apply standard overloads ONLY if NOT in delta mode
+                    if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
+                        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+                    }
+                    // Apply delta visuals (clears logic if mode != delta)
+                    applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
+                }
+
+                // 2. Action Tab Logic
+                if (activeTab === 'action') {
+                    // Apply delta visuals
+                    applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex);
+
+                    // Standard action highlights (Action targets & Overloads)
+                    const actionDetail = result?.actions?.[selectedActionId];
+
+                    if (actionDetail) {
+                        if (actionViewMode !== 'delta') {
+                            // Highlight overloads (post-action)
+                            const stillOverloaded = [];
+                            if (overloadedLines.length > 0 && actionDetail.rho_after) {
+                                overloadedLines.forEach((name, i) => {
+                                    if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
+                                        stillOverloaded.push(name);
+                                    }
+                                });
+                            }
+                            if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
+                                if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
+                                    stillOverloaded.push(actionDetail.max_rho_line);
+                                }
+                            }
+                            applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                        }
+
+                        // Always highlight action targets (Yellow halo)
+                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
+                    } else {
+                        if (actionSvgContainerRef.current) applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+                    }
+                }
+
+            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
+
+            // ===== VOLTAGE RANGE FILTER =====
+            // Hide/show SVG nodes and edges based on the nominal voltage range slider.
+            useEffect(() => {
+                if (uniqueVoltages.length === 0 || Object.keys(nominalVoltageMap).length === 0) return;
+
+                const [minKv, maxKv] = voltageRange;
+
+                // Helper: check if a voltage level ID falls within the range
+                const isInRange = (vlId) => {
+                    const kv = nominalVoltageMap[vlId];
+                    return kv != null && kv >= minKv && kv <= maxKv;
+                };
+
+                // Apply filter to a single SVG container + its metadata index
+                const applyFilter = (container, metaIndex) => {
+                    if (!container || !metaIndex) return;
+                    const { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode } = metaIndex;
+
+                    // Single DOM traversal for id→element map
+                    const idMap = new Map();
+                    container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
+
+                    // Filter nodes (VL substations)
+                    for (const [vlId, node] of nodesByEquipmentId) {
+                        const visible = isInRange(vlId);
+                        const show = visible ? '' : 'none';
+                        const el = idMap.get(node.svgId);
+                        if (el) el.style.display = show;
+                        // Also hide legend box and legend edge
+                        if (node.legendSvgId) {
+                            const leg = idMap.get(node.legendSvgId);
+                            if (leg) leg.style.display = show;
+                        }
+                        if (node.legendEdgeSvgId) {
+                            const legE = idMap.get(node.legendEdgeSvgId);
+                            if (legE) legE.style.display = show;
+                        }
+                    }
+
+                    // Filter edges: hide only if BOTH endpoint VLs are outside range
+                    for (const [eqId, edge] of edgesByEquipmentId) {
+                        const node1 = nodesBySvgId.get(edge.node1);
+                        const node2 = nodesBySvgId.get(edge.node2);
+                        const vl1InRange = node1 ? isInRange(node1.equipmentId) : true;
+                        const vl2InRange = node2 ? isInRange(node2.equipmentId) : true;
+                        const edgeVisible = vl1InRange || vl2InRange;
+                        const show = edgeVisible ? '' : 'none';
+
+                        const el = idMap.get(edge.svgId);
+                        if (el) el.style.display = show;
+                        // Edge info labels
+                        if (edge.edgeInfo1?.svgId) {
+                            const ei = idMap.get(edge.edgeInfo1.svgId);
+                            if (ei) ei.style.display = show;
+                        }
+                        if (edge.edgeInfo2?.svgId) {
+                            const ei = idMap.get(edge.edgeInfo2.svgId);
+                            if (ei) ei.style.display = show;
+                        }
+                    }
+                };
+
+                applyFilter(nSvgContainerRef.current, nMetaIndex);
+                applyFilter(n1SvgContainerRef.current, n1MetaIndex);
+                applyFilter(actionSvgContainerRef.current, actionMetaIndex);
+            }, [voltageRange, nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, nominalVoltageMap, uniqueVoltages]);
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
@@ -968,6 +1603,56 @@
                                 )
                             }
                         </div>
+                        {uniqueVoltages.length > 1 && (() => {
+                            const minV = uniqueVoltages[0];
+                            const maxV = uniqueVoltages[uniqueVoltages.length - 1];
+                            const logMin = Math.log(minV);
+                            const logMax = Math.log(maxV);
+                            const logScale = (kv) => ((Math.log(kv) - logMin) / (logMax - logMin)) * 100;
+                            // For the vertical slider: 0% = bottom (low kV), 100% = top (high kV)
+                            const pctLow = logScale(voltageRange[0]);
+                            const pctHigh = logScale(voltageRange[1]);
+                            return (
+                                <div className="voltage-sidebar">
+                                    <span className="vs-label">kV Filter</span>
+                                    <span className="vs-range-label">
+                                        {voltageRange[1]}<br />{voltageRange[0]}
+                                    </span>
+                                    <div className="voltage-slider-container">
+                                        <div className="voltage-slider-track" />
+                                        <div className="voltage-slider-range" style={{ bottom: pctLow + '%', top: (100 - pctHigh) + '%' }} />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[0])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const kv = Math.exp(logV);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped <= voltageRange[1]) setVoltageRange([snapped, voltageRange[1]]);
+                                            }}
+                                            style={{ zIndex: 3, height: '100%' }}
+                                        />
+                                        <input type="range"
+                                            min={logMin} max={logMax} step="any"
+                                            value={Math.log(voltageRange[1])}
+                                            onChange={e => {
+                                                const logV = parseFloat(e.target.value);
+                                                const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
+                                                if (snapped >= voltageRange[0]) setVoltageRange([voltageRange[0], snapped]);
+                                            }}
+                                            style={{ zIndex: 4, height: '100%' }}
+                                        />
+                                        <div className="voltage-slider-ticks">
+                                            {uniqueVoltages.map(kv => (
+                                                <span key={kv} style={{
+                                                    bottom: logScale(kv) + '%'
+                                                }}>{kv}</span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             };
@@ -1034,14 +1719,161 @@
                             Reset View
                         </button>
                     </div>
+
                     <div className="main-content">
                         <div className="action-feed">
-                            <h3>Actions</h3>
+                            <div style={{
+                                marginBottom: '10px',
+                                padding: '6px 10px',
+                                backgroundColor: '#f8f9fa',
+                                border: '1px solid #dee2e6',
+                                borderRadius: '6px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}>
+                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
+                                <div style={{
+                                    display: 'flex',
+                                    borderRadius: '6px',
+                                    overflow: 'hidden',
+                                    border: '1px solid #ccc',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                }}>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('network'); }}
+                                        style={{
+                                            padding: '3px 10px',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                            color: actionViewMode === 'network' ? '#fff' : '#555',
+                                            transition: 'all 0.15s ease',
+                                        }}
+                                    >
+                                        Flows
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
+                                        style={{
+                                            padding: '3px 10px',
+                                            border: 'none',
+                                            borderLeft: '1px solid #ccc',
+                                            cursor: 'pointer',
+                                            backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                            color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                            transition: 'all 0.15s ease',
+                                        }}
+                                    >
+                                        Δ Flows
+                                    </button>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
+                                <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
+                                <button
+                                    onClick={handleOpenSearch}
+                                    style={{
+                                        background: searchOpen ? '#007bff' : '#e9ecef',
+                                        color: searchOpen ? 'white' : '#333',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '4px 10px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                    }}
+                                >
+                                    + Add
+                                </button>
+
+                                {searchOpen && (
+                                    <div
+                                        ref={searchDropdownRef}
+                                        style={{
+                                            position: 'absolute',
+                                            top: '100%',
+                                            right: 0,
+                                            left: 0,
+                                            zIndex: 100,
+                                            backgroundColor: 'white',
+                                            border: '1px solid #ccc',
+                                            borderRadius: '8px',
+                                            boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+                                            marginTop: '4px',
+                                            overflow: 'hidden',
+                                        }}
+                                    >
+                                        <div style={{ padding: '8px' }}>
+                                            <input
+                                                ref={searchInputRef}
+                                                type="text"
+                                                placeholder="Search action by ID or description..."
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '6px 10px',
+                                                    border: '1px solid #ccc',
+                                                    borderRadius: '4px',
+                                                    fontSize: '13px',
+                                                    boxSizing: 'border-box',
+                                                }}
+                                            />
+                                        </div>
+                                        {searchError && (
+                                            <div style={{ padding: '6px 8px', fontSize: '12px', color: '#dc3545', borderTop: '1px solid #eee' }}>
+                                                {searchError}
+                                            </div>
+                                        )}
+                                        <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                                            {loadingAvailableActions ? (
+                                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                    Loading actions...
+                                                </div>
+                                            ) : filteredSearchActions.length === 0 ? (
+                                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
+                                                    {searchQuery ? 'No matching actions' : 'All actions already added'}
+                                                </div>
+                                            ) : (
+                                                filteredSearchActions.map(a => (
+                                                    <div
+                                                        key={a.id}
+                                                        onClick={() => handleAddManualAction(a.id)}
+                                                        style={{
+                                                            padding: '6px 10px',
+                                                            cursor: simulatingActionId ? 'wait' : 'pointer',
+                                                            borderTop: '1px solid #eee',
+                                                            backgroundColor: simulatingActionId === a.id ? '#e7f1ff' : 'transparent',
+                                                            opacity: simulatingActionId && simulatingActionId !== a.id ? 0.5 : 1,
+                                                        }}
+                                                        onMouseEnter={(e) => { if (!simulatingActionId) e.currentTarget.style.backgroundColor = '#f0f0f0'; }}
+                                                        onMouseLeave={(e) => { if (simulatingActionId !== a.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                                    >
+                                                        <div style={{ fontWeight: 600, fontSize: '12px', color: '#333' }}>
+                                                            {simulatingActionId === a.id ? '⏳ Simulating...' : a.id}
+                                                        </div>
+                                                        {a.description && (
+                                                            <div style={{ fontSize: '11px', color: '#777', marginTop: '2px' }}>
+                                                                {a.description}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                             {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
                                 <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
                                     <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}
                                 </div>
                             )}
+
+                            {/* View mode toggle - only visible when an action is selected */}
+
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
                                 Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
                                     const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
@@ -1051,9 +1883,9 @@
                                         ? (details.max_rho > 1.0 ? 'red' : details.max_rho > 0.9 ? 'orange' : 'green')
                                         : (details.is_rho_reduction ? 'green' : 'red');
                                     const severityColors = {
-                                        green:  { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
                                         orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
-                                        red:    { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
+                                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
                                     };
                                     const sc = severityColors[severity];
                                     const formatRho = (arr) => {
@@ -1062,38 +1894,38 @@
                                     };
                                     const isSelected = selectedActionId === id;
                                     return (
-                                    <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
-                                        borderLeftColor: isSelected ? '#007bff' : sc.border,
-                                        cursor: 'pointer',
-                                        background: isSelected ? '#e7f1ff' : 'white',
-                                        boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
-                                        transition: 'all 0.15s ease'
-                                    }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
-                                            <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                                {isSelected && (
-                                                    <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
-                                                        VIEWING
+                                        <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
+                                            borderLeftColor: isSelected ? '#007bff' : sc.border,
+                                            cursor: 'pointer',
+                                            background: isSelected ? '#e7f1ff' : 'white',
+                                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                                            transition: 'all 0.15s ease'
+                                        }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
+                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                    {isSelected && (
+                                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                                            VIEWING
+                                                        </span>
+                                                    )}
+                                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                                        {sc.label}
                                                     </span>
+                                                </div>
+                                            </div>
+                                            <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                                <div>Rho before: {formatRho(details.rho_before)}</div>
+                                                <div>Rho after: {formatRho(details.rho_after)}</div>
+                                                {maxRhoPct != null && (
+                                                    <div style={{ marginTop: '3px' }}>
+                                                        Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                                        {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                                    </div>
                                                 )}
-                                                <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
-                                                    {sc.label}
-                                                </span>
                                             </div>
                                         </div>
-                                        <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
-                                        <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                            <div>Rho before: {formatRho(details.rho_before)}</div>
-                                            <div>Rho after: {formatRho(details.rho_after)}</div>
-                                            {maxRhoPct != null && (
-                                                <div style={{ marginTop: '3px' }}>
-                                                    Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                                    {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
                                     );
                                 })
                             ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}

@@ -4,29 +4,27 @@ import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
 import { api } from './api';
-import type { AnalysisResult, DiagramData } from './types';
+import type { ActionDetail, AnalysisResult, DiagramData } from './types';
 
 function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [selectedActionId, setSelectedActionId] = useState<string | null>(null);
   const [actionDiagram, setActionDiagram] = useState<DiagramData | null>(null);
   const [actionDiagramLoading, setActionDiagramLoading] = useState(false);
+  const [disconnectedElement, setDisconnectedElement] = useState<string | null>(null);
+  const [actionViewMode, setActionViewMode] = useState<'network' | 'delta'>('network');
 
-  const handleAnalysisRun = (result: AnalysisResult) => {
+  const handleAnalysisRun = (result: AnalysisResult, element: string) => {
     setAnalysisResult(result);
+    setDisconnectedElement(element);
     // Clear any previously selected action when a new analysis runs
     setSelectedActionId(null);
     setActionDiagram(null);
+    setActionViewMode('network');
   };
 
-  const handleActionSelect = useCallback(async (actionId: string | null) => {
-    setSelectedActionId(actionId);
-
-    if (actionId === null) {
-      setActionDiagram(null);
-      return;
-    }
-
+  // Fetch diagram for currently selected action (flow_deltas always included)
+  const fetchDiagram = useCallback(async (actionId: string) => {
     setActionDiagramLoading(true);
     setActionDiagram(null);
     try {
@@ -40,9 +38,39 @@ function App() {
     }
   }, []);
 
+  const handleActionSelect = useCallback(async (actionId: string | null) => {
+    setSelectedActionId(actionId);
+
+    if (actionId === null) {
+      setActionDiagram(null);
+      return;
+    }
+
+    fetchDiagram(actionId);
+  }, [fetchDiagram]);
+
   const handleDeselectAction = useCallback(() => {
     setSelectedActionId(null);
     setActionDiagram(null);
+  }, []);
+
+  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail) => {
+    setAnalysisResult(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        actions: {
+          ...prev.actions,
+          [actionId]: detail,
+        },
+      };
+    });
+    // Auto-select the newly added action
+    setSelectedActionId(actionId);
+  }, []);
+
+  const handleViewModeChange = useCallback((mode: 'network' | 'delta') => {
+    setActionViewMode(mode);
   }, []);
 
   return (
@@ -60,6 +88,10 @@ function App() {
             linesOverloaded={analysisResult?.lines_overloaded || []}
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}
+            disconnectedElement={disconnectedElement}
+            onManualActionAdded={handleManualActionAdded}
+            actionViewMode={actionViewMode}
+            onViewModeChange={handleViewModeChange}
           />
         </div>
         <div style={{ width: '75%', backgroundColor: '#fff', position: 'relative' }}>
@@ -69,6 +101,9 @@ function App() {
             actionDiagramLoading={actionDiagramLoading}
             selectedActionId={selectedActionId}
             onDeselectAction={handleDeselectAction}
+            linesOverloaded={analysisResult?.lines_overloaded || []}
+            selectedActionDetail={selectedActionId && analysisResult?.actions ? analysisResult.actions[selectedActionId] ?? null : null}
+            actionViewMode={actionViewMode}
           />
         </div>
       </div>

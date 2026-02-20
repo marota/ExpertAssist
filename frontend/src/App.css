@@ -1,1 +1,71 @@
 /* App specific styles if needed */
+
+/* Highlight overloaded lines in orange on SVG network diagrams */
+.nad-overloaded path,
+.nad-overloaded line,
+.nad-overloaded polyline {
+    stroke: #ff8c00 !important;
+    stroke-width: 3px !important;
+}
+
+/* Apply drop-shadow to the parent clone group to create a glowing halo effect */
+.nad-action-target {
+    filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
+}
+
+/* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
+.nad-action-target path,
+.nad-action-target line,
+.nad-action-target polyline,
+.nad-action-target rect,
+.nad-action-target polygon {
+    stroke: #fffb00 !important;
+    stroke-width: 150px !important;
+    stroke-opacity: 0.3 !important;
+    fill: none !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+}
+
+/* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
+.nad-action-target circle,
+.nad-action-target rect {
+    stroke: #ffe600 !important;
+    stroke-width: 45px !important;
+    stroke-opacity: 0.6 !important;
+    fill: #ffe600 !important;
+    fill-opacity: 0.8 !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+/* Hide text and foreignObjects in the background clone to avoid messy overlays */
+.nad-action-target text,
+.nad-action-target foreignObject {
+    display: none !important;
+}
+
+/* ===== Delta flow visualization ===== */
+
+/* Positive delta: flow increased after action (orange) */
+.nad-delta-positive path,
+.nad-delta-positive line,
+.nad-delta-positive polyline {
+    stroke: #ff8c00 !important;
+    stroke-width: 3px !important;
+}
+
+/* Negative delta: flow decreased after action (blue) */
+.nad-delta-negative path,
+.nad-delta-negative line,
+.nad-delta-negative polyline {
+    stroke: #2196F3 !important;
+    stroke-width: 3px !important;
+}
+
+/* Grey: negligible change (below threshold) */
+.nad-delta-grey path,
+.nad-delta-grey line,
+.nad-delta-grey polyline {
+    stroke: #999 !important;
+    stroke-opacity: 0.4 !important;
+}
