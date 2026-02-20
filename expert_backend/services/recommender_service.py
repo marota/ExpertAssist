@@ -330,6 +330,18 @@ class RecommenderService:
         diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["lf_converged"] = converged
         diagram["lf_status"] = lf_status
+
+        # Include flow deltas vs base (N) state
+        try:
+            n_base = self._load_network()
+            pp.loadflow.run_ac(n_base, params)
+            base_flows = self._get_network_flows(n_base)
+            n1_flows = self._get_network_flows(n)
+            diagram["flow_deltas"] = self._compute_deltas(n1_flows, base_flows)
+        except Exception as e:
+            print(f"Warning: Failed to compute N-1 flow deltas: {e}")
+            diagram["flow_deltas"] = {}
+
         return diagram
 
     def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0, mode="network"):
@@ -345,6 +357,8 @@ class RecommenderService:
             depth: number of hops from center VLs to include
             mode: "network" for bare NAD, "delta" to include flow deltas vs N-1
         """
+        import pypowsybl as pp
+        
         if not self._last_result or not self._last_result.get("prioritized_actions"):
             raise ValueError("No analysis result available. Run analysis first.")
 
@@ -370,149 +384,114 @@ class RecommenderService:
 
         # Always include flow deltas so mode switching is instant on the frontend
         try:
-            diagram["flow_deltas"] = self._compute_flow_deltas(action_id)
+            # Get Action flows
+            action_flows = self._get_network_flows(network)
+            
+            # Get N-1 flows (re-simulate contingency on a fresh network)
+            n1_network = self._load_network()
+            disconnected_element = self._last_disconnected_element
+            if disconnected_element:
+                try:
+                    n1_network.disconnect(disconnected_element)
+                except Exception:
+                    pass
+            params = create_olf_rte_parameter()
+            pp.loadflow.run_ac(n1_network, params)
+            n1_flows = self._get_network_flows(n1_network)
+
+            diagram["flow_deltas"] = self._compute_deltas(action_flows, n1_flows)
         except Exception as e:
-            logger.warning(f"Failed to compute flow deltas: {e}")
+            print(f"Warning: Failed to compute flow deltas: {e}")
             diagram["flow_deltas"] = {}
 
         return diagram
 
-    def _compute_flow_deltas(self, action_id):
-        """Compute per-line flow deltas between action-variant and N-1 networks.
+    def _get_network_flows(self, network):
+        """Extract p1/p2 flows for lines and transformers from a simulated network."""
+        import numpy as np
+        
+        lines = network.get_lines()[['p1', 'p2']]
+        trafos = network.get_2_windings_transformers()[['p1', 'p2']]
 
-        Returns a dict mapping line_id -> {delta, category} where category is
-        'positive' (flow increased, orange), 'negative' (flow decreased, blue),
-        or 'grey' (below threshold).
+        p1 = {}
+        p2 = {}
+        for lid in lines.index:
+            v1 = lines.loc[lid, 'p1']
+            v2 = lines.loc[lid, 'p2']
+            p1[lid] = v1 if not np.isnan(v1) else 0.0
+            p2[lid] = v2 if not np.isnan(v2) else 0.0
+        for tid in trafos.index:
+            v1 = trafos.loc[tid, 'p1']
+            v2 = trafos.loc[tid, 'p2']
+            p1[tid] = v1 if not np.isnan(v1) else 0.0
+            p2[tid] = v2 if not np.isnan(v2) else 0.0
+        
+        return {"p1": p1, "p2": p2}
 
-        The threshold follows expert_op4grid_recommender's pattern:
-        max_overload = max(|all_deltas|) * 0.05
+    def _compute_deltas(self, after_flows, before_flows):
+        """Compute per-line flow deltas between two flow sets.
+
+        Returns a dict mapping line_id -> {delta, category}.
         """
-        import pypowsybl as pp
+        ap1, ap2 = after_flows["p1"], after_flows["p2"]
+        bp1, bp2 = before_flows["p1"], before_flows["p2"]
 
-        actions = self._last_result["prioritized_actions"]
-        action_data = actions[action_id]
-        obs_action = action_data["observation"]
-
-        # --- Get post-action flows (action variant is already the working variant) ---
-        nm = obs_action._network_manager
-        action_network = nm.network
-
-        action_lines = action_network.get_lines()[['p1', 'p2']]
-        action_trafos = action_network.get_2_windings_transformers()[['p1', 'p2']]
-
-        action_p1 = {}
-        action_p2 = {}
-        for lid in action_lines.index:
-            v1 = action_lines.loc[lid, 'p1']
-            v2 = action_lines.loc[lid, 'p2']
-            action_p1[lid] = v1 if not np.isnan(v1) else 0.0
-            action_p2[lid] = v2 if not np.isnan(v2) else 0.0
-        for tid in action_trafos.index:
-            v1 = action_trafos.loc[tid, 'p1']
-            v2 = action_trafos.loc[tid, 'p2']
-            action_p1[tid] = v1 if not np.isnan(v1) else 0.0
-            action_p2[tid] = v2 if not np.isnan(v2) else 0.0
-
-        # --- Get N-1 flows (re-simulate contingency on a fresh network) ---
-        n1_network = self._load_network()
-        disconnected_element = self._last_disconnected_element
-        if disconnected_element:
-            try:
-                n1_network.disconnect(disconnected_element)
-            except Exception:
-                pass  # If disconnect fails, use base network flows
-
-        params = create_olf_rte_parameter()
-        pp.loadflow.run_ac(n1_network, params)
-
-        n1_lines = n1_network.get_lines()[['p1', 'p2']]
-        n1_trafos = n1_network.get_2_windings_transformers()[['p1', 'p2']]
-
-        n1_p1 = {}
-        n1_p2 = {}
-        for lid in n1_lines.index:
-            v1 = n1_lines.loc[lid, 'p1']
-            v2 = n1_lines.loc[lid, 'p2']
-            n1_p1[lid] = v1 if not np.isnan(v1) else 0.0
-            n1_p2[lid] = v2 if not np.isnan(v2) else 0.0
-        for tid in n1_trafos.index:
-            v1 = n1_trafos.loc[tid, 'p1']
-            v2 = n1_trafos.loc[tid, 'p2']
-            n1_p1[tid] = v1 if not np.isnan(v1) else 0.0
-            n1_p2[tid] = v2 if not np.isnan(v2) else 0.0
-
-        # --- Compute deltas ---
-        # Use the terminal where flow ENTERS in the action state (positive p value).
-        # This ensures the delta always has the same sign at both ends.
-        # category based on magnitude change: |action_p| - |n1_p|
-        #   positive → line got more loaded (orange)
-        #   negative → line got less loaded (blue)
-        all_line_ids = set(action_p1.keys()) | set(n1_p1.keys())
+        all_line_ids = set(ap1.keys()) | set(bp1.keys())
         deltas = {}
         for lid in all_line_ids:
-            ap1 = action_p1.get(lid, 0.0)
-            ap2 = action_p2.get(lid, 0.0)
-            np1 = n1_p1.get(lid, 0.0)
-            np2 = n1_p2.get(lid, 0.0)
+            cur_ap1 = ap1.get(lid, 0.0)
+            cur_ap2 = ap2.get(lid, 0.0)
+            cur_bp1 = bp1.get(lid, 0.0)
+            cur_bp2 = bp2.get(lid, 0.0)
 
-            # Determine entering terminal and value for Action state
-            if ap1 >= ap2:
-                action_idx = 1
-                action_val = ap1
-                baseline_val_aligned = np1
-                action_val_aligned = ap1
+            # Determine entering terminal and value for 'After' state
+            if cur_ap1 >= cur_ap2:
+                after_idx = 1
+                after_val = cur_ap1
             else:
-                action_idx = 2
-                action_val = ap2
-                baseline_val_aligned = np2
-                action_val_aligned = ap2
+                after_idx = 2
+                after_val = cur_ap2
             
-            # Determine entering terminal and value for Baseline (N-1) state
-            if np1 >= np2:
-                baseline_idx = 1
-                baseline_val = np1
+            # Determine entering terminal and value for 'Before' state
+            if cur_bp1 >= cur_bp2:
+                before_idx = 1
+                before_val = cur_bp1
             else:
-                baseline_idx = 2
-                baseline_val = np2
+                before_idx = 2
+                before_val = cur_bp2
 
-            # Compute delta
-            # Default: use Action direction (same as before)
-            # But if direction flipped and Baseline is stronger, use Baseline direction
-            if action_idx != baseline_idx and baseline_val > action_val:
-                # Flipped & Baseline stronger → use Baseline direction
-                # Delta = Action flow (aligned to Baseline) - Baseline flow
-                # Since we align to Baseline entering, action_val_aligned will be the "leaving" value seen as entering (so likely negative)
-                # But we must be careful: action_val_aligned is simply P at the node corresponding to baseline entering.
-                # If baseline entered at 1 (np1 > 0), we use ap1 - np1.
-                if baseline_idx == 1:
-                    delta = ap1 - np1
+            # Compute delta using the logic from Conversation 93d0da00:
+            # Align to the direction of the flow with highest absolute magnitude.
+            if after_idx != before_idx and before_val > after_val:
+                # Flipped & Before stronger → use Before direction
+                if before_idx == 1:
+                    delta = cur_ap1 - cur_bp1
                 else:
-                    delta = ap2 - np2
+                    delta = cur_ap2 - cur_bp2
             else:
-                 # Standard case: use Action direction
-                 # if action entered at 1, ap1 - np1
-                 if action_idx == 1:
-                     delta = ap1 - np1
-                 else:
-                     delta = ap2 - np2
+                # Standard case: use After direction
+                if after_idx == 1:
+                    delta = cur_ap1 - cur_bp1
+                else:
+                    delta = cur_ap2 - cur_bp2
             
             deltas[lid] = delta
 
-        # --- Apply threshold (same as ThresholdReportOfLine = 0.05) ---
+        # Apply threshold (5% of max delta)
         if deltas:
             max_abs_delta = max(abs(d) for d in deltas.values())
         else:
             max_abs_delta = 0.0
-        threshold = max_abs_delta * 0.05  # 5% of max delta
+        threshold = max_abs_delta * 0.05
 
         flow_deltas = {}
         for lid, delta in deltas.items():
             if abs(delta) < threshold:
                 category = "grey"
             elif delta > 0:
-                category = "positive"  # orange: line more loaded
+                category = "positive"
             else:
-                category = "negative"  # blue: line less loaded
+                category = "negative"
 
             flow_deltas[lid] = {
                 "delta": round(float(delta), 1),

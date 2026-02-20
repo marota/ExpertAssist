@@ -1219,43 +1219,32 @@
             useEffect(() => {
                 const overloadedLines = result?.lines_overloaded || [];
 
-                // N-1: highlight all initially overloaded lines
-                if (n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
-                    applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
-                }
+                // Helper to apply delta visuals
+                const applyDeltaVisuals = (container, diagram, metaIndex) => {
+                    if (!container || !diagram || !metaIndex) return;
 
-                // Action diagram highlights
-                if (actionSvgContainerRef.current && actionMetaIndex && selectedActionId && result?.actions) {
-                    const actionDetail = result.actions[selectedActionId];
+                    // Clear delta classes
+                    container.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
+                    container.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
+                    container.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
 
-                    // Clear delta classes before re-applying
-                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
-                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
-                    actionSvgContainerRef.current.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
-
-                    // Restore original text labels if they were modified (switching back from Delta mode)
-                    actionSvgContainerRef.current.querySelectorAll('[data-original-text]').forEach(el => {
+                    // Restore original text labels
+                    container.querySelectorAll('[data-original-text]').forEach(el => {
                         el.textContent = el.getAttribute('data-original-text');
                         el.removeAttribute('data-original-text');
                     });
 
-                    // ===== DELTA MODE: apply delta coloring =====
-                    if (actionViewMode === 'delta' && actionDiagram?.flow_deltas) {
-                        const { edgesByEquipmentId } = actionMetaIndex;
-                        const flowDeltas = actionDiagram.flow_deltas;
-
-                        // Build id→element index in a single DOM traversal (O(n) once)
-                        // instead of thousands of querySelector calls (O(n) each)
+                    // Resize delta logic
+                    if (actionViewMode === 'delta' && diagram.flow_deltas) {
+                        const { edgesByEquipmentId } = metaIndex;
+                        const flowDeltas = diagram.flow_deltas;
                         const idMap = new Map();
-                        actionSvgContainerRef.current.querySelectorAll('[id]').forEach(el => {
-                            idMap.set(el.id, el);
-                        });
+                        container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
 
                         for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
                             const edge = edgesByEquipmentId.get(lineId);
                             if (!edge || !edge.svgId) continue;
 
-                            // Apply delta color class on the edge path group
                             const el = idMap.get(edge.svgId);
                             if (el) {
                                 const classMap = {
@@ -1267,12 +1256,8 @@
                                 if (cls) el.classList.add(cls);
                             }
 
-                            // Replace edge info text labels with the delta value (same at both ends)
                             const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
-                            const edgeInfoIds = [
-                                edge.edgeInfo1?.svgId,
-                                edge.edgeInfo2?.svgId,
-                            ].filter(Boolean);
+                            const edgeInfoIds = [edge.edgeInfo1?.svgId, edge.edgeInfo2?.svgId].filter(Boolean);
 
                             for (const infoSvgId of edgeInfoIds) {
                                 const infoEl = idMap.get(infoSvgId);
@@ -1287,36 +1272,53 @@
                             }
                         }
                     }
+                };
 
-                    // ===== FLOWS MODE ONLY: overloaded line highlights =====
-                    if (actionViewMode !== 'delta' && actionDetail) {
-                        const stillOverloaded = [];
-                        if (overloadedLines.length > 0 && actionDetail.rho_after) {
-                            overloadedLines.forEach((name, i) => {
-                                if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
-                                    stillOverloaded.push(name);
-                                }
-                            });
-                        }
-                        if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
-                            if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
-                                stillOverloaded.push(actionDetail.max_rho_line);
-                            }
-                        }
-                        applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                // 1. N-1 Tab Logic
+                if (activeTab === 'n-1') {
+                    // Apply standard overloads ONLY if NOT in delta mode
+                    if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
+                        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
                     }
+                    // Apply delta visuals (clears logic if mode != delta)
+                    applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
+                }
 
-                    // ===== BOTH MODES: action target highlights (yellow fluo halo) =====
+                // 2. Action Tab Logic
+                if (activeTab === 'action') {
+                    // Apply delta visuals
+                    applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex);
+
+                    // Standard action highlights (Action targets & Overloads)
+                    const actionDetail = result?.actions?.[selectedActionId];
+
                     if (actionDetail) {
+                        if (actionViewMode !== 'delta') {
+                            // Highlight overloads (post-action)
+                            const stillOverloaded = [];
+                            if (overloadedLines.length > 0 && actionDetail.rho_after) {
+                                overloadedLines.forEach((name, i) => {
+                                    if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
+                                        stillOverloaded.push(name);
+                                    }
+                                });
+                            }
+                            if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
+                                if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
+                                    stillOverloaded.push(actionDetail.max_rho_line);
+                                }
+                            }
+                            applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                        }
+
+                        // Always highlight action targets (Yellow halo)
                         applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
-                    }
-                } else {
-                    // Clear action target highlights when no action is selected
-                    if (actionSvgContainerRef.current) {
-                        applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+                    } else {
+                        if (actionSvgContainerRef.current) applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
                     }
                 }
-            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode]);
+
+            }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
 
             // ===== VOLTAGE RANGE FILTER =====
             // Hide/show SVG nodes and edges based on the nominal voltage range slider.
@@ -1716,6 +1718,54 @@
 
                     <div className="main-content">
                         <div className="action-feed">
+                            <div style={{
+                                marginBottom: '10px',
+                                padding: '6px 10px',
+                                backgroundColor: '#f8f9fa',
+                                border: '1px solid #dee2e6',
+                                borderRadius: '6px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                            }}>
+                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
+                                <div style={{
+                                    display: 'flex',
+                                    borderRadius: '6px',
+                                    overflow: 'hidden',
+                                    border: '1px solid #ccc',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                }}>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('network'); }}
+                                        style={{
+                                            padding: '3px 10px',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                            color: actionViewMode === 'network' ? '#fff' : '#555',
+                                            transition: 'all 0.15s ease',
+                                        }}
+                                    >
+                                        Flows
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
+                                        style={{
+                                            padding: '3px 10px',
+                                            border: 'none',
+                                            borderLeft: '1px solid #ccc',
+                                            cursor: 'pointer',
+                                            backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                            color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                            transition: 'all 0.15s ease',
+                                        }}
+                                    >
+                                        Δ Flows
+                                    </button>
+                                </div>
+                            </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                                 <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
                                 <button
@@ -1819,56 +1869,7 @@
                             )}
 
                             {/* View mode toggle - only visible when an action is selected */}
-                            {selectedActionId && (
-                                <div style={{
-                                    marginBottom: '10px',
-                                    padding: '6px 10px',
-                                    backgroundColor: '#f8f9fa',
-                                    border: '1px solid #dee2e6',
-                                    borderRadius: '6px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                }}>
-                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
-                                    <div style={{
-                                        display: 'flex',
-                                        borderRadius: '6px',
-                                        overflow: 'hidden',
-                                        border: '1px solid #ccc',
-                                        fontSize: '12px',
-                                        fontWeight: 600,
-                                    }}>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); setActionViewMode('network'); }}
-                                            style={{
-                                                padding: '3px 10px',
-                                                border: 'none',
-                                                cursor: 'pointer',
-                                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                                                color: actionViewMode === 'network' ? '#fff' : '#555',
-                                                transition: 'all 0.15s ease',
-                                            }}
-                                        >
-                                            Flows
-                                        </button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
-                                            style={{
-                                                padding: '3px 10px',
-                                                border: 'none',
-                                                borderLeft: '1px solid #ccc',
-                                                cursor: 'pointer',
-                                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                                                color: actionViewMode === 'delta' ? '#fff' : '#555',
-                                                transition: 'all 0.15s ease',
-                                            }}
-                                        >
-                                            Δ Flows
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
+
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
                                 Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
                                     const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
