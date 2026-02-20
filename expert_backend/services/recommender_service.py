@@ -69,6 +69,11 @@ class RecommenderService:
                     },
                 }
             print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
+            
+            # Save the updated dictionary back to file so the core analysis engine can load it
+            import json
+            with open(config.ACTION_FILE_PATH, 'w') as f:
+                json.dump(self._dict_action, f, indent=2)
 
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True

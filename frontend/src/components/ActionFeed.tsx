@@ -81,7 +81,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             }
         }
         return list.sort((a, b) => {
-            if (a.type !== b.type) return a.type.localeCompare(b.type);
+            if (a.type !== b.type) {
+                if (a.type === 'line_disconnection') return 1;
+                if (b.type === 'line_disconnection') return -1;
+                return a.type.localeCompare(b.type);
+            }
             return b.score - a.score;
         });
     }, [actionScores]);
@@ -209,39 +213,44 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
                                                 Scored Actions
                                             </div>
-                                            <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
-                                                <thead>
-                                                    <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
-                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Type</th>
-                                                        <th style={{ textAlign: 'left', padding: '4px' }}>Action</th>
-                                                        <th style={{ textAlign: 'right', padding: '4px' }}>Score</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {scoredActionsList.map(item => {
-                                                        const isComputed = !!actions[item.actionId];
-                                                        return (
-                                                            <tr key={`${item.type}-${item.actionId}`}
-                                                                onClick={() => !isComputed && handleAddAction(item.actionId)}
-                                                                style={{
-                                                                    borderBottom: '1px solid #eee',
-                                                                    cursor: (isComputed || simulating) ? 'not-allowed' : 'pointer',
-                                                                    opacity: isComputed ? 0.6 : (simulating === item.actionId ? 0.7 : 1),
-                                                                    background: simulating === item.actionId ? '#e7f1ff' : 'transparent',
-                                                                }}>
-                                                                <td style={{ padding: '4px', color: '#666' }}>{item.type.replace('_', ' ')}</td>
-                                                                <td style={{ padding: '4px', fontWeight: 600 }}>
-                                                                    {item.actionId}
-                                                                    {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '1px 4px', borderRadius: '4px', fontSize: '0.65rem' }}>computed</span>}
-                                                                </td>
-                                                                <td style={{ padding: '4px', textAlign: 'right', fontFamily: 'monospace' }}>
-                                                                    {item.score.toFixed(2)}
-                                                                </td>
+                                            {Array.from(new Set(scoredActionsList.map(item => item.type))).map(type => (
+                                                <div key={type} style={{ marginBottom: '8px' }}>
+                                                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0' }}>
+                                                        {type.replace('_', ' ').toUpperCase()}
+                                                    </div>
+                                                    <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
+                                                        <thead>
+                                                            <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
+                                                                <th style={{ textAlign: 'left', padding: '4px 6px', width: '70%' }}>Action</th>
+                                                                <th style={{ textAlign: 'right', padding: '4px 6px', width: '30%' }}>Score</th>
                                                             </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
+                                                        </thead>
+                                                        <tbody>
+                                                            {scoredActionsList.filter(item => item.type === type).map(item => {
+                                                                const isComputed = !!actions[item.actionId];
+                                                                return (
+                                                                    <tr key={item.actionId}
+                                                                        onClick={() => !isComputed && handleAddAction(item.actionId)}
+                                                                        style={{
+                                                                            borderBottom: '1px solid #eee',
+                                                                            cursor: (isComputed || simulating) ? 'not-allowed' : 'pointer',
+                                                                            opacity: isComputed ? 0.6 : (simulating === item.actionId ? 0.7 : 1),
+                                                                            background: simulating === item.actionId ? '#e7f1ff' : 'transparent',
+                                                                        }}>
+                                                                        <td style={{ padding: '4px 6px', fontWeight: 600 }}>
+                                                                            {item.actionId}
+                                                                            {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '1px 4px', borderRadius: '4px', fontSize: '0.65rem' }}>computed</span>}
+                                                                        </td>
+                                                                        <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
+                                                                            {item.score.toFixed(2)}
+                                                                        </td>
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
 
