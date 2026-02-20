@@ -12,6 +12,27 @@ export const api = {
         const response = await axios.get<BranchResponse>(`${API_BASE_URL}/api/branches`);
         return response.data.branches;
     },
+    getVoltageLevels: async (): Promise<string[]> => {
+        const response = await axios.get<{ voltage_levels: string[] }>(`${API_BASE_URL}/api/voltage-levels`);
+        return response.data.voltage_levels;
+    },
+    getNominalVoltages: async (): Promise<{ mapping: Record<string, number>; unique_kv: number[] }> => {
+        const response = await axios.get<{ mapping: Record<string, number>; unique_kv: number[] }>(
+            `${API_BASE_URL}/api/nominal-voltages`
+        );
+        return response.data;
+    },
+    getNetworkDiagram: async (): Promise<DiagramData> => {
+        const response = await axios.get<DiagramData>(`${API_BASE_URL}/api/network-diagram`);
+        return response.data;
+    },
+    getN1Diagram: async (disconnectedElement: string): Promise<DiagramData> => {
+        const response = await axios.post<DiagramData>(
+            `${API_BASE_URL}/api/n1-diagram`,
+            { disconnected_element: disconnectedElement }
+        );
+        return response.data;
+    },
     runAnalysis: async (disconnected_element: string): Promise<AnalysisResult> => {
         // The backend returns NDJSON (one JSON object per line).
         // Use fetch + ReadableStream to parse events incrementally.
@@ -79,5 +100,11 @@ export const api = {
             { action_id: actionId, disconnected_element: disconnectedElement }
         );
         return response.data;
+    },
+    pickPath: async (type: 'file' | 'dir'): Promise<string | null> => {
+        const response = await axios.get<{ path: string | null }>(
+            `${API_BASE_URL}/api/pick-path?type=${type}`
+        );
+        return response.data.path;
     },
 };
