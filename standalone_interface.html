@@ -714,33 +714,61 @@
         };
 
         // Extract the voltage level name for nodal actions.
-        // Tries: 1) quoted "dans le poste 'VL'" 2) unquoted "dans le poste VL" 3) action ID suffix
+        // Skips pure line actions so that line edge highlights are not suppressed.
         const getActionTargetVoltageLevel = (actionDetail, actionId, nodesByEquipmentId) => {
+            const topo = actionDetail?.action_topology;
+
+            // Pure line action (lines only, no gen/load changes) → not a nodal action
+            if (topo) {
+                const lineKeys = new Set([
+                    ...Object.keys(topo.lines_ex_bus || {}),
+                    ...Object.keys(topo.lines_or_bus || {}),
+                ]);
+                const genKeys = Object.keys(topo.gens_bus || {});
+                const loadKeys = Object.keys(topo.loads_bus || {});
+                if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
+                    return null;
+                }
+            }
+
             const desc = actionDetail?.description_unitaire;
             if (desc && desc !== 'No description available') {
-                // Try quoted format: last single-quoted string
+                // Try all quoted strings (last-first) — any might be the VL name
                 const quotedMatches = desc.match(/'([^']+)'/g);
-                if (quotedMatches && quotedMatches.length > 0) {
-                    const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
-                    console.log('[action-target] quoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
-                    if (nodesByEquipmentId.has(vl)) return vl;
+                if (quotedMatches) {
+                    for (let i = quotedMatches.length - 1; i >= 0; i--) {
+                        const vl = quotedMatches[i].replace(/'/g, '');
+                        if (nodesByEquipmentId.has(vl)) return vl;
+                    }
                 }
-                // Try unquoted: "dans le poste VLNAME"
                 const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
                 if (posteMatch) {
                     const vl = posteMatch[1].replace(/['"]/g, '');
-                    console.log('[action-target] unquoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
                     if (nodesByEquipmentId.has(vl)) return vl;
                 }
             }
+
+            // Derive VL from gen/load names: strip prefix before first "." (e.g. GEN.PY762 → PY762)
+            if (topo) {
+                const equipNames = [
+                    ...Object.keys(topo.gens_bus || {}),
+                    ...Object.keys(topo.loads_bus || {}),
+                ];
+                for (const name of equipNames) {
+                    const dotIdx = name.indexOf('.');
+                    if (dotIdx >= 0) {
+                        const suffix = name.substring(dotIdx + 1);
+                        if (nodesByEquipmentId.has(suffix)) return suffix;
+                    }
+                }
+            }
+
             // Fallback: last _-separated segment of action ID
             if (actionId) {
                 const parts = actionId.split('_');
                 const candidate = parts[parts.length - 1];
-                console.log('[action-target] actionId suffix candidate:', candidate, '→ in metadata:', nodesByEquipmentId.has(candidate));
                 if (nodesByEquipmentId.has(candidate)) return candidate;
             }
-            console.log('[action-target] no VL found. metadata node keys sample:', [...nodesByEquipmentId.keys()].slice(0, 10));
             return null;
         };
 

@@ -183,18 +183,37 @@ export const getActionTargetLines = (
 
 /**
  * Extract the voltage level name for nodal actions.
+ * Skips pure line actions so that line edge highlights are not suppressed.
  */
 export const getActionTargetVoltageLevel = (
     actionDetail: ActionDetail | null,
     actionId: string | null,
     nodesByEquipmentId: Map<string, NodeMeta>,
 ): string | null => {
+    const topo = actionDetail?.action_topology;
+
+    // Pure line action (lines only, no gen/load changes) → not a nodal action
+    if (topo) {
+        const lineKeys = new Set([
+            ...Object.keys(topo.lines_ex_bus || {}),
+            ...Object.keys(topo.lines_or_bus || {}),
+        ]);
+        const genKeys = Object.keys(topo.gens_bus || {});
+        const loadKeys = Object.keys(topo.loads_bus || {});
+        if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
+            return null;
+        }
+    }
+
     const desc = actionDetail?.description_unitaire;
     if (desc && desc !== 'No description available') {
+        // Try all quoted strings (last-first) — any might be the VL name
         const quotedMatches = desc.match(/'([^']+)'/g);
-        if (quotedMatches && quotedMatches.length > 0) {
-            const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
-            if (nodesByEquipmentId.has(vl)) return vl;
+        if (quotedMatches) {
+            for (let i = quotedMatches.length - 1; i >= 0; i--) {
+                const vl = quotedMatches[i].replace(/'/g, '');
+                if (nodesByEquipmentId.has(vl)) return vl;
+            }
         }
         const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
         if (posteMatch) {
@@ -202,6 +221,23 @@ export const getActionTargetVoltageLevel = (
             if (nodesByEquipmentId.has(vl)) return vl;
         }
     }
+
+    // Derive VL from gen/load names: strip prefix before first "." (e.g. GEN.PY762 → PY762)
+    if (topo) {
+        const equipNames = [
+            ...Object.keys(topo.gens_bus || {}),
+            ...Object.keys(topo.loads_bus || {}),
+        ];
+        for (const name of equipNames) {
+            const dotIdx = name.indexOf('.');
+            if (dotIdx >= 0) {
+                const suffix = name.substring(dotIdx + 1);
+                if (nodesByEquipmentId.has(suffix)) return suffix;
+            }
+        }
+    }
+
+    // Fallback: last _-separated segment of action ID
     if (actionId) {
         const parts = actionId.split('_');
         const candidate = parts[parts.length - 1];
