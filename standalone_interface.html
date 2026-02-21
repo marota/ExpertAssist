@@ -714,23 +714,7 @@
         };
 
         // Extract the voltage level name for nodal actions.
-        // Skips pure line actions so that line edge highlights are not suppressed.
         const getActionTargetVoltageLevel = (actionDetail, actionId, nodesByEquipmentId) => {
-            const topo = actionDetail?.action_topology;
-
-            // Pure line action (lines only, no gen/load changes) → not a nodal action
-            if (topo) {
-                const lineKeys = new Set([
-                    ...Object.keys(topo.lines_ex_bus || {}),
-                    ...Object.keys(topo.lines_or_bus || {}),
-                ]);
-                const genKeys = Object.keys(topo.gens_bus || {});
-                const loadKeys = Object.keys(topo.loads_bus || {});
-                if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
-                    return null;
-                }
-            }
-
             const desc = actionDetail?.description_unitaire;
             if (desc && desc !== 'No description available') {
                 // Try all quoted strings (last-first) — any might be the VL name
@@ -741,30 +725,23 @@
                         if (nodesByEquipmentId.has(vl)) return vl;
                     }
                 }
-                const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+                // Match "dans le poste", "du poste", "au poste", etc.
+                const posteMatch = desc.match(/(?:dans le |du |au )?poste\s+'?(\S+?)'?(?:\s|$|,)/i);
                 if (posteMatch) {
                     const vl = posteMatch[1].replace(/['"]/g, '');
                     if (nodesByEquipmentId.has(vl)) return vl;
                 }
             }
 
-            // Derive VL from gen/load names: strip prefix before first "." (e.g. GEN.PY762 → PY762)
-            if (topo) {
-                const equipNames = [
-                    ...Object.keys(topo.gens_bus || {}),
-                    ...Object.keys(topo.loads_bus || {}),
-                ];
-                for (const name of equipNames) {
-                    const dotIdx = name.indexOf('.');
-                    if (dotIdx >= 0) {
-                        const suffix = name.substring(dotIdx + 1);
-                        if (nodesByEquipmentId.has(suffix)) return suffix;
-                    }
-                }
-            }
+            // Fallback: action ID suffix — skip for pure line reconnection actions
+            // (where lines are reconnected to real buses ≥ 0 with no gen/load changes),
+            // because the suffix can coincidentally match a VL name.
+            const topo = actionDetail?.action_topology;
+            const isLineReconnection = topo
+                && (Object.keys(topo.gens_bus || {}).length === 0 && Object.keys(topo.loads_bus || {}).length === 0)
+                && [...Object.values(topo.lines_ex_bus || {}), ...Object.values(topo.lines_or_bus || {})].some(v => v >= 0);
 
-            // Fallback: last _-separated segment of action ID
-            if (actionId) {
+            if (actionId && !isLineReconnection) {
                 const parts = actionId.split('_');
                 const candidate = parts[parts.length - 1];
                 if (nodesByEquipmentId.has(candidate)) return candidate;
@@ -1468,8 +1445,17 @@
                         return n;
                     };
 
-                    const targetNode = nodesByEquipmentId.get(targetId);
-                    const targetEdge = edgesByEquipmentId.get(targetId);
+                    let targetNode = nodesByEquipmentId.get(targetId);
+                    let targetEdge = edgesByEquipmentId.get(targetId);
+                    // Fallback: strip prefix before "." (e.g. GEN.PY762 → PY762) and try as VL node
+                    if (!targetNode && !targetEdge) {
+                        const dotIdx = targetId.indexOf('.');
+                        if (dotIdx >= 0) {
+                            const suffix = targetId.substring(dotIdx + 1);
+                            targetNode = nodesByEquipmentId.get(suffix);
+                            if (!targetNode) targetEdge = edgesByEquipmentId.get(suffix);
+                        }
+                    }
                     let targetSvgId;
 
                     if (targetNode) {
@@ -2104,25 +2090,41 @@
                                                             </button>
                                                         );
                                                     }
+                                                    const badgeBtn = (name, bg, color, title) => (
+                                                        <button key={name}
+                                                            style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
+                                                            title={title}
+                                                            onClick={(e) => { e.stopPropagation(); handleAssetClick(id, name, 'action'); }}>
+                                                            {name}
+                                                        </button>
+                                                    );
                                                     const lineNames = edgeMeta
                                                         ? getActionTargetLines(details, id, edgeMeta)
                                                         : Array.from(new Set([
                                                             ...Object.keys(details.action_topology?.lines_ex_bus || {}),
                                                             ...Object.keys(details.action_topology?.lines_or_bus || {}),
                                                         ]));
-                                                    if (lineNames.length === 0) return null;
-                                                    return (
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                                            {lineNames.map(name => (
-                                                                <button key={name}
-                                                                    style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#dbeafe', color: '#1e40af', textDecoration: 'underline dotted' }}
-                                                                    title={`Zoom to line ${name} in action visualization`}
-                                                                    onClick={(e) => { e.stopPropagation(); handleAssetClick(id, name, 'action'); }}>
-                                                                    {name}
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    );
+                                                    if (lineNames.length > 0) {
+                                                        return (
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                                                {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name} in action visualization`))}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    // Fallback: gen/load equipment names from topology
+                                                    const topo = details.action_topology;
+                                                    const equipNames = [
+                                                        ...Object.keys(topo?.gens_bus || {}),
+                                                        ...Object.keys(topo?.loads_bus || {}),
+                                                    ];
+                                                    if (equipNames.length > 0) {
+                                                        return (
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                                                {equipNames.map(name => badgeBtn(name, '#fef3c7', '#92400e', `Zoom to ${name} in action visualization`))}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
                                                 })()}
                                             </div>
                                             <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>

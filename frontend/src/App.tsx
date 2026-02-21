@@ -444,9 +444,19 @@ function App() {
         return n;
       };
 
-      const targetNode = nodesByEquipmentId.get(targetId);
-      const targetEdge = edgesByEquipmentId.get(targetId);
+      let targetNode = nodesByEquipmentId.get(targetId);
+      let targetEdge = edgesByEquipmentId.get(targetId);
       let targetSvgId: string | undefined;
+
+      // Fallback: strip prefix before "." (e.g. GEN.PY762 → PY762) and try as VL node
+      if (!targetNode && !targetEdge) {
+        const dotIdx = targetId.indexOf('.');
+        if (dotIdx >= 0) {
+          const suffix = targetId.substring(dotIdx + 1);
+          targetNode = nodesByEquipmentId.get(suffix) ?? undefined;
+          if (!targetNode) targetEdge = edgesByEquipmentId.get(suffix) ?? undefined;
+        }
+      }
 
       if (targetNode) {
         targetSvgId = targetNode.svgId;
