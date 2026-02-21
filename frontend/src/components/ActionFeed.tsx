@@ -8,6 +8,7 @@ interface ActionFeedProps {
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
+    onAssetClick: (actionId: string, assetName: string) => void;
     disconnectedElement: string | null;
     onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
     actionViewMode: 'network' | 'delta';
@@ -21,6 +22,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     linesOverloaded,
     selectedActionId,
     onActionSelect,
+    onAssetClick,
     disconnectedElement,
     onManualActionAdded,
     actionViewMode,
@@ -462,6 +464,53 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     </div>
                                 )}
                             </div>
+                            {(() => {
+                                const topo = details.action_topology;
+                                if (!topo) return null;
+                                const lineNames = Array.from(new Set([
+                                    ...Object.keys(topo.lines_ex_bus || {}),
+                                    ...Object.keys(topo.lines_or_bus || {}),
+                                ]));
+                                const genNames = Object.keys(topo.gens_bus || {});
+                                const loadNames = Object.keys(topo.loads_bus || {});
+                                if (lineNames.length === 0 && genNames.length === 0 && loadNames.length === 0) return null;
+                                const badgeStyle = (type: 'line' | 'gen' | 'load') => ({
+                                    padding: '2px 7px',
+                                    borderRadius: '4px',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    backgroundColor: type === 'line' ? '#dbeafe' : type === 'gen' ? '#fef3c7' : '#ede9fe',
+                                    color: type === 'line' ? '#1e40af' : type === 'gen' ? '#92400e' : '#5b21b6',
+                                    textDecoration: 'underline dotted',
+                                });
+                                return (
+                                    <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                        {lineNames.map(name => (
+                                            <button key={name} style={badgeStyle('line')}
+                                                title={`Zoom to line ${name} in action visualization`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
+                                                {name}
+                                            </button>
+                                        ))}
+                                        {genNames.map(name => (
+                                            <button key={name} style={badgeStyle('gen')}
+                                                title={`Zoom to generator ${name} in action visualization`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
+                                                {name}
+                                            </button>
+                                        ))}
+                                        {loadNames.map(name => (
+                                            <button key={name} style={badgeStyle('load')}
+                                                title={`Zoom to load ${name} in action visualization`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
+                                                {name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     );
                 })

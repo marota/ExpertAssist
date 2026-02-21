@@ -251,6 +251,19 @@ function App() {
     setActionViewMode(mode);
   }, []);
 
+  // ===== Asset Click (from action card badges) =====
+  const handleAssetClick = useCallback((actionId: string, assetName: string) => {
+    // Fill the inspect field so the header shows it and zoom is consistent
+    setInspectQuery(assetName);
+    if (actionId !== selectedActionId) {
+      // Select the action; the zoom effect fires once its diagram loads
+      handleActionSelect(actionId);
+    } else {
+      // Action already selected — just ensure we're on the action tab
+      setActiveTab('action');
+    }
+  }, [selectedActionId, handleActionSelect]);
+
   // ===== Reset View =====
   const handleManualReset = useCallback(() => {
     setInspectQuery('');
@@ -562,6 +575,7 @@ function App() {
             linesOverloaded={result?.lines_overloaded || []}
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}
+            onAssetClick={handleAssetClick}
             disconnectedElement={selectedBranch || null}
             onManualActionAdded={handleManualActionAdded}
             actionViewMode={actionViewMode}
