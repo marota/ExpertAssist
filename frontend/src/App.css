@@ -1,6 +1,37 @@
-/* App specific styles if needed */
+/* ===== SVG Container ===== */
 
-/* Highlight overloaded lines in orange on SVG network diagrams */
+.svg-container {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.svg-container svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Keep lines/paths visible at any zoom level without breaking fills/colors */
+.svg-container svg path,
+.svg-container svg line,
+.svg-container svg polyline,
+.svg-container svg rect {
+    vector-effect: non-scaling-stroke;
+}
+
+/* ===== Highlight styles ===== */
+
+.nad-highlight {
+    stroke: #e74c3c !important;
+    stroke-width: 4px !important;
+    opacity: 0.9;
+}
+
+circle.nad-highlight {
+    fill: #e74c3c !important;
+}
+
+/* Highlight overloaded lines in orange */
 .nad-overloaded path,
 .nad-overloaded line,
 .nad-overloaded polyline {
@@ -13,7 +44,8 @@
     filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
 }
 
-/* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
+/* For lines and paths, use grid units for stroke-width so the halo is always
+   significantly wider than the actual element it highlights. */
 .nad-action-target path,
 .nad-action-target line,
 .nad-action-target polyline,
@@ -21,13 +53,14 @@
 .nad-action-target polygon {
     stroke: #fffb00 !important;
     stroke-width: 150px !important;
-    stroke-opacity: 0.3 !important;
+    stroke-opacity: 0.8 !important;
     fill: none !important;
     stroke-linecap: round !important;
     stroke-linejoin: round !important;
 }
 
-/* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
+/* For nodes (circles and rects), add a screen-space stroke to create a glowing
+   background halo that doesn't shrink into invisibility on large grids. */
 .nad-action-target circle,
 .nad-action-target rect {
     stroke: #ffe600 !important;
@@ -41,6 +74,15 @@
 /* Hide text and foreignObjects in the background clone to avoid messy overlays */
 .nad-action-target text,
 .nad-action-target foreignObject {
+    display: none !important;
+}
+
+/* Hide text on large grids at full zoom — revealed by removing this class.
+   display:none removes elements from layout entirely, so the browser
+   skips layout/paint for thousands of text nodes at initial load. */
+.svg-container.text-hidden foreignObject,
+.svg-container.text-hidden .nad-edge-infos,
+.svg-container.text-hidden .nad-text-edges {
     display: none !important;
 }
 
@@ -68,4 +110,121 @@
 .nad-delta-grey polyline {
     stroke: #999 !important;
     stroke-opacity: 0.4 !important;
+}
+
+/* ===== Voltage Range Slider (vertical, right sidebar) ===== */
+.voltage-sidebar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 62px;
+    background: rgba(244, 244, 244, 0.92);
+    border-left: 1px solid #ccc;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    z-index: 15;
+    padding: 8px 0;
+    box-sizing: border-box;
+}
+
+.voltage-sidebar .vs-label {
+    font-size: 0.65rem;
+    font-weight: bold;
+    color: #2c3e50;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.voltage-sidebar .vs-range-label {
+    font-size: 0.6rem;
+    font-weight: bold;
+    color: #2c3e50;
+    background: #e8f0fe;
+    border-radius: 3px;
+    padding: 2px 4px;
+    margin-bottom: 6px;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.voltage-slider-container {
+    position: relative;
+    flex: 1;
+    width: 28px;
+    min-height: 0;
+}
+
+.voltage-slider-track {
+    position: absolute;
+    left: 12px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: #ddd;
+    border-radius: 2px;
+}
+
+.voltage-slider-range {
+    position: absolute;
+    left: 12px;
+    width: 4px;
+    background: #3498db;
+    border-radius: 2px;
+}
+
+.voltage-slider-container input[type=range] {
+    position: absolute;
+    left: 0;
+    width: 28px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    pointer-events: none;
+    margin: 0;
+    writing-mode: vertical-lr;
+    direction: rtl;
+}
+
+.voltage-slider-container input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: #3498db;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    pointer-events: all;
+}
+
+.voltage-slider-container input[type=range]::-moz-range-thumb {
+    height: 18px;
+    width: 18px;
+    border-radius: 50%;
+    background: #3498db;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    pointer-events: all;
+}
+
+.voltage-slider-ticks {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 28px;
+    width: 24px;
+}
+
+.voltage-slider-ticks span {
+    position: absolute;
+    font-size: 0.58rem;
+    color: #666;
+    white-space: nowrap;
+    transform: translateY(-50%);
+    left: 2px;
 }

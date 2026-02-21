@@ -4,7 +4,7 @@ import { api } from '../api';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
-    actionScores?: Record<string, any>;
+    actionScores?: Record<string, Record<string, unknown>>;
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
@@ -12,16 +12,8 @@ interface ActionFeedProps {
     onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
     actionViewMode: 'network' | 'delta';
     onViewModeChange: (mode: 'network' | 'delta') => void;
+    analysisLoading: boolean;
 }
-
-const formatRhoArray = (rho: number[] | null, lines: string[]): string => {
-    if (!rho || rho.length === 0) return '—';
-    return rho.map((val, i) => {
-        const pct = (val * 100).toFixed(1);
-        const name = lines[i] || `line ${i}`;
-        return `${name}: ${pct}%`;
-    }).join(', ');
-};
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
     actions,
@@ -33,6 +25,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     onManualActionAdded,
     actionViewMode,
     onViewModeChange,
+    analysisLoading,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -44,21 +37,25 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     // Fetch available actions when search is opened
-    useEffect(() => {
-        if (searchOpen && availableActions.length === 0 && !loadingActions) {
+    const handleOpenSearch = async () => {
+        if (searchOpen) { setSearchOpen(false); return; }
+        setSearchOpen(true);
+        setSearchQuery('');
+        setError(null);
+        if (availableActions.length === 0) {
             setLoadingActions(true);
-            api.getAvailableActions()
-                .then(setAvailableActions)
-                .catch((e) => {
-                    console.error('Failed to fetch actions:', e);
-                    setError('Failed to load actions list');
-                })
-                .finally(() => setLoadingActions(false));
+            try {
+                const list = await api.getAvailableActions();
+                setAvailableActions(list);
+            } catch (e) {
+                console.error('Failed to fetch actions:', e);
+                setError('Failed to load actions list');
+            } finally {
+                setLoadingActions(false);
+            }
         }
-        if (searchOpen) {
-            setTimeout(() => searchInputRef.current?.focus(), 50);
-        }
-    }, [searchOpen]);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+    };
 
     // Filter actions for dropdown
     const filteredActions = useMemo(() => {
@@ -124,22 +121,82 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             onManualActionAdded(actionId, detail);
             setSearchOpen(false);
             setSearchQuery('');
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error('Simulation failed:', e);
-            setError(e?.response?.data?.detail || 'Simulation failed');
+            const err = e as { response?: { data?: { detail?: string } } };
+            setError(err?.response?.data?.detail || 'Simulation failed');
         } finally {
             setSimulating(null);
         }
     };
 
+    const formatRho = (arr: number[] | null): string => {
+        if (!arr || arr.length === 0) return '\u2014';
+        return arr.map((v, i) => `${linesOverloaded[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
+    };
+
+    // Sort actions by max_rho ascending (matching standalone)
+    const sortedActionEntries = useMemo(() => {
+        return Object.entries(actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
+    }, [actions]);
+
     return (
-        <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
+        <div style={{ padding: '15px', height: '100%', overflowY: 'auto' }}>
+            {/* View mode toggle - always visible (matching standalone) */}
+            <div style={{
+                marginBottom: '10px',
+                padding: '6px 10px',
+                backgroundColor: '#f8f9fa',
+                border: '1px solid #dee2e6',
+                borderRadius: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+            }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
+                <div style={{
+                    display: 'flex',
+                    borderRadius: '6px',
+                    overflow: 'hidden',
+                    border: '1px solid #ccc',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                }}>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onViewModeChange('network'); }}
+                        style={{
+                            padding: '3px 10px',
+                            border: 'none',
+                            cursor: 'pointer',
+                            backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                            color: actionViewMode === 'network' ? '#fff' : '#555',
+                            transition: 'all 0.15s ease',
+                        }}
+                    >
+                        Flows
+                    </button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onViewModeChange('delta'); }}
+                        style={{
+                            padding: '3px 10px',
+                            border: 'none',
+                            borderLeft: '1px solid #ccc',
+                            cursor: 'pointer',
+                            backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                            color: actionViewMode === 'delta' ? '#fff' : '#555',
+                            transition: 'all 0.15s ease',
+                        }}
+                    >
+                        {'\u0394'} Flows
+                    </button>
+                </div>
+            </div>
+
             {/* Header with search */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', position: 'relative' }}>
-                <h3 style={{ margin: 0, flex: 1 }}>Prioritized Actions</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
+                <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
                 <button
-                    onClick={() => setSearchOpen(!searchOpen)}
-                    title="Add an action from dictionary"
+                    onClick={handleOpenSearch}
                     style={{
                         background: searchOpen ? '#007bff' : '#e9ecef',
                         color: searchOpen ? 'white' : '#333',
@@ -147,9 +204,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         borderRadius: '6px',
                         padding: '4px 10px',
                         cursor: 'pointer',
-                        fontSize: '0.85rem',
+                        fontSize: '13px',
                         fontWeight: 600,
-                        transition: 'all 0.15s ease',
                     }}
                 >
                     + Add
@@ -173,7 +229,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                             overflow: 'hidden',
                         }}
                     >
-                        <div style={{ padding: '0.5rem' }}>
+                        <div style={{ padding: '8px' }}>
                             <input
                                 ref={searchInputRef}
                                 type="text"
@@ -185,15 +241,15 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     padding: '6px 10px',
                                     border: '1px solid #ccc',
                                     borderRadius: '4px',
-                                    fontSize: '0.85rem',
+                                    fontSize: '13px',
                                     boxSizing: 'border-box',
                                 }}
                             />
                         </div>
                         {error && (
                             <div style={{
-                                padding: '0.5rem',
-                                fontSize: '0.8rem',
+                                padding: '6px 8px',
+                                fontSize: '12px',
                                 color: '#dc3545',
                                 borderTop: '1px solid #eee',
                             }}>
@@ -202,15 +258,15 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         )}
                         <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
                             {loadingActions ? (
-                                <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
                                     Loading actions...
                                 </div>
                             ) : (
                                 <>
                                     {/* Action Scores Table */}
                                     {scoredActionsList.length > 0 && !searchQuery && (
-                                        <div style={{ padding: '0 0.5rem', marginBottom: '0.5rem' }}>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
+                                        <div style={{ padding: '0 8px', marginBottom: '8px' }}>
+                                            <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
                                                 Scored Actions
                                             </div>
                                             <style>{`
@@ -218,26 +274,26 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 .score-param-tooltip .tooltip-text {
                                                     visibility: hidden; background-color: #343a40; color: #fff; text-align: left; border-radius: 4px;
                                                     padding: 6px 8px; position: absolute; z-index: 1000; top: 100%; right: 0; margin-top: 5px; opacity: 0;
-                                                    transition: opacity 0.2s; font-size: 0.65rem; font-weight: normal; white-space: nowrap;
+                                                    transition: opacity 0.2s; font-size: 10px; font-weight: normal; white-space: nowrap;
                                                     box-shadow: 0 2px 5px rgba(0,0,0,0.3); text-transform: none; line-height: 1.4;
                                                 }
                                                 .score-param-tooltip.left-align .tooltip-text { right: auto; left: 0; }
                                                 .score-param-tooltip:hover .tooltip-text { visibility: visible; opacity: 1; }
                                             `}</style>
                                             {Array.from(new Set(scoredActionsList.map(item => item.type))).map(type => {
-                                                const typeData = actionScores?.[type] || {};
+                                                const typeData = (actionScores?.[type] || {}) as { scores?: Record<string, number>; params?: Record<string, Record<string, unknown>> };
                                                 const scoresKeys = Object.keys(typeData.scores || {});
                                                 const paramsKeys = Object.keys(typeData.params || {});
-                                                const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some(k => scoresKeys.includes(k));
+                                                const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some((k: string) => scoresKeys.includes(k));
                                                 const globalParams = isPerActionParams ? null : (paramsKeys.length > 0 ? typeData.params : null);
 
                                                 return (
                                                     <div key={type} style={{ marginBottom: '8px' }}>
-                                                        <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                        <div style={{ fontSize: '11px', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                             <span>{type.replace('_', ' ').toUpperCase()}</span>
                                                             {globalParams && (
                                                                 <div className="score-param-tooltip">
-                                                                    <span style={{ color: '#6c757d', fontSize: '0.8rem' }}>ⓘ</span>
+                                                                    <span style={{ color: '#6c757d', fontSize: '12px' }}>i</span>
                                                                     <div className="tooltip-text">
                                                                         <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Scoring Parameters</div>
                                                                         {Object.entries(globalParams).map(([k, v]) => (
@@ -249,7 +305,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                 </div>
                                                             )}
                                                         </div>
-                                                        <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
+                                                        <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
                                                             <thead>
                                                                 <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
                                                                     <th style={{ textAlign: 'left', padding: '4px 6px', width: '70%' }}>Action</th>
@@ -271,13 +327,13 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                             }}>
                                                                             <td style={{ padding: '4px 6px', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
                                                                                 {item.actionId}
-                                                                                {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '1px 4px', borderRadius: '4px', fontSize: '0.65rem', opacity: 0.8 }}>computed</span>}
-                                                                                {isPerActionParams && typeData.params[item.actionId] && (
+                                                                                {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px', opacity: 0.8 }}>computed</span>}
+                                                                                {isPerActionParams && typeData.params?.[item.actionId] && (
                                                                                     <div className="score-param-tooltip left-align" onClick={(e) => e.stopPropagation()}>
-                                                                                        <span style={{ color: '#6c757d', fontSize: '0.8rem' }}>ⓘ</span>
+                                                                                        <span style={{ color: '#6c757d', fontSize: '12px' }}>i</span>
                                                                                         <div className="tooltip-text">
                                                                                             <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
-                                                                                            {Object.entries(typeData.params[item.actionId]).map(([k, v]) => (
+                                                                                            {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
                                                                                                 <div key={k}>
                                                                                                     <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
                                                                                                 </div>
@@ -302,12 +358,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
                                     {/* Search Results */}
                                     {(!searchQuery && scoredActionsList.length === 0 && filteredActions.length === 0) && (
-                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                        <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
                                             All actions already added
                                         </div>
                                     )}
                                     {(searchQuery && filteredActions.length === 0) && (
-                                        <div style={{ padding: '0.75rem', textAlign: 'center', color: '#888', fontSize: '0.85rem' }}>
+                                        <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
                                             No matching actions
                                         </div>
                                     )}
@@ -316,21 +372,20 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             key={a.id}
                                             onClick={() => handleAddAction(a.id)}
                                             style={{
-                                                padding: '0.5rem 0.75rem',
+                                                padding: '6px 10px',
                                                 cursor: simulating ? 'wait' : 'pointer',
                                                 borderTop: '1px solid #eee',
                                                 backgroundColor: simulating === a.id ? '#e7f1ff' : 'transparent',
                                                 opacity: simulating && simulating !== a.id ? 0.5 : 1,
-                                                transition: 'background-color 0.1s ease',
                                             }}
                                             onMouseEnter={(e) => { if (!simulating) (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f0f0f0'; }}
                                             onMouseLeave={(e) => { if (simulating !== a.id) (e.currentTarget as HTMLDivElement).style.backgroundColor = 'transparent'; }}
                                         >
-                                            <div style={{ fontWeight: 600, fontSize: '0.82rem', color: '#333' }}>
-                                                {simulating === a.id ? '⏳ Simulating...' : a.id}
+                                            <div style={{ fontWeight: 600, fontSize: '12px', color: '#333' }}>
+                                                {simulating === a.id ? 'Simulating...' : a.id}
                                             </div>
                                             {a.description && (
-                                                <div style={{ fontSize: '0.78rem', color: '#777', marginTop: '2px' }}>
+                                                <div style={{ fontSize: '11px', color: '#777', marginTop: '2px' }}>
                                                     {a.description}
                                                 </div>
                                             )}
@@ -345,165 +400,75 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
             {linesOverloaded.length > 0 && (
                 <div style={{
-                    marginBottom: '1rem',
-                    padding: '0.5rem 0.75rem',
-                    backgroundColor: '#fff3cd',
+                    marginBottom: '10px',
+                    padding: '6px 10px',
+                    background: '#fff3cd',
                     border: '1px solid #ffc107',
                     borderRadius: '6px',
-                    fontSize: '0.85rem',
+                    fontSize: '13px',
                 }}>
-                    <strong>Overloaded lines:</strong>{' '}
-                    {linesOverloaded.join(', ')}
+                    <strong>Overloaded lines:</strong> {linesOverloaded.join(', ')}
                 </div>
             )}
 
-            {/* View mode toggle - only visible when an action is selected */}
-            {selectedActionId && (
-                <div style={{
-                    marginBottom: '1rem',
-                    padding: '0.5rem 0.75rem',
-                    backgroundColor: '#f8f9fa',
-                    border: '1px solid #dee2e6',
-                    borderRadius: '6px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#555' }}>View:</span>
-                    <div
-                        style={{
-                            display: 'flex',
-                            borderRadius: '6px',
-                            overflow: 'hidden',
-                            border: '1px solid #ccc',
-                            fontSize: '0.78rem',
-                            fontWeight: 600,
-                        }}
-                    >
-                        <button
-                            onClick={() => onViewModeChange('network')}
-                            style={{
-                                padding: '4px 12px',
-                                border: 'none',
-                                cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'network' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease',
-                            }}
-                        >
-                            Flows
-                        </button>
-                        <button
-                            onClick={() => onViewModeChange('delta')}
-                            style={{
-                                padding: '4px 12px',
-                                border: 'none',
-                                borderLeft: '1px solid #ccc',
-                                cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'delta' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease',
-                            }}
-                        >
-                            Δ Flows
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {Object.entries(actions).length === 0 ? (
-                <div style={{ color: '#666', fontStyle: 'italic' }}>No actions found.</div>
-            ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {Object.entries(actions).map(([id, detail], index) => {
-                        const maxRhoPct = detail.max_rho != null ? (detail.max_rho * 100).toFixed(1) : null;
-                        const severity = detail.max_rho != null
-                            ? (detail.max_rho > 1.0 ? 'red' : detail.max_rho > 0.9 ? 'orange' : 'green')
-                            : (detail.is_rho_reduction ? 'green' : 'red');
-                        const severityMap = {
-                            green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
-                            orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
-                            red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: detail.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
-                        };
-                        const sc = severityMap[severity];
-                        const isSelected = selectedActionId === id;
-
-                        return (
-                            <div
-                                key={id}
-                                onClick={() => onActionSelect(isSelected ? null : id)}
-                                style={{
-                                    padding: '1rem',
-                                    border: `1px solid ${isSelected ? '#007bff' : sc.border}`,
-                                    borderLeft: `4px solid ${isSelected ? '#007bff' : sc.border}`,
-                                    borderRadius: '8px',
-                                    backgroundColor: isSelected ? '#e7f1ff' : 'white',
-                                    boxShadow: isSelected
-                                        ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)'
-                                        : '0 2px 4px rgba(0,0,0,0.1)',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease',
-                                }}
-                            >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                    <h4 style={{ margin: 0, fontSize: '0.95rem', color: isSelected ? '#0056b3' : '#333' }}>
-                                        #{index + 1} — {id}
-                                    </h4>
-                                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                        {isSelected && (
-                                            <span style={{
-                                                fontSize: '0.7rem',
-                                                fontWeight: 600,
-                                                padding: '2px 6px',
-                                                borderRadius: '4px',
-                                                backgroundColor: '#007bff',
-                                                color: 'white',
-                                            }}>
-                                                VIEWING
-                                            </span>
-                                        )}
-                                        <span style={{
-                                            fontSize: '0.75rem',
-                                            fontWeight: 600,
-                                            padding: '2px 8px',
-                                            borderRadius: '12px',
-                                            backgroundColor: sc.badgeBg,
-                                            color: sc.badgeText,
-                                        }}>
-                                            {sc.label}
+            {sortedActionEntries.length > 0 ? (
+                sortedActionEntries.map(([id, details], index) => {
+                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+                    const severity = details.max_rho != null
+                        ? (details.max_rho > 1.0 ? 'red' as const : details.max_rho > 0.9 ? 'orange' as const : 'green' as const)
+                        : (details.is_rho_reduction ? 'green' as const : 'red' as const);
+                    const severityColors = {
+                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved \u2014 low margin' },
+                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
+                    };
+                    const sc = severityColors[severity];
+                    const isSelected = selectedActionId === id;
+                    return (
+                        <div key={id} style={{
+                            background: isSelected ? '#e7f1ff' : 'white',
+                            border: '1px solid #ddd',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            marginBottom: '10px',
+                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                            borderLeft: `5px solid ${isSelected ? '#007bff' : sc.border}`,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                        }} onClick={() => onActionSelect(id)}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h4 style={{ margin: 0, fontSize: '14px', color: isSelected ? '#0056b3' : undefined }}>
+                                    #{index + 1} {'\u2014'} {id}
+                                </h4>
+                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                    {isSelected && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                            VIEWING
                                         </span>
-                                    </div>
-                                </div>
-
-                                <p style={{ margin: '0.25rem 0 0.75rem', fontSize: '0.9rem', color: '#555' }}>
-                                    {detail.description_unitaire}
-                                </p>
-
-                                <div style={{ fontSize: '0.82rem', lineHeight: 1.6, color: '#444' }}>
-                                    <div>
-                                        <strong>Rho before:</strong>{' '}
-                                        {formatRhoArray(detail.rho_before, linesOverloaded)}
-                                    </div>
-                                    <div>
-                                        <strong>Rho after:</strong>{' '}
-                                        {formatRhoArray(detail.rho_after, linesOverloaded)}
-                                    </div>
-                                    {maxRhoPct != null && (
-                                        <div style={{ marginTop: '0.25rem' }}>
-                                            <strong>Max rho:</strong>{' '}
-                                            <span style={{ color: sc.border, fontWeight: 600 }}>
-                                                {maxRhoPct}%
-                                            </span>
-                                            {detail.max_rho_line && (
-                                                <span style={{ color: '#888' }}> on {detail.max_rho_line}</span>
-                                            )}
-                                        </div>
                                     )}
+                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                        {sc.label}
+                                    </span>
                                 </div>
                             </div>
-                        );
-                    })}
-                </div>
+                            <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
+                                <div>Rho before: {formatRho(details.rho_before)}</div>
+                                <div>Rho after: {formatRho(details.rho_after)}</div>
+                                {maxRhoPct != null && (
+                                    <div style={{ marginTop: '3px' }}>
+                                        Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                        {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })
+            ) : (
+                <p style={{ color: '#666', fontStyle: 'italic' }}>
+                    {analysisLoading ? 'Processing...' : 'No actions available.'}
+                </p>
             )}
         </div>
     );
