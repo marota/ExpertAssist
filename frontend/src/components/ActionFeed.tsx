@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail } from '../types';
+import type { ActionDetail, NodeMeta, EdgeMeta } from '../types';
 import { api } from '../api';
+import { getActionTargetVoltageLevel, getActionTargetLines } from '../utils/svgUtils';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
@@ -8,7 +9,9 @@ interface ActionFeedProps {
     linesOverloaded: string[];
     selectedActionId: string | null;
     onActionSelect: (actionId: string | null) => void;
-    onAssetClick: (actionId: string, assetName: string) => void;
+    onAssetClick: (actionId: string, assetName: string, tab?: 'action' | 'n-1') => void;
+    nodesByEquipmentId: Map<string, NodeMeta> | null;
+    edgesByEquipmentId: Map<string, EdgeMeta> | null;
     disconnectedElement: string | null;
     onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
     actionViewMode: 'network' | 'delta';
@@ -23,6 +26,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     selectedActionId,
     onActionSelect,
     onAssetClick,
+    nodesByEquipmentId,
+    edgesByEquipmentId,
     disconnectedElement,
     onManualActionAdded,
     actionViewMode,
@@ -143,7 +148,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         textDecoration: 'underline dotted',
     };
 
-    const renderRho = (arr: number[] | null, actionId: string): React.ReactNode => {
+    const renderRho = (arr: number[] | null, actionId: string, tab: 'action' | 'n-1' = 'action'): React.ReactNode => {
         if (!arr || arr.length === 0) return '\u2014';
         return arr.map((v, i) => {
             const lineName = linesOverloaded[i] || `line ${i}`;
@@ -153,7 +158,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     <button
                         style={clickableLinkStyle}
                         title={`Zoom to ${lineName}`}
-                        onClick={(e) => { e.stopPropagation(); onAssetClick(actionId, lineName); }}
+                        onClick={(e) => { e.stopPropagation(); onAssetClick(actionId, lineName, tab); }}
                     >{lineName}</button>
                     {`: ${(v * 100).toFixed(1)}%`}
                 </React.Fragment>
@@ -479,8 +484,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                             </div>
                             <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
                             <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                <div>Rho before: {renderRho(details.rho_before, id)}</div>
-                                <div>Rho after: {renderRho(details.rho_after, id)}</div>
+                                <div>Rho before: {renderRho(details.rho_before, id, 'n-1')}</div>
+                                <div>Rho after: {renderRho(details.rho_after, id, 'action')}</div>
                                 {maxRhoPct != null && (
                                     <div style={{ marginTop: '3px' }}>
                                         Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
@@ -488,53 +493,43 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             <span style={{ color: '#888' }}> on <button
                                                 style={{ ...clickableLinkStyle, color: '#888' }}
                                                 title={`Zoom to ${details.max_rho_line}`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, details.max_rho_line); }}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, details.max_rho_line, 'action'); }}
                                             >{details.max_rho_line}</button></span>
                                         )}
                                     </div>
                                 )}
                             </div>
                             {(() => {
-                                const topo = details.action_topology;
-                                if (!topo) return null;
-                                const lineNames = Array.from(new Set([
-                                    ...Object.keys(topo.lines_ex_bus || {}),
-                                    ...Object.keys(topo.lines_or_bus || {}),
-                                ]));
-                                const genNames = Object.keys(topo.gens_bus || {});
-                                const loadNames = Object.keys(topo.loads_bus || {});
-                                if (lineNames.length === 0 && genNames.length === 0 && loadNames.length === 0) return null;
-                                const badgeStyle = (type: 'line' | 'gen' | 'load') => ({
-                                    padding: '2px 7px',
-                                    borderRadius: '4px',
-                                    border: 'none',
-                                    cursor: 'pointer',
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                    backgroundColor: type === 'line' ? '#dbeafe' : type === 'gen' ? '#fef3c7' : '#ede9fe',
-                                    color: type === 'line' ? '#1e40af' : type === 'gen' ? '#92400e' : '#5b21b6',
-                                    textDecoration: 'underline dotted',
-                                });
+                                // Mirror applyActionTargetHighlights: VL first (node actions), then lines
+                                const vlName = nodesByEquipmentId
+                                    ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
+                                    : null;
+                                if (vlName) {
+                                    return (
+                                        <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                            <button
+                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted' }}
+                                                title={`Zoom to voltage level ${vlName} in action visualization`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, vlName, 'action'); }}>
+                                                {vlName}
+                                            </button>
+                                        </div>
+                                    );
+                                }
+                                const lineNames = edgesByEquipmentId
+                                    ? getActionTargetLines(details, id, edgesByEquipmentId)
+                                    : Array.from(new Set([
+                                        ...Object.keys(details.action_topology?.lines_ex_bus || {}),
+                                        ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                    ]));
+                                if (lineNames.length === 0) return null;
                                 return (
                                     <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                                         {lineNames.map(name => (
-                                            <button key={name} style={badgeStyle('line')}
+                                            <button key={name}
+                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#dbeafe', color: '#1e40af', textDecoration: 'underline dotted' }}
                                                 title={`Zoom to line ${name} in action visualization`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
-                                                {name}
-                                            </button>
-                                        ))}
-                                        {genNames.map(name => (
-                                            <button key={name} style={badgeStyle('gen')}
-                                                title={`Zoom to generator ${name} in action visualization`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
-                                                {name}
-                                            </button>
-                                        ))}
-                                        {loadNames.map(name => (
-                                            <button key={name} style={badgeStyle('load')}
-                                                title={`Zoom to load ${name} in action visualization`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name); }}>
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
                                                 {name}
                                             </button>
                                         ))}

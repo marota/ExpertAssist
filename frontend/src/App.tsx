@@ -251,15 +251,16 @@ function App() {
     setActionViewMode(mode);
   }, []);
 
-  // ===== Asset Click (from action card badges) =====
-  const handleAssetClick = useCallback((actionId: string, assetName: string) => {
-    // Fill the inspect field so the header shows it and zoom is consistent
+  // ===== Asset Click (from action card badges / rho line names) =====
+  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n-1' = 'action') => {
     setInspectQuery(assetName);
-    if (actionId !== selectedActionId) {
-      // Select the action; the zoom effect fires once its diagram loads
+    if (tab === 'n-1') {
+      // Rho-before lines live in the N-1 (post-contingency) view
+      setActiveTab('n-1');
+    } else if (actionId !== selectedActionId) {
+      // Select the action; zoom fires once its diagram loads
       handleActionSelect(actionId);
     } else {
-      // Action already selected — just ensure we're on the action tab
       setActiveTab('action');
     }
   }, [selectedActionId, handleActionSelect]);
@@ -576,6 +577,8 @@ function App() {
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}
             onAssetClick={handleAssetClick}
+            nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
+            edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
             disconnectedElement={selectedBranch || null}
             onManualActionAdded={handleManualActionAdded}
             actionViewMode={actionViewMode}
