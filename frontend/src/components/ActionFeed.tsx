@@ -132,9 +132,33 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         }
     };
 
-    const formatRho = (arr: number[] | null): string => {
+    const clickableLinkStyle: React.CSSProperties = {
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        padding: 0,
+        fontSize: 'inherit',
+        color: '#1e40af',
+        fontWeight: 600,
+        textDecoration: 'underline dotted',
+    };
+
+    const renderRho = (arr: number[] | null, actionId: string): React.ReactNode => {
         if (!arr || arr.length === 0) return '\u2014';
-        return arr.map((v, i) => `${linesOverloaded[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
+        return arr.map((v, i) => {
+            const lineName = linesOverloaded[i] || `line ${i}`;
+            return (
+                <React.Fragment key={i}>
+                    {i > 0 && ', '}
+                    <button
+                        style={clickableLinkStyle}
+                        title={`Zoom to ${lineName}`}
+                        onClick={(e) => { e.stopPropagation(); onAssetClick(actionId, lineName); }}
+                    >{lineName}</button>
+                    {`: ${(v * 100).toFixed(1)}%`}
+                </React.Fragment>
+            );
+        });
     };
 
     // Sort actions by max_rho ascending (matching standalone)
@@ -455,12 +479,18 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                             </div>
                             <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
                             <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                <div>Rho before: {formatRho(details.rho_before)}</div>
-                                <div>Rho after: {formatRho(details.rho_after)}</div>
+                                <div>Rho before: {renderRho(details.rho_before, id)}</div>
+                                <div>Rho after: {renderRho(details.rho_after, id)}</div>
                                 {maxRhoPct != null && (
                                     <div style={{ marginTop: '3px' }}>
                                         Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                        {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                        {details.max_rho_line && (
+                                            <span style={{ color: '#888' }}> on <button
+                                                style={{ ...clickableLinkStyle, color: '#888' }}
+                                                title={`Zoom to ${details.max_rho_line}`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, details.max_rho_line); }}
+                                            >{details.max_rho_line}</button></span>
+                                        )}
                                     </div>
                                 )}
                             </div>
