@@ -482,7 +482,43 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     </span>
                                 </div>
                             </div>
-                            <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
+                                <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
+                                {(() => {
+                                    const vlName = nodesByEquipmentId
+                                        ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
+                                        : null;
+                                    if (vlName) {
+                                        return (
+                                            <button
+                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted', flexShrink: 0 }}
+                                                title={`Zoom to voltage level ${vlName} in action visualization`}
+                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, vlName, 'action'); }}>
+                                                {vlName}
+                                            </button>
+                                        );
+                                    }
+                                    const lineNames = edgesByEquipmentId
+                                        ? getActionTargetLines(details, id, edgesByEquipmentId)
+                                        : Array.from(new Set([
+                                            ...Object.keys(details.action_topology?.lines_ex_bus || {}),
+                                            ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                        ]));
+                                    if (lineNames.length === 0) return null;
+                                    return (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                            {lineNames.map(name => (
+                                                <button key={name}
+                                                    style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#dbeafe', color: '#1e40af', textDecoration: 'underline dotted' }}
+                                                    title={`Zoom to line ${name} in action visualization`}
+                                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
+                                                    {name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
+                            </div>
                             <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
                                 <div>Rho before: {renderRho(details.rho_before, id, 'n-1')}</div>
                                 <div>Rho after: {renderRho(details.rho_after, id, 'action')}</div>
@@ -499,43 +535,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     </div>
                                 )}
                             </div>
-                            {(() => {
-                                // Mirror applyActionTargetHighlights: VL first (node actions), then lines
-                                const vlName = nodesByEquipmentId
-                                    ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
-                                    : null;
-                                if (vlName) {
-                                    return (
-                                        <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                            <button
-                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted' }}
-                                                title={`Zoom to voltage level ${vlName} in action visualization`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, vlName, 'action'); }}>
-                                                {vlName}
-                                            </button>
-                                        </div>
-                                    );
-                                }
-                                const lineNames = edgesByEquipmentId
-                                    ? getActionTargetLines(details, id, edgesByEquipmentId)
-                                    : Array.from(new Set([
-                                        ...Object.keys(details.action_topology?.lines_ex_bus || {}),
-                                        ...Object.keys(details.action_topology?.lines_or_bus || {}),
-                                    ]));
-                                if (lineNames.length === 0) return null;
-                                return (
-                                    <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                                        {lineNames.map(name => (
-                                            <button key={name}
-                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#dbeafe', color: '#1e40af', textDecoration: 'underline dotted' }}
-                                                title={`Zoom to line ${name} in action visualization`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
-                                                {name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                );
-                            })()}
                         </div>
                     );
                 })
