@@ -42,6 +42,13 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [error, setError] = useState<string | null>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
+
+    const showTooltip = (e: React.MouseEvent, content: React.ReactNode) => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        setTooltip({ content, x: rect.left, y: rect.bottom + 5 });
+    };
+    const hideTooltip = () => setTooltip(null);
 
     // Fetch available actions when search is opened
     const handleOpenSearch = async () => {
@@ -300,17 +307,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             <div style={{ fontSize: '12px', fontWeight: 600, color: '#555', marginBottom: '4px' }}>
                                                 Scored Actions
                                             </div>
-                                            <style>{`
-                                                .score-param-tooltip { position: relative; display: inline-flex; align-items: center; cursor: help; margin-left: 6px; }
-                                                .score-param-tooltip .tooltip-text {
-                                                    visibility: hidden; background-color: #343a40; color: #fff; text-align: left; border-radius: 4px;
-                                                    padding: 6px 8px; position: absolute; z-index: 1000; top: 100%; right: 0; margin-top: 5px; opacity: 0;
-                                                    transition: opacity 0.2s; font-size: 10px; font-weight: normal; white-space: nowrap;
-                                                    box-shadow: 0 2px 5px rgba(0,0,0,0.3); text-transform: none; line-height: 1.4;
-                                                }
-                                                .score-param-tooltip.left-align .tooltip-text { right: auto; left: 0; }
-                                                .score-param-tooltip:hover .tooltip-text { visibility: visible; opacity: 1; }
-                                            `}</style>
                                             {Array.from(new Set(scoredActionsList.map(item => item.type))).map(type => {
                                                 const typeData = (actionScores?.[type] || {}) as { scores?: Record<string, number>; params?: Record<string, Record<string, unknown>> };
                                                 const scoresKeys = Object.keys(typeData.scores || {});
@@ -323,17 +319,20 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                             <span>{type.replace('_', ' ').toUpperCase()}</span>
                                                             {globalParams && (
-                                                                <div className="score-param-tooltip">
-                                                                    <span style={{ color: '#6c757d', fontSize: '12px' }}>i</span>
-                                                                    <div className="tooltip-text">
-                                                                        <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Scoring Parameters</div>
-                                                                        {Object.entries(globalParams).map(([k, v]) => (
-                                                                            <div key={k}>
-                                                                                <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                                                                            </div>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
+                                                                <span
+                                                                    style={{ color: '#6c757d', fontSize: '12px', cursor: 'help', marginLeft: '6px' }}
+                                                                    onMouseEnter={(e) => showTooltip(e, (
+                                                                        <>
+                                                                            <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Scoring Parameters</div>
+                                                                            {Object.entries(globalParams).map(([k, v]) => (
+                                                                                <div key={k}>
+                                                                                    <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                                                                </div>
+                                                                            ))}
+                                                                        </>
+                                                                    ))}
+                                                                    onMouseLeave={hideTooltip}
+                                                                >i</span>
                                                             )}
                                                         </div>
                                                         <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
@@ -360,17 +359,21 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                 {item.actionId}
                                                                                 {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px', opacity: 0.8 }}>computed</span>}
                                                                                 {isPerActionParams && typeData.params?.[item.actionId] && (
-                                                                                    <div className="score-param-tooltip left-align" onClick={(e) => e.stopPropagation()}>
-                                                                                        <span style={{ color: '#6c757d', fontSize: '12px' }}>i</span>
-                                                                                        <div className="tooltip-text">
-                                                                                            <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
-                                                                                            {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
-                                                                                                <div key={k}>
-                                                                                                    <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                                                                                                </div>
-                                                                                            ))}
-                                                                                        </div>
-                                                                                    </div>
+                                                                                    <span
+                                                                                        style={{ color: '#6c757d', fontSize: '12px', cursor: 'help', marginLeft: '6px' }}
+                                                                                        onClick={(e) => e.stopPropagation()}
+                                                                                        onMouseEnter={(e) => showTooltip(e, (
+                                                                                            <>
+                                                                                                <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
+                                                                                                {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
+                                                                                                    <div key={k}>
+                                                                                                        <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
+                                                                                                    </div>
+                                                                                                ))}
+                                                                                            </>
+                                                                                        ))}
+                                                                                        onMouseLeave={hideTooltip}
+                                                                                    >i</span>
                                                                                 )}
                                                                             </td>
                                                                             <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
@@ -545,6 +548,30 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 <p style={{ color: '#666', fontStyle: 'italic' }}>
                     {analysisLoading ? 'Processing...' : 'No actions available.'}
                 </p>
+            )}
+
+            {/* Fixed-position tooltip rendered outside any overflow context */}
+            {tooltip && (
+                <div style={{
+                    position: 'fixed',
+                    top: tooltip.y,
+                    left: tooltip.x,
+                    zIndex: 99999,
+                    backgroundColor: '#343a40',
+                    color: '#fff',
+                    textAlign: 'left',
+                    borderRadius: '4px',
+                    padding: '6px 8px',
+                    fontSize: '10px',
+                    fontWeight: 'normal',
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                    lineHeight: 1.4,
+                    pointerEvents: 'none',
+                    maxWidth: '90vw',
+                }}>
+                    {tooltip.content}
+                </div>
             )}
         </div>
     );
