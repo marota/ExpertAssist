@@ -887,6 +887,9 @@
 
             // VL overlay popup: { vlName, actionId, svg, loading, error }
             const [vlOverlay, setVlOverlay] = useState(null);
+            const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
+            const vlOverlayRef = useRef(null);
+            const overlayBodyRef = useRef(null);
 
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
@@ -1120,6 +1123,7 @@
 
             // ===== VL Double-Click → Single Line Diagram overlay =====
             const handleVlDoubleClick = async (actionId, vlName) => {
+                setOverlayTransform({ scale: 1, tx: 0, ty: 0 });
                 setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
                 try {
                     const res = await axios.post(API_BASE + '/api/action-variant-sld', {
@@ -1137,6 +1141,64 @@
                         : null
                     );
                 }
+            };
+
+            // Wheel zoom on overlay body — must be non-passive to call preventDefault
+            useEffect(() => {
+                const el = overlayBodyRef.current;
+                if (!el) return;
+                const onWheel = (e) => {
+                    e.preventDefault();
+                    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                    const rect = el.getBoundingClientRect();
+                    const cx = e.clientX - rect.left;
+                    const cy = e.clientY - rect.top;
+                    setOverlayTransform(prev => {
+                        const s = Math.max(0.1, Math.min(10, prev.scale * factor));
+                        return {
+                            scale: s,
+                            tx: cx - (cx - prev.tx) * (s / prev.scale),
+                            ty: cy - (cy - prev.ty) * (s / prev.scale),
+                        };
+                    });
+                };
+                el.addEventListener('wheel', onWheel, { passive: false });
+                return () => el.removeEventListener('wheel', onWheel);
+            }, [vlOverlay]);
+
+            // Mouse pan inside overlay body
+            const startOverlayPan = (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const x0 = e.clientX, y0 = e.clientY;
+                const tx0 = overlayTransform.tx, ty0 = overlayTransform.ty;
+                const onMove = (ev) => setOverlayTransform(prev => ({
+                    ...prev, tx: tx0 + ev.clientX - x0, ty: ty0 + ev.clientY - y0,
+                }));
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            };
+
+            // Bottom-left resize handle drag
+            const startOverlayResize = (e) => {
+                e.preventDefault(); e.stopPropagation();
+                const x0 = e.clientX, y0 = e.clientY;
+                const w0 = vlOverlayRef.current.offsetWidth;
+                const h0 = vlOverlayRef.current.offsetHeight;
+                const onMove = (ev) => {
+                    vlOverlayRef.current.style.width  = Math.max(220, w0 + (x0 - ev.clientX)) + 'px';
+                    vlOverlayRef.current.style.height = Math.max(150, h0 + (ev.clientY - y0)) + 'px';
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             };
 
             // --- Manual Action Search Logic ---
@@ -1732,14 +1794,12 @@
 
                         {/* VL focused diagram overlay — appears in the bottom-right corner */}
                         {vlOverlay && (
-                            <div style={{
+                            <div ref={vlOverlayRef} style={{
                                 position: 'absolute',
                                 top: '16px',
                                 right: '80px', // leave room for the 62px-wide voltage sidebar
                                 width: '440px',
                                 height: '420px',
-                                minWidth: '220px',
-                                minHeight: '150px',
                                 background: 'white',
                                 border: '1px solid #ccc',
                                 borderRadius: '8px',
@@ -1748,8 +1808,6 @@
                                 display: 'flex',
                                 flexDirection: 'column',
                                 overflow: 'hidden',
-                                resize: 'both',
-                                boxSizing: 'border-box',
                             }}>
                                 {/* Header */}
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0 }}>
@@ -1761,10 +1819,12 @@
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
                                         title="Close">✕</button>
                                 </div>
-                                {/* Body — fills remaining height, scrollable */}
-                                <div className="vl-overlay-body" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+                                {/* Body — pan/zoom canvas */}
+                                <div ref={overlayBodyRef} className="vl-overlay-body"
+                                    style={{ flex: 1, overflow: 'hidden', minHeight: 0, cursor: 'grab', userSelect: 'none', position: 'relative' }}
+                                    onMouseDown={startOverlayPan}>
                                     {vlOverlay.loading && (
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', color: '#999', fontSize: '13px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: '13px' }}>
                                             Generating diagram…
                                         </div>
                                     )}
@@ -1772,8 +1832,22 @@
                                         <div style={{ padding: '12px', color: '#dc3545', fontSize: '12px' }}>{vlOverlay.error}</div>
                                     )}
                                     {vlOverlay.svg && (
-                                        <div style={{ padding: '4px' }} dangerouslySetInnerHTML={{ __html: vlOverlay.svg }} />
+                                        <div style={{
+                                            transformOrigin: '0 0',
+                                            transform: `translate(${overlayTransform.tx}px,${overlayTransform.ty}px) scale(${overlayTransform.scale})`,
+                                            padding: '4px',
+                                        }} dangerouslySetInnerHTML={{ __html: vlOverlay.svg }} />
                                     )}
+                                </div>
+                                {/* Bottom-left resize handle */}
+                                <div
+                                    style={{ position: 'absolute', bottom: 0, left: 0, width: '18px', height: '18px', cursor: 'sw-resize', zIndex: 1, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-start', padding: '3px', color: '#bbb', userSelect: 'none' }}
+                                    onMouseDown={startOverlayResize}
+                                    title="Resize">
+                                    <svg width="10" height="10" viewBox="0 0 10 10">
+                                        <line x1="1" y1="9" x2="9" y2="1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                                        <line x1="1" y1="6" x2="6" y2="1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                                    </svg>
                                 </div>
                             </div>
                         )}
