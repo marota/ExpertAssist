@@ -333,6 +333,12 @@
             transform: translateY(-50%);
             left: 2px;
         }
+        /* VL focused diagram overlay body — SVG scales to fit width */
+        .vl-overlay-body svg {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
     </style>
 </head>
 
@@ -879,6 +885,9 @@
             // Delta visualization mode
             const [actionViewMode, setActionViewMode] = useState('network'); // 'network' or 'delta'
 
+            // VL overlay popup: { vlName, actionId, svg, loading, error }
+            const [vlOverlay, setVlOverlay] = useState(null);
+
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
             // Independent Refs for N, N-1, and Action Variant
@@ -1106,6 +1115,28 @@
                     handleActionSelect(actionId);
                 } else {
                     setActiveTab('action');
+                }
+            };
+
+            // ===== VL Double-Click → focused post-action diagram overlay =====
+            const handleVlDoubleClick = async (actionId, vlName) => {
+                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
+                try {
+                    const res = await axios.post(API_BASE + '/api/action-variant-focused-diagram', {
+                        action_id: actionId,
+                        element_id: vlName,
+                        depth: 1,
+                    });
+                    setVlOverlay(prev =>
+                        prev && prev.vlName === vlName && prev.actionId === actionId
+                            ? { ...prev, svg: res.data.svg, loading: false }
+                            : prev
+                    );
+                } catch (err) {
+                    setVlOverlay(prev => prev
+                        ? { ...prev, loading: false, error: err?.response?.data?.detail || 'Failed to load diagram' }
+                        : null
+                    );
                 }
             };
 
@@ -1699,6 +1730,49 @@
                                 </div>
                             );
                         })()}
+
+                        {/* VL focused diagram overlay — appears in the bottom-right corner */}
+                        {vlOverlay && (
+                            <div style={{
+                                position: 'absolute',
+                                bottom: '16px',
+                                right: '80px', // leave room for the 62px-wide voltage sidebar
+                                width: '440px',
+                                background: 'white',
+                                border: '1px solid #ccc',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 24px rgba(0,0,0,0.22)',
+                                zIndex: 45,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                overflow: 'hidden',
+                            }}>
+                                {/* Header */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0 }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#065f46' }}>
+                                        {vlOverlay.vlName} — post-action diagram
+                                    </span>
+                                    <button
+                                        onClick={() => setVlOverlay(null)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
+                                        title="Close">✕</button>
+                                </div>
+                                {/* Body */}
+                                <div className="vl-overlay-body" style={{ overflow: 'auto', maxHeight: '360px' }}>
+                                    {vlOverlay.loading && (
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', color: '#999', fontSize: '13px' }}>
+                                            Generating diagram…
+                                        </div>
+                                    )}
+                                    {vlOverlay.error && (
+                                        <div style={{ padding: '12px', color: '#dc3545', fontSize: '12px' }}>{vlOverlay.error}</div>
+                                    )}
+                                    {vlOverlay.svg && (
+                                        <div style={{ padding: '4px' }} dangerouslySetInnerHTML={{ __html: vlOverlay.svg }} />
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             };
@@ -2084,8 +2158,9 @@
                                                         return (
                                                             <button
                                                                 style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted', flexShrink: 0 }}
-                                                                title={`Zoom to voltage level ${vlName} in action visualization`}
-                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, vlName, 'action'); }}>
+                                                                title={`Click: zoom to ${vlName} | Double-click: open focused diagram`}
+                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, vlName, 'action'); }}
+                                                                onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, vlName); }}>
                                                                 {vlName}
                                                             </button>
                                                         );
