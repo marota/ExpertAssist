@@ -232,6 +232,26 @@ def get_action_variant_focused_diagram(request: ActionVariantFocusedRequest):
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
+class ActionVariantSldRequest(BaseModel):
+    action_id: str
+    voltage_level_id: str
+
+@app.post("/api/action-variant-sld")
+def get_action_variant_sld(request: ActionVariantSldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the post-action network state."""
+    try:
+        diagram = recommender_service.get_action_variant_sld(
+            request.action_id,
+            request.voltage_level_id,
+        )
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/actions")
 def get_actions():
     """Return all available action IDs and descriptions from the loaded dictionary."""

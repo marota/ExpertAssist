@@ -1118,14 +1118,13 @@
                 }
             };
 
-            // ===== VL Double-Click → focused post-action diagram overlay =====
+            // ===== VL Double-Click → Single Line Diagram overlay =====
             const handleVlDoubleClick = async (actionId, vlName) => {
                 setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
                 try {
-                    const res = await axios.post(API_BASE + '/api/action-variant-focused-diagram', {
+                    const res = await axios.post(API_BASE + '/api/action-variant-sld', {
                         action_id: actionId,
-                        element_id: vlName,
-                        depth: 1,
+                        voltage_level_id: vlName,
                     });
                     setVlOverlay(prev =>
                         prev && prev.vlName === vlName && prev.actionId === actionId
