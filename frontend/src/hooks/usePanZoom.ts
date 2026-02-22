@@ -6,6 +6,13 @@ import type { ViewBox } from '../types';
  * Performance: viewBox updates go directly to the DOM via refs,
  * bypassing React's render cycle during active interaction.
  * React state is only synced on interaction end / pause.
+ *
+ * Optimizations over the baseline (PR #5):
+ * - Wheel zoom batched through rAF (was applying every event)
+ * - getScreenCTM() cached and reused within a zoom burst
+ * - Pointer-events disabled on SVG children during interaction
+ *   (eliminates expensive hit-testing on thousands of elements)
+ * - Text-visibility toggle uses hysteresis to avoid flicker
  */
 export const usePanZoom = (
     svgRef: RefObject<HTMLDivElement | null>,
@@ -27,19 +34,59 @@ export const usePanZoom = (
     // Original viewBox max dimension — used for relative text visibility threshold
     const initialMaxDimRef = useRef<number | null>(null);
 
+    // Cached getScreenCTM() — invalidated after each rAF viewBox apply
+    const ctmCacheRef = useRef<DOMMatrix | null>(null);
+
+    // Wheel zoom rAF batching: accumulate scale factor + last cursor position
+    const wheelRafId = useRef<number | null>(null);
+    const pendingWheelScale = useRef(1);
+    const pendingWheelCursor = useRef({ x: 0, y: 0 });
+
+    // Track whether text is currently hidden (for hysteresis)
+    const textHiddenRef = useRef(true);
+
+    // Text visibility thresholds (hysteresis to prevent flicker near boundary).
+    // Hide when zoomed out past 55%, show when zoomed in past 45%.
+    const TEXT_HIDE_RATIO = 0.55;
+    const TEXT_SHOW_RATIO = 0.45;
+
+    // Toggle interaction class on container to disable pointer-events on SVG children
+    const setInteracting = (interacting: boolean) => {
+        const container = svgRef.current;
+        if (container) {
+            container.classList.toggle('svg-interacting', interacting);
+        }
+    };
+
     // Direct DOM update — no React involved
     const applyViewBox = (vb: ViewBox | null) => {
         const svg = svgElRef.current;
         if (svg && vb) {
             svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
         }
-        // Toggle text visibility based on zoom level (large grids only).
-        // Show text when zoomed in to < 50% of original viewBox (2x+ zoom).
+        // Invalidate CTM cache after viewBox change
+        ctmCacheRef.current = null;
+
+        // Toggle text visibility with hysteresis (large grids only).
         const container = svgRef.current;
         if (container && vb && svg && svg.hasAttribute('data-large-grid')) {
             const origMax = initialMaxDimRef.current;
-            const shouldHide = !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5;
-            container.classList.toggle('text-hidden', shouldHide);
+            if (origMax) {
+                const ratio = Math.max(vb.w, vb.h) / origMax;
+                if (textHiddenRef.current && ratio < TEXT_SHOW_RATIO) {
+                    textHiddenRef.current = false;
+                    container.classList.remove('text-hidden');
+                } else if (!textHiddenRef.current && ratio >= TEXT_HIDE_RATIO) {
+                    textHiddenRef.current = true;
+                    container.classList.add('text-hidden');
+                }
+            } else {
+                // No origMax yet — default to hidden
+                if (!textHiddenRef.current) {
+                    textHiddenRef.current = true;
+                    container.classList.add('text-hidden');
+                }
+            }
         }
     };
 
@@ -59,7 +106,8 @@ export const usePanZoom = (
             if (svgElRef.current && svgElRef.current.hasAttribute('data-large-grid')) {
                 const vb = viewBoxRef.current;
                 const origMax = initialMaxDimRef.current;
-                if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5) {
+                if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= TEXT_SHOW_RATIO) {
+                    textHiddenRef.current = true;
                     svgRef.current.classList.add('text-hidden');
                 }
             }
@@ -73,6 +121,7 @@ export const usePanZoom = (
         if (initialViewBox) {
             viewBoxRef.current = initialViewBox;
             initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
+            textHiddenRef.current = true; // reset to hidden on new diagram
             applyViewBox(initialViewBox);
             setViewBox(initialViewBox);
         }
@@ -90,41 +139,74 @@ export const usePanZoom = (
             applyViewBox(viewBoxRef.current);
         }
 
+        // Get (or cache) the screen CTM
+        const getCTM = (): DOMMatrix | null => {
+            if (ctmCacheRef.current) return ctmCacheRef.current;
+            const svg = svgElRef.current;
+            if (!svg) return null;
+            const ctm = svg.getScreenCTM();
+            if (ctm) ctmCacheRef.current = ctm;
+            return ctm;
+        };
+
         const handleWheel = (e: WheelEvent) => {
             if (!activeRef.current || !viewBoxRef.current) return;
             e.preventDefault();
-            const vb = viewBoxRef.current;
+
+            // Accumulate scale factor (multiplicative) and record latest cursor
             const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9;
+            pendingWheelScale.current *= scaleFactor;
+            pendingWheelCursor.current = { x: e.clientX, y: e.clientY };
 
-            const svg = svgElRef.current;
-            if (!svg) return;
+            // Mark as interacting
+            setInteracting(true);
 
-            const pt = svg.createSVGPoint();
-            pt.x = e.clientX;
-            pt.y = e.clientY;
-            const ctm = svg.getScreenCTM();
-            if (!ctm) return;
-            const svgP = pt.matrixTransform(ctm.inverse());
+            // Schedule rAF if not already queued
+            if (!wheelRafId.current) {
+                // Snapshot the CTM before the rAF (while it's still valid)
+                const ctm = getCTM();
 
-            const newVb: ViewBox = {
-                x: vb.x + (svgP.x - vb.x) * (1 - scaleFactor),
-                y: vb.y + (svgP.y - vb.y) * (1 - scaleFactor),
-                w: vb.w * scaleFactor,
-                h: vb.h * scaleFactor,
-            };
+                wheelRafId.current = requestAnimationFrame(() => {
+                    wheelRafId.current = null;
 
-            viewBoxRef.current = newVb;
-            applyViewBox(newVb);
+                    const vb = viewBoxRef.current;
+                    const svg = svgElRef.current;
+                    if (!vb || !svg || !ctm) return;
+
+                    const accumulatedScale = pendingWheelScale.current;
+                    pendingWheelScale.current = 1; // reset accumulator
+
+                    const cursor = pendingWheelCursor.current;
+                    const pt = svg.createSVGPoint();
+                    pt.x = cursor.x;
+                    pt.y = cursor.y;
+                    const svgP = pt.matrixTransform(ctm.inverse());
+
+                    const newVb: ViewBox = {
+                        x: vb.x + (svgP.x - vb.x) * (1 - accumulatedScale),
+                        y: vb.y + (svgP.y - vb.y) * (1 - accumulatedScale),
+                        w: vb.w * accumulatedScale,
+                        h: vb.h * accumulatedScale,
+                    };
+
+                    viewBoxRef.current = newVb;
+                    applyViewBox(newVb);
+                });
+            }
 
             // Debounced commit: sync to React after scrolling stops
             if (wheelTimerId.current) clearTimeout(wheelTimerId.current);
-            wheelTimerId.current = setTimeout(commitViewBox, 150);
+            wheelTimerId.current = setTimeout(() => {
+                setInteracting(false);
+                commitViewBox();
+            }, 150);
         };
 
         const handleMouseDown = (e: MouseEvent) => {
             if (!activeRef.current || !viewBoxRef.current) return;
             isDragging.current = true;
             startPoint.current = { x: e.clientX, y: e.clientY, pendingX: e.clientX, pendingY: e.clientY };
+            setInteracting(true);
         };
 
         // rAF-throttled drag: at most one DOM update per display frame
@@ -163,6 +245,7 @@ export const usePanZoom = (
 
         const handleMouseUp = () => {
             isDragging.current = false;
+            setInteracting(false);
             if (rafId.current) {
                 cancelAnimationFrame(rafId.current);
                 rafId.current = null;
@@ -182,6 +265,7 @@ export const usePanZoom = (
             window.removeEventListener('mouseup', handleMouseUp);
             if (wheelTimerId.current) clearTimeout(wheelTimerId.current);
             if (rafId.current) cancelAnimationFrame(rafId.current);
+            if (wheelRafId.current) cancelAnimationFrame(wheelRafId.current);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active, initialViewBox]);
