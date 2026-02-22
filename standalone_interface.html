@@ -895,6 +895,7 @@
             // VL overlay popup: { vlName, actionId, svg, loading, error }
             const [vlOverlay, setVlOverlay] = useState(null);
             const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
+            const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
             const overlayBodyRef = useRef(null);
 
             const [originalViewBox, setOriginalViewBox] = useState(null);
@@ -1130,6 +1131,7 @@
             // ===== VL Double-Click → Single Line Diagram overlay =====
             const handleVlDoubleClick = async (actionId, vlName) => {
                 setOverlayTransform({ scale: 1, tx: 0, ty: 0 });
+                setOverlayPos({ x: 16, y: 16 });
                 setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
                 try {
                     const res = await axios.post(API_BASE + '/api/action-variant-sld', {
@@ -1181,6 +1183,24 @@
                 const onMove = (ev) => setOverlayTransform(prev => ({
                     ...prev, tx: tx0 + ev.clientX - x0, ty: ty0 + ev.clientY - y0,
                 }));
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            };
+
+            // Drag the overlay window by its title bar
+            const startOverlayDrag = (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const x0 = e.clientX, y0 = e.clientY;
+                const px0 = overlayPos.x, py0 = overlayPos.y;
+                const onMove = (ev) => setOverlayPos({
+                    x: px0 + ev.clientX - x0,
+                    y: py0 + ev.clientY - y0,
+                });
                 const onUp = () => {
                     document.removeEventListener('mousemove', onMove);
                     document.removeEventListener('mouseup', onUp);
@@ -1784,8 +1804,8 @@
                         {vlOverlay && (
                             <div style={{
                                 position: 'absolute',
-                                top: '16px',
-                                left: '16px',
+                                top: overlayPos.y + 'px',
+                                left: overlayPos.x + 'px',
                                 width: '440px',
                                 height: '420px',
                                 minWidth: '220px',
@@ -1801,8 +1821,8 @@
                                 resize: 'both',
                                 boxSizing: 'border-box',
                             }}>
-                                {/* Header */}
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0 }}>
+                                {/* Header — drag handle */}
+                                <div onMouseDown={startOverlayDrag} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0, cursor: 'move', userSelect: 'none' }}>
                                     <span style={{ fontSize: '12px', fontWeight: 600, color: '#065f46' }}>
                                         {vlOverlay.vlName} — post-action SLD
                                     </span>
