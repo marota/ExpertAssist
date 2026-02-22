@@ -1734,9 +1734,12 @@
                         {vlOverlay && (
                             <div style={{
                                 position: 'absolute',
-                                bottom: '16px',
+                                top: '16px',
                                 right: '80px', // leave room for the 62px-wide voltage sidebar
                                 width: '440px',
+                                height: '420px',
+                                minWidth: '220px',
+                                minHeight: '150px',
                                 background: 'white',
                                 border: '1px solid #ccc',
                                 borderRadius: '8px',
@@ -1745,19 +1748,21 @@
                                 display: 'flex',
                                 flexDirection: 'column',
                                 overflow: 'hidden',
+                                resize: 'both',
+                                boxSizing: 'border-box',
                             }}>
                                 {/* Header */}
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0 }}>
                                     <span style={{ fontSize: '12px', fontWeight: 600, color: '#065f46' }}>
-                                        {vlOverlay.vlName} — post-action diagram
+                                        {vlOverlay.vlName} — post-action SLD
                                     </span>
                                     <button
                                         onClick={() => setVlOverlay(null)}
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
                                         title="Close">✕</button>
                                 </div>
-                                {/* Body */}
-                                <div className="vl-overlay-body" style={{ overflow: 'auto', maxHeight: '360px' }}>
+                                {/* Body — fills remaining height, scrollable */}
+                                <div className="vl-overlay-body" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
                                     {vlOverlay.loading && (
                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', color: '#999', fontSize: '13px' }}>
                                             Generating diagram…
