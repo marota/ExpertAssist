@@ -206,6 +206,52 @@ def get_focused_diagram(request: FocusedDiagramRequest):
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
+class ActionVariantFocusedRequest(BaseModel):
+    action_id: str
+    element_id: str
+    depth: int = 1
+
+@app.post("/api/action-variant-focused-diagram")
+def get_action_variant_focused_diagram(request: ActionVariantFocusedRequest):
+    """Generate a focused NAD for a specific VL in the post-action network state."""
+    try:
+        vl_ids = network_service.get_element_voltage_levels(request.element_id)
+        if not vl_ids:
+            raise HTTPException(status_code=404, detail=f"No voltage levels found for {request.element_id}")
+        diagram = recommender_service.get_action_variant_diagram(
+            request.action_id,
+            voltage_level_ids=vl_ids,
+            depth=request.depth,
+        )
+        diagram["voltage_level_ids"] = vl_ids
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+class ActionVariantSldRequest(BaseModel):
+    action_id: str
+    voltage_level_id: str
+
+@app.post("/api/action-variant-sld")
+def get_action_variant_sld(request: ActionVariantSldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the post-action network state."""
+    try:
+        diagram = recommender_service.get_action_variant_sld(
+            request.action_id,
+            request.voltage_level_id,
+        )
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/actions")
 def get_actions():
     """Return all available action IDs and descriptions from the loaded dictionary."""

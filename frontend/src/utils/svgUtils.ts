@@ -191,18 +191,31 @@ export const getActionTargetVoltageLevel = (
 ): string | null => {
     const desc = actionDetail?.description_unitaire;
     if (desc && desc !== 'No description available') {
+        // Try all quoted strings (last-first) — any might be the VL name
         const quotedMatches = desc.match(/'([^']+)'/g);
-        if (quotedMatches && quotedMatches.length > 0) {
-            const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
-            if (nodesByEquipmentId.has(vl)) return vl;
+        if (quotedMatches) {
+            for (let i = quotedMatches.length - 1; i >= 0; i--) {
+                const vl = quotedMatches[i].replace(/'/g, '');
+                if (nodesByEquipmentId.has(vl)) return vl;
+            }
         }
-        const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+        // Match "dans le poste", "du poste", "au poste", etc.
+        const posteMatch = desc.match(/(?:dans le |du |au )?poste\s+'?(\S+?)'?(?:\s|$|,)/i);
         if (posteMatch) {
             const vl = posteMatch[1].replace(/['"]/g, '');
             if (nodesByEquipmentId.has(vl)) return vl;
         }
     }
-    if (actionId) {
+
+    // Fallback: action ID suffix — skip for pure line reconnection actions
+    // (where lines are reconnected to real buses ≥ 0 with no gen/load changes),
+    // because the suffix can coincidentally match a VL name.
+    const topo = actionDetail?.action_topology;
+    const isLineReconnection = topo
+        && (Object.keys(topo.gens_bus || {}).length === 0 && Object.keys(topo.loads_bus || {}).length === 0)
+        && [...Object.values(topo.lines_ex_bus || {}), ...Object.values(topo.lines_or_bus || {})].some(v => v >= 0);
+
+    if (actionId && !isLineReconnection) {
         const parts = actionId.split('_');
         const candidate = parts[parts.length - 1];
         if (nodesByEquipmentId.has(candidate)) return candidate;

@@ -414,6 +414,39 @@ class RecommenderService:
 
         return diagram
 
+    def get_action_variant_sld(self, action_id: str, voltage_level_id: str) -> dict:
+        """Generate a Single Line Diagram (SLD) for a specific VL in the post-action state.
+
+        Args:
+            action_id: ID of the action to visualize
+            voltage_level_id: ID of the voltage level to diagram
+        """
+        if not self._last_result or not self._last_result.get("prioritized_actions"):
+            raise ValueError("No analysis result available. Run analysis first.")
+
+        actions = self._last_result["prioritized_actions"]
+        if action_id not in actions:
+            raise ValueError(f"Action '{action_id}' not found in last analysis result.")
+
+        obs = actions[action_id]["observation"]
+        variant_id = obs._variant_id
+        nm = obs._network_manager
+        nm.set_working_variant(variant_id)
+        network = nm.network
+
+        sld = network.get_single_line_diagram(voltage_level_id)
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string
+            svg = _get_svg_string(sld)
+        except Exception:
+            svg = str(sld)
+
+        return {
+            "svg": svg,
+            "action_id": action_id,
+            "voltage_level_id": voltage_level_id,
+        }
+
     def _get_network_flows(self, network):
         """Extract p1/p2 flows for lines and transformers from a simulated network."""
         import numpy as np

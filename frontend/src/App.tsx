@@ -251,6 +251,20 @@ function App() {
     setActionViewMode(mode);
   }, []);
 
+  // ===== Asset Click (from action card badges / rho line names) =====
+  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n-1' = 'action') => {
+    setInspectQuery(assetName);
+    if (tab === 'n-1') {
+      // Rho-before lines live in the N-1 (post-contingency) view
+      setActiveTab('n-1');
+    } else if (actionId !== selectedActionId) {
+      // Select the action; zoom fires once its diagram loads
+      handleActionSelect(actionId);
+    } else {
+      setActiveTab('action');
+    }
+  }, [selectedActionId, handleActionSelect]);
+
   // ===== Reset View =====
   const handleManualReset = useCallback(() => {
     setInspectQuery('');
@@ -430,9 +444,19 @@ function App() {
         return n;
       };
 
-      const targetNode = nodesByEquipmentId.get(targetId);
-      const targetEdge = edgesByEquipmentId.get(targetId);
+      let targetNode = nodesByEquipmentId.get(targetId);
+      let targetEdge = edgesByEquipmentId.get(targetId);
       let targetSvgId: string | undefined;
+
+      // Fallback: strip prefix before "." (e.g. GEN.PY762 → PY762) and try as VL node
+      if (!targetNode && !targetEdge) {
+        const dotIdx = targetId.indexOf('.');
+        if (dotIdx >= 0) {
+          const suffix = targetId.substring(dotIdx + 1);
+          targetNode = nodesByEquipmentId.get(suffix) ?? undefined;
+          if (!targetNode) targetEdge = edgesByEquipmentId.get(suffix) ?? undefined;
+        }
+      }
 
       if (targetNode) {
         targetSvgId = targetNode.svgId;
@@ -562,6 +586,9 @@ function App() {
             linesOverloaded={result?.lines_overloaded || []}
             selectedActionId={selectedActionId}
             onActionSelect={handleActionSelect}
+            onAssetClick={handleAssetClick}
+            nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
+            edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
             disconnectedElement={selectedBranch || null}
             onManualActionAdded={handleManualActionAdded}
             actionViewMode={actionViewMode}

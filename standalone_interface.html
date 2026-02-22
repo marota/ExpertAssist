@@ -333,6 +333,12 @@
             transform: translateY(-50%);
             left: 2px;
         }
+        /* VL focused diagram overlay body — SVG scales to fit width */
+        .vl-overlay-body svg {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
     </style>
 </head>
 
@@ -714,33 +720,38 @@
         };
 
         // Extract the voltage level name for nodal actions.
-        // Tries: 1) quoted "dans le poste 'VL'" 2) unquoted "dans le poste VL" 3) action ID suffix
         const getActionTargetVoltageLevel = (actionDetail, actionId, nodesByEquipmentId) => {
             const desc = actionDetail?.description_unitaire;
             if (desc && desc !== 'No description available') {
-                // Try quoted format: last single-quoted string
+                // Try all quoted strings (last-first) — any might be the VL name
                 const quotedMatches = desc.match(/'([^']+)'/g);
-                if (quotedMatches && quotedMatches.length > 0) {
-                    const vl = quotedMatches[quotedMatches.length - 1].replace(/'/g, '');
-                    console.log('[action-target] quoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
-                    if (nodesByEquipmentId.has(vl)) return vl;
+                if (quotedMatches) {
+                    for (let i = quotedMatches.length - 1; i >= 0; i--) {
+                        const vl = quotedMatches[i].replace(/'/g, '');
+                        if (nodesByEquipmentId.has(vl)) return vl;
+                    }
                 }
-                // Try unquoted: "dans le poste VLNAME"
-                const posteMatch = desc.match(/dans le poste\s+(\S+)/i);
+                // Match "dans le poste", "du poste", "au poste", etc.
+                const posteMatch = desc.match(/(?:dans le |du |au )?poste\s+'?(\S+?)'?(?:\s|$|,)/i);
                 if (posteMatch) {
                     const vl = posteMatch[1].replace(/['"]/g, '');
-                    console.log('[action-target] unquoted VL candidate:', vl, '→ in metadata:', nodesByEquipmentId.has(vl));
                     if (nodesByEquipmentId.has(vl)) return vl;
                 }
             }
-            // Fallback: last _-separated segment of action ID
-            if (actionId) {
+
+            // Fallback: action ID suffix — skip for pure line reconnection actions
+            // (where lines are reconnected to real buses ≥ 0 with no gen/load changes),
+            // because the suffix can coincidentally match a VL name.
+            const topo = actionDetail?.action_topology;
+            const isLineReconnection = topo
+                && (Object.keys(topo.gens_bus || {}).length === 0 && Object.keys(topo.loads_bus || {}).length === 0)
+                && [...Object.values(topo.lines_ex_bus || {}), ...Object.values(topo.lines_or_bus || {})].some(v => v >= 0);
+
+            if (actionId && !isLineReconnection) {
                 const parts = actionId.split('_');
                 const candidate = parts[parts.length - 1];
-                console.log('[action-target] actionId suffix candidate:', candidate, '→ in metadata:', nodesByEquipmentId.has(candidate));
                 if (nodesByEquipmentId.has(candidate)) return candidate;
             }
-            console.log('[action-target] no VL found. metadata node keys sample:', [...nodesByEquipmentId.keys()].slice(0, 10));
             return null;
         };
 
@@ -873,6 +884,11 @@
 
             // Delta visualization mode
             const [actionViewMode, setActionViewMode] = useState('network'); // 'network' or 'delta'
+
+            // VL overlay popup: { vlName, actionId, svg, loading, error }
+            const [vlOverlay, setVlOverlay] = useState(null);
+            const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
+            const overlayBodyRef = useRef(null);
 
             const [originalViewBox, setOriginalViewBox] = useState(null);
 
@@ -1090,6 +1106,80 @@
                 } finally {
                     setActionDiagramLoading(false);
                 }
+            };
+
+            // ===== Asset Click (from action card badges / rho line names) =====
+            const handleAssetClick = (actionId, assetName, tab = 'action') => {
+                setInspectQuery(assetName);
+                if (tab === 'n-1') {
+                    setActiveTab('n-1');
+                } else if (actionId !== selectedActionId) {
+                    handleActionSelect(actionId);
+                } else {
+                    setActiveTab('action');
+                }
+            };
+
+            // ===== VL Double-Click → Single Line Diagram overlay =====
+            const handleVlDoubleClick = async (actionId, vlName) => {
+                setOverlayTransform({ scale: 1, tx: 0, ty: 0 });
+                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
+                try {
+                    const res = await axios.post(API_BASE + '/api/action-variant-sld', {
+                        action_id: actionId,
+                        voltage_level_id: vlName,
+                    });
+                    setVlOverlay(prev =>
+                        prev && prev.vlName === vlName && prev.actionId === actionId
+                            ? { ...prev, svg: res.data.svg, loading: false }
+                            : prev
+                    );
+                } catch (err) {
+                    setVlOverlay(prev => prev
+                        ? { ...prev, loading: false, error: err?.response?.data?.detail || 'Failed to load diagram' }
+                        : null
+                    );
+                }
+            };
+
+            // Wheel zoom on overlay body — must be non-passive to call preventDefault
+            useEffect(() => {
+                const el = overlayBodyRef.current;
+                if (!el) return;
+                const onWheel = (e) => {
+                    e.preventDefault();
+                    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+                    const rect = el.getBoundingClientRect();
+                    const cx = e.clientX - rect.left;
+                    const cy = e.clientY - rect.top;
+                    setOverlayTransform(prev => {
+                        const s = Math.max(0.1, Math.min(10, prev.scale * factor));
+                        return {
+                            scale: s,
+                            tx: cx - (cx - prev.tx) * (s / prev.scale),
+                            ty: cy - (cy - prev.ty) * (s / prev.scale),
+                        };
+                    });
+                };
+                el.addEventListener('wheel', onWheel, { passive: false });
+                return () => el.removeEventListener('wheel', onWheel);
+            }, [vlOverlay]);
+
+            // Mouse pan inside overlay body
+            const startOverlayPan = (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                const x0 = e.clientX, y0 = e.clientY;
+                const tx0 = overlayTransform.tx, ty0 = overlayTransform.ty;
+                const onMove = (ev) => setOverlayTransform(prev => ({
+                    ...prev, tx: tx0 + ev.clientX - x0, ty: ty0 + ev.clientY - y0,
+                }));
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             };
 
             // --- Manual Action Search Logic ---
@@ -1428,8 +1518,17 @@
                         return n;
                     };
 
-                    const targetNode = nodesByEquipmentId.get(targetId);
-                    const targetEdge = edgesByEquipmentId.get(targetId);
+                    let targetNode = nodesByEquipmentId.get(targetId);
+                    let targetEdge = edgesByEquipmentId.get(targetId);
+                    // Fallback: strip prefix before "." (e.g. GEN.PY762 → PY762) and try as VL node
+                    if (!targetNode && !targetEdge) {
+                        const dotIdx = targetId.indexOf('.');
+                        if (dotIdx >= 0) {
+                            const suffix = targetId.substring(dotIdx + 1);
+                            targetNode = nodesByEquipmentId.get(suffix);
+                            if (!targetNode) targetEdge = edgesByEquipmentId.get(suffix);
+                        }
+                    }
                     let targetSvgId;
 
                     if (targetNode) {
@@ -1673,6 +1772,60 @@
                                 </div>
                             );
                         })()}
+
+                        {/* VL focused diagram overlay — appears in the bottom-right corner */}
+                        {vlOverlay && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '16px',
+                                left: '16px',
+                                width: '440px',
+                                height: '420px',
+                                minWidth: '220px',
+                                minHeight: '150px',
+                                background: 'white',
+                                border: '1px solid #ccc',
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 24px rgba(0,0,0,0.22)',
+                                zIndex: 45,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                overflow: 'hidden',
+                                resize: 'both',
+                                boxSizing: 'border-box',
+                            }}>
+                                {/* Header */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0 }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#065f46' }}>
+                                        {vlOverlay.vlName} — post-action SLD
+                                    </span>
+                                    <button
+                                        onClick={() => setVlOverlay(null)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
+                                        title="Close">✕</button>
+                                </div>
+                                {/* Body — pan/zoom canvas */}
+                                <div ref={overlayBodyRef} className="vl-overlay-body"
+                                    style={{ flex: 1, overflow: 'hidden', minHeight: 0, cursor: 'grab', userSelect: 'none' }}
+                                    onMouseDown={startOverlayPan}>
+                                    {vlOverlay.loading && (
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: '13px' }}>
+                                            Generating diagram…
+                                        </div>
+                                    )}
+                                    {vlOverlay.error && (
+                                        <div style={{ padding: '12px', color: '#dc3545', fontSize: '12px' }}>{vlOverlay.error}</div>
+                                    )}
+                                    {vlOverlay.svg && (
+                                        <div style={{
+                                            transformOrigin: '0 0',
+                                            transform: `translate(${overlayTransform.tx}px,${overlayTransform.ty}px) scale(${overlayTransform.scale})`,
+                                            padding: '4px',
+                                        }} dangerouslySetInnerHTML={{ __html: vlOverlay.svg }} />
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             };
@@ -2010,9 +2163,21 @@
                                         red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
                                     };
                                     const sc = severityColors[severity];
-                                    const formatRho = (arr) => {
+                                    const clickableLinkStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#1e40af', fontWeight: 600, textDecoration: 'underline dotted' };
+                                    const renderRho = (arr, tab) => {
                                         if (!arr || arr.length === 0) return '—';
-                                        return arr.map((v, i) => `${overloadedLines[i] || 'line ' + i}: ${(v * 100).toFixed(1)}%`).join(', ');
+                                        return arr.map((v, i) => {
+                                            const lineName = overloadedLines[i] || `line ${i}`;
+                                            return (
+                                                <React.Fragment key={i}>
+                                                    {i > 0 && ', '}
+                                                    <button style={clickableLinkStyle} title={`Zoom to ${lineName}`}
+                                                        onClick={(e) => { e.stopPropagation(); handleAssetClick(id, lineName, tab); }}
+                                                    >{lineName}</button>
+                                                    {`: ${(v * 100).toFixed(1)}%`}
+                                                </React.Fragment>
+                                            );
+                                        });
                                     };
                                     const isSelected = selectedActionId === id;
                                     return (
@@ -2036,14 +2201,73 @@
                                                     </span>
                                                 </div>
                                             </div>
-                                            <p style={{ fontSize: '13px' }}>{details.description_unitaire}</p>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
+                                                <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
+                                                {(() => {
+                                                    const nodeMeta = nMetaIndex && nMetaIndex.nodesByEquipmentId;
+                                                    const edgeMeta = nMetaIndex && nMetaIndex.edgesByEquipmentId;
+                                                    const vlName = nodeMeta ? getActionTargetVoltageLevel(details, id, nodeMeta) : null;
+                                                    if (vlName) {
+                                                        return (
+                                                            <button
+                                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted', flexShrink: 0 }}
+                                                                title={`Click: zoom to ${vlName} | Double-click: open focused diagram`}
+                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, vlName, 'action'); }}
+                                                                onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, vlName); }}>
+                                                                {vlName}
+                                                            </button>
+                                                        );
+                                                    }
+                                                    const badgeBtn = (name, bg, color, title) => (
+                                                        <button key={name}
+                                                            style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
+                                                            title={title}
+                                                            onClick={(e) => { e.stopPropagation(); handleAssetClick(id, name, 'action'); }}>
+                                                            {name}
+                                                        </button>
+                                                    );
+                                                    const lineNames = edgeMeta
+                                                        ? getActionTargetLines(details, id, edgeMeta)
+                                                        : Array.from(new Set([
+                                                            ...Object.keys(details.action_topology?.lines_ex_bus || {}),
+                                                            ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                                        ]));
+                                                    if (lineNames.length > 0) {
+                                                        return (
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                                                {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name} in action visualization`))}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    // Fallback: gen/load equipment names from topology
+                                                    const topo = details.action_topology;
+                                                    const equipNames = [
+                                                        ...Object.keys(topo?.gens_bus || {}),
+                                                        ...Object.keys(topo?.loads_bus || {}),
+                                                    ];
+                                                    if (equipNames.length > 0) {
+                                                        return (
+                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                                                {equipNames.map(name => badgeBtn(name, '#fef3c7', '#92400e', `Zoom to ${name} in action visualization`))}
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
+                                                })()}
+                                            </div>
                                             <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                                <div>Rho before: {formatRho(details.rho_before)}</div>
-                                                <div>Rho after: {formatRho(details.rho_after)}</div>
+                                                <div>Rho before: {renderRho(details.rho_before, 'n-1')}</div>
+                                                <div>Rho after: {renderRho(details.rho_after, 'action')}</div>
                                                 {maxRhoPct != null && (
                                                     <div style={{ marginTop: '3px' }}>
                                                         Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                                        {details.max_rho_line && <span style={{ color: '#888' }}> on {details.max_rho_line}</span>}
+                                                        {details.max_rho_line && (
+                                                            <span style={{ color: '#888' }}> on <button
+                                                                style={{ ...clickableLinkStyle, color: '#888' }}
+                                                                title={`Zoom to ${details.max_rho_line}`}
+                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, details.max_rho_line, 'action'); }}
+                                                            >{details.max_rho_line}</button></span>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
