@@ -62,7 +62,21 @@ def update_config(config: ConfigRequest):
             last_network_path = config.network_path
         # Update recommender config
         recommender_service.update_config(config)
-        return {"status": "success", "message": "Configuration updated and network loaded"}
+        
+        # Get line counts
+        from expert_op4grid_recommender import config as recommender_config
+        total_lines = len(network_service.get_disconnectable_elements())
+        if getattr(recommender_config, 'IGNORE_LINES_MONITORING', True):
+            monitored_lines = total_lines
+        else:
+            monitored_lines = getattr(recommender_config, 'MONITORED_LINES_COUNT', total_lines)
+            
+        return {
+            "status": "success", 
+            "message": "Configuration updated and network loaded",
+            "total_lines_count": total_lines,
+            "monitored_lines_count": monitored_lines
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

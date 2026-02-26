@@ -60,9 +60,17 @@ class RecommenderService:
         if hasattr(settings, 'lines_monitoring_path') and settings.lines_monitoring_path and os.path.exists(settings.lines_monitoring_path):
             config.IGNORE_LINES_MONITORING = False
             config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
-            print(f"Loaded lines monitoring file: {settings.lines_monitoring_path}")
+            try:
+                from expert_op4grid_recommender.environment import load_interesting_lines
+                lines = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+                config.MONITORED_LINES_COUNT = len(lines)
+            except Exception as e:
+                print(f"Failed to count lines in {config.LINES_MONITORING_FILE}: {e}")
+                config.MONITORED_LINES_COUNT = -1
+            print(f"Loaded lines monitoring file: {settings.lines_monitoring_path} ({getattr(config, 'MONITORED_LINES_COUNT', 'unknown')} lines)")
         else:
             config.IGNORE_LINES_MONITORING = True
+            config.MONITORED_LINES_COUNT = 0
             print("Ignoring lines monitoring (file path not provided or does not exist).")
         
         # Load and cache the action dictionary immediately if path changed or not loaded
