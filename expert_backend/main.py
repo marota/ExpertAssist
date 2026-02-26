@@ -27,6 +27,12 @@ app.mount("/results/pdf", StaticFiles(directory="Overflow_Graph"), name="pdfs")
 class ConfigRequest(BaseModel):
     network_path: str
     action_file_path: str
+    min_line_reconnections: float = 2.0
+    min_close_coupling: float = 3.0
+    min_open_coupling: float = 2.0
+    min_line_disconnections: float = 3.0
+    n_prioritized_actions: int = 10
+    lines_monitoring_path: str | None = None
 
 class AnalysisRequest(BaseModel):
     disconnected_element: str
@@ -44,13 +50,18 @@ class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
 
+last_network_path = None
+
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
+    global last_network_path
     try:
         # Load network first to verify path and get branches
-        network_service.load_network(config.network_path)
+        if config.network_path != last_network_path:
+            network_service.load_network(config.network_path)
+            last_network_path = config.network_path
         # Update recommender config
-        recommender_service.update_config(config.network_path, config.action_file_path)
+        recommender_service.update_config(config)
         return {"status": "success", "message": "Configuration updated and network loaded"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
