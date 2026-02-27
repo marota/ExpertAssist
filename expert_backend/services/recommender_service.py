@@ -57,21 +57,38 @@ class RecommenderService:
         config.MAX_RHO_BOTH_EXTREMITIES = True
         
         # Handle lines monitoring optionally
-        if hasattr(settings, 'lines_monitoring_path') and settings.lines_monitoring_path and os.path.exists(settings.lines_monitoring_path):
-            config.IGNORE_LINES_MONITORING = False
-            config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
+        if hasattr(settings, 'lines_monitoring_path') and settings.lines_monitoring_path:
+            if os.path.exists(settings.lines_monitoring_path):
+                config.IGNORE_LINES_MONITORING = False
+                config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
+            else:
+                config.IGNORE_LINES_MONITORING = True
+                config.MONITORED_LINES_COUNT = 0
+                print(f"Ignoring lines monitoring (file path {settings.lines_monitoring_path} does not exist).")
+        else:
+            # Fallback to default in ENV_FOLDER if not provided by UI
+            env_folder = getattr(settings, 'network_path', None)
+            if env_folder:
+                default_monitoring_file = os.path.join(env_folder, "lignes_a_monitorer.csv")
+                if os.path.exists(default_monitoring_file):
+                    config.IGNORE_LINES_MONITORING = False
+                    config.LINES_MONITORING_FILE = Path(default_monitoring_file)
+                else:
+                    config.IGNORE_LINES_MONITORING = True
+                    config.MONITORED_LINES_COUNT = 0
+            else:
+                config.IGNORE_LINES_MONITORING = True
+                config.MONITORED_LINES_COUNT = 0
+
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True):
             try:
                 from expert_op4grid_recommender.environment import load_interesting_lines
                 lines = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
                 config.MONITORED_LINES_COUNT = len(lines)
+                print(f"Loaded lines monitoring file: {config.LINES_MONITORING_FILE} ({config.MONITORED_LINES_COUNT} lines)")
             except Exception as e:
                 print(f"Failed to count lines in {config.LINES_MONITORING_FILE}: {e}")
                 config.MONITORED_LINES_COUNT = -1
-            print(f"Loaded lines monitoring file: {settings.lines_monitoring_path} ({getattr(config, 'MONITORED_LINES_COUNT', 'unknown')} lines)")
-        else:
-            config.IGNORE_LINES_MONITORING = True
-            config.MONITORED_LINES_COUNT = 0
-            print("Ignoring lines monitoring (file path not provided or does not exist).")
         
         # Load and cache the action dictionary immediately if path changed or not loaded
         new_action_path = Path(settings.action_file_path)
@@ -628,7 +645,15 @@ class RecommenderService:
         if not has_converged:
             raise RuntimeError(f"Contingency simulation for '{disconnected_element}' failed.")
 
-        lines_we_care_about = obs.name_line
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
+            try:
+                from expert_op4grid_recommender.environment import load_interesting_lines
+                lines_we_care_about = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+            except Exception as e:
+                print(f"Failed to load lines_we_care_about in simulate_manual_action: {e}")
+                lines_we_care_about = list(obs.name_line)
+        else:
+            lines_we_care_about = list(obs.name_line)
         lines_overloaded_ids = [
             i for i, l in enumerate(obs_simu_defaut.name_line)
             if l in lines_we_care_about and obs_simu_defaut.rho[i] >= 1

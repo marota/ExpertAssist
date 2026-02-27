@@ -912,7 +912,7 @@
                         setTotalLinesCount(configRes.data.total_lines_count);
                         setShowMonitoringWarning(true);
                     }
-                    
+
                     setSettingsBackup({
                         minLineReconnections,
                         minCloseCoupling,
@@ -922,6 +922,7 @@
                         linesMonitoringPath
                     });
                     setInfoMessage('Settings applied successfully.');
+                    setIsSettingsOpen(false);
                 } catch (err) {
                     setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
                 }

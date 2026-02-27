@@ -1,6 +1,12 @@
 export interface ConfigRequest {
     network_path: string;
     action_file_path: string;
+    min_line_reconnections: number;
+    min_close_coupling: number;
+    min_open_coupling: number;
+    min_line_disconnections: number;
+    n_prioritized_actions: number;
+    lines_monitoring_path?: string;
 }
 
 export interface AnalysisRequest {

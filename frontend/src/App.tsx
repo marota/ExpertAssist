@@ -78,6 +78,7 @@ function App() {
         linesMonitoringPath
       });
       setInfoMessage('Settings applied successfully.');
+      setIsSettingsOpen(false);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
