@@ -863,10 +863,69 @@
             const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
             const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
             const [totalLinesCount, setTotalLinesCount] = useState(0);
+            const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
 
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [settingsTab, setSettingsTab] = useState('recommender');
+            const [settingsBackup, setSettingsBackup] = useState(null);
             const [analysisLoading, setAnalysisLoading] = useState(false);
+
+            const handleOpenSettings = () => {
+                setSettingsBackup({
+                    minLineReconnections,
+                    minCloseCoupling,
+                    minOpenCoupling,
+                    minLineDisconnections,
+                    nPrioritizedActions,
+                    linesMonitoringPath
+                });
+                setIsSettingsOpen(true);
+            };
+
+            const handleCloseSettings = () => {
+                if (settingsBackup) {
+                    setMinLineReconnections(settingsBackup.minLineReconnections);
+                    setMinCloseCoupling(settingsBackup.minCloseCoupling);
+                    setMinOpenCoupling(settingsBackup.minOpenCoupling);
+                    setMinLineDisconnections(settingsBackup.minLineDisconnections);
+                    setNPrioritizedActions(settingsBackup.nPrioritizedActions);
+                    setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+                }
+                setIsSettingsOpen(false);
+            };
+
+            const handleApplySettings = async () => {
+                try {
+                    const configRes = await axios.post(API_BASE + '/api/config', {
+                        network_path: networkPath,
+                        action_file_path: actionPath,
+                        min_line_reconnections: minLineReconnections,
+                        min_close_coupling: minCloseCoupling,
+                        min_open_coupling: minOpenCoupling,
+                        min_line_disconnections: minLineDisconnections,
+                        n_prioritized_actions: nPrioritizedActions,
+                        lines_monitoring_path: linesMonitoringPath
+                    });
+
+                    if (configRes.data && configRes.data.total_lines_count !== undefined) {
+                        setMonitoredLinesCount(configRes.data.monitored_lines_count);
+                        setTotalLinesCount(configRes.data.total_lines_count);
+                        setShowMonitoringWarning(true);
+                    }
+                    
+                    setSettingsBackup({
+                        minLineReconnections,
+                        minCloseCoupling,
+                        minOpenCoupling,
+                        minLineDisconnections,
+                        nPrioritizedActions,
+                        linesMonitoringPath
+                    });
+                    setInfoMessage('Settings applied successfully.');
+                } catch (err) {
+                    setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
+                }
+            };
             const [error, setError] = useState('');
             const [result, setResult] = useState(null);
             const [infoMessage, setInfoMessage] = useState('');
@@ -974,6 +1033,7 @@
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
                         setMonitoredLinesCount(configRes.data.monitored_lines_count);
                         setTotalLinesCount(configRes.data.total_lines_count);
+                        setShowMonitoringWarning(true);
                     }
 
                     const [branchesRes, vlRes, nomVRes] = await Promise.all([
@@ -1000,18 +1060,8 @@
                 } finally { setConfigLoading(false); }
             };
 
-            // Auto-trigger config load when linesMonitoringPath changes
-            useEffect(() => {
-                if (initialMountRef.current) {
-                    initialMountRef.current = false;
-                    return;
-                }
-
-                // Only auto-load if we have a network loaded (i.e. branches exist)
-                if (branches.length > 0) {
-                    handleLoadConfig();
-                }
-            }, [linesMonitoringPath]);
+            // We no longer automatically reload config when settings close, 
+            // the user must explicitly click Apply in settings.
 
             const processSvg = (rawSvg, vlCount) => {
                 const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
@@ -1923,7 +1973,7 @@
                         <h2 style={{ margin: 0 }}>⚡ Expert Recommender</h2>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                             <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
-                            <button onClick={() => setIsSettingsOpen(true)} style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 10px', fontSize: '1.2rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">⚙️</button>
+                            <button onClick={handleOpenSettings} style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 10px', fontSize: '1.2rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">⚙️</button>
                         </div>
                     </header>
                     <div className="config-panel">
@@ -2054,16 +2104,12 @@
                                                 <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
                                                 <button onClick={() => pickPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📁</button>
                                             </div>
-                                            {totalLinesCount > 0 && (
-                                                <div style={{ marginTop: '5px', fontSize: '0.85em', color: '#856404', background: '#fff3cd', padding: '6px 10px', borderRadius: '4px', border: '1px solid #ffeeba' }}>
-                                                    ⚠️ Monitoring {monitoredLinesCount} lines out of {totalLinesCount} total lines
-                                                </div>
-                                            )}
                                         </div>
                                     )}
 
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-                                        <button onClick={() => setIsSettingsOpen(false)} style={{ background: '#3498db', padding: '8px 20px' }}>Done</button>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                                        <button onClick={handleCloseSettings} style={{ background: '#95a5a6', padding: '8px 20px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Close</button>
+                                        <button onClick={handleApplySettings} style={{ background: '#27ae60', padding: '8px 20px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Apply</button>
                                     </div>
                                 </div>
                             </div>
@@ -2072,6 +2118,53 @@
 
                     <div className="main-content">
                         <div className="action-feed">
+                            {showMonitoringWarning && totalLinesCount > 0 && (
+                                <div style={{
+                                    marginBottom: '15px',
+                                    padding: '10px 15px',
+                                    background: '#fff3cd',
+                                    border: '1px solid #ffeeba',
+                                    borderRadius: '6px',
+                                    color: '#856404',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                                }}>
+                                    <div>
+                                        <span style={{ marginRight: '10px' }}>⚠️ <strong>Lines Monitoring:</strong> {monitoredLinesCount} monitored out of {totalLinesCount} total lines.</span>
+                                        <button
+                                            onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }}
+                                            style={{
+                                                background: 'none',
+                                                border: 'none',
+                                                color: '#0056b3',
+                                                textDecoration: 'underline',
+                                                cursor: 'pointer',
+                                                padding: 0,
+                                                fontWeight: 600
+                                            }}
+                                        >
+                                            Change in settings
+                                        </button>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowMonitoringWarning(false)}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            fontSize: '20px',
+                                            lineHeight: 1,
+                                            color: '#856404',
+                                            cursor: 'pointer',
+                                            padding: '0 5px'
+                                        }}
+                                        title="Dismiss"
+                                    >
+                                        &times;
+                                    </button>
+                                </div>
+                            )}
                             <div style={{
                                 marginBottom: '10px',
                                 padding: '6px 10px',
