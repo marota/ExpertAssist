@@ -333,6 +333,7 @@
             transform: translateY(-50%);
             left: 2px;
         }
+
         /* VL focused diagram overlay body — SVG scales to fit width */
         .vl-overlay-body svg {
             width: 100%;
@@ -841,6 +842,9 @@
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
+            const [linesMonitoringPath, setLinesMonitoringPath] = useState(localStorage.getItem('linesMonitoringPath') || '');
+            const initialMountRef = useRef(true);
+
             const [branches, setBranches] = useState([]);
             const [voltageLevels, setVoltageLevels] = useState([]);
 
@@ -850,7 +854,79 @@
             const [voltageRange, setVoltageRange] = useState([0, 400]);     // [minKv, maxKv] cursor positions
             const [selectedBranch, setSelectedBranch] = useState('');
             const [configLoading, setConfigLoading] = useState(false);
+
+            // Recommender Settings
+            const [minLineReconnections, setMinLineReconnections] = useState(2.0);
+            const [minCloseCoupling, setMinCloseCoupling] = useState(3.0);
+            const [minOpenCoupling, setMinOpenCoupling] = useState(2.0);
+            const [minLineDisconnections, setMinLineDisconnections] = useState(3.0);
+            const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
+            const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
+            const [totalLinesCount, setTotalLinesCount] = useState(0);
+            const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
+
+            const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+            const [settingsTab, setSettingsTab] = useState('recommender');
+            const [settingsBackup, setSettingsBackup] = useState(null);
             const [analysisLoading, setAnalysisLoading] = useState(false);
+
+            const handleOpenSettings = () => {
+                setSettingsBackup({
+                    minLineReconnections,
+                    minCloseCoupling,
+                    minOpenCoupling,
+                    minLineDisconnections,
+                    nPrioritizedActions,
+                    linesMonitoringPath
+                });
+                setIsSettingsOpen(true);
+            };
+
+            const handleCloseSettings = () => {
+                if (settingsBackup) {
+                    setMinLineReconnections(settingsBackup.minLineReconnections);
+                    setMinCloseCoupling(settingsBackup.minCloseCoupling);
+                    setMinOpenCoupling(settingsBackup.minOpenCoupling);
+                    setMinLineDisconnections(settingsBackup.minLineDisconnections);
+                    setNPrioritizedActions(settingsBackup.nPrioritizedActions);
+                    setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+                }
+                setIsSettingsOpen(false);
+            };
+
+            const handleApplySettings = async () => {
+                try {
+                    const configRes = await axios.post(API_BASE + '/api/config', {
+                        network_path: networkPath,
+                        action_file_path: actionPath,
+                        min_line_reconnections: minLineReconnections,
+                        min_close_coupling: minCloseCoupling,
+                        min_open_coupling: minOpenCoupling,
+                        min_line_disconnections: minLineDisconnections,
+                        n_prioritized_actions: nPrioritizedActions,
+                        lines_monitoring_path: linesMonitoringPath
+                    });
+
+                    if (configRes.data && configRes.data.total_lines_count !== undefined) {
+                        setMonitoredLinesCount(configRes.data.monitored_lines_count);
+                        setTotalLinesCount(configRes.data.total_lines_count);
+                        setShowMonitoringWarning(true);
+                    }
+
+                    setSettingsBackup({
+                        minLineReconnections,
+                        minCloseCoupling,
+                        minOpenCoupling,
+                        minLineDisconnections,
+                        nPrioritizedActions,
+                        linesMonitoringPath
+                    });
+                    setInfoMessage('Settings applied successfully.');
+                    setIsSettingsOpen(false);
+                } catch (err) {
+                    setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
+                }
+            };
             const [error, setError] = useState('');
             const [result, setResult] = useState(null);
             const [infoMessage, setInfoMessage] = useState('');
@@ -925,6 +1001,7 @@
 
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
             useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
+            useEffect(() => { localStorage.setItem('linesMonitoringPath', linesMonitoringPath); }, [linesMonitoringPath]);
 
             const pickPath = async (type, setter) => {
                 try {
@@ -943,7 +1020,22 @@
                 lastZoomState.current = { query: '', branch: '' };
 
                 try {
-                    await axios.post(API_BASE + '/api/config', { network_path: networkPath, action_file_path: actionPath });
+                    const configRes = await axios.post(API_BASE + '/api/config', {
+                        network_path: networkPath,
+                        action_file_path: actionPath,
+                        min_line_reconnections: minLineReconnections,
+                        min_close_coupling: minCloseCoupling,
+                        min_open_coupling: minOpenCoupling,
+                        min_line_disconnections: minLineDisconnections,
+                        n_prioritized_actions: nPrioritizedActions,
+                        lines_monitoring_path: linesMonitoringPath
+                    });
+
+                    if (configRes.data && configRes.data.total_lines_count !== undefined) {
+                        setMonitoredLinesCount(configRes.data.monitored_lines_count);
+                        setTotalLinesCount(configRes.data.total_lines_count);
+                        setShowMonitoringWarning(true);
+                    }
 
                     const [branchesRes, vlRes, nomVRes] = await Promise.all([
                         axios.get(API_BASE + '/api/branches'),
@@ -968,6 +1060,9 @@
                     setError('Failed to load config: ' + (err.response?.data?.detail || err.message));
                 } finally { setConfigLoading(false); }
             };
+
+            // We no longer automatically reload config when settings close, 
+            // the user must explicitly click Apply in settings.
 
             const processSvg = (rawSvg, vlCount) => {
                 const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
@@ -1877,7 +1972,10 @@
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
                     <header>
                         <h2 style={{ margin: 0 }}>⚡ Expert Recommender</h2>
-                        <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                            <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+                            <button onClick={handleOpenSettings} style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 10px', fontSize: '1.2rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">⚙️</button>
+                        </div>
                     </header>
                     <div className="config-panel">
                         <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -1894,9 +1992,11 @@
                                 <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d' }}>📄</button>
                             </div>
                         </div>
-                        <button onClick={handleLoadConfig} disabled={configLoading}>
-                            {configLoading ? '⏳ Loading...' : '🔄 Load Config'}
-                        </button>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                            <button onClick={handleLoadConfig} disabled={configLoading}>
+                                {configLoading ? '⏳ Loading...' : '🔄 Load Config'}
+                            </button>
+                        </div>
                         {branches.length > 0 && (
                             <div style={{ flex: '1 1 300px', display: 'flex', gap: '15px', alignItems: 'end' }}>
                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
@@ -1934,8 +2034,138 @@
                         </button>
                     </div>
 
+                    {
+                        isSettingsOpen && (
+                            <div style={{
+                                position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                                backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 2000,
+                                display: 'flex', justifyContent: 'center', alignItems: 'center'
+                            }}>
+                                <div style={{
+                                    background: 'white', padding: '25px', borderRadius: '8px',
+                                    width: '400px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+                                    display: 'flex', flexDirection: 'column', gap: '15px'
+                                }}>
+                                    <h3 style={{ margin: 0, borderBottom: '1px solid #eee', paddingBottom: '10px' }}>Recommender Settings</h3>
+
+                                    <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
+                                        <button
+                                            onClick={() => setSettingsTab('recommender')}
+                                            style={{
+                                                flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                                                border: 'none', borderBottom: settingsTab === 'recommender' ? '2px solid #3498db' : 'none',
+                                                fontWeight: settingsTab === 'recommender' ? 'bold' : 'normal',
+                                                color: settingsTab === 'recommender' ? '#3498db' : '#555'
+                                            }}
+                                        >
+                                            Recommender
+                                        </button>
+                                        <button
+                                            onClick={() => setSettingsTab('configurations')}
+                                            style={{
+                                                flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                                                border: 'none', borderBottom: settingsTab === 'configurations' ? '2px solid #3498db' : 'none',
+                                                fontWeight: settingsTab === 'configurations' ? 'bold' : 'normal',
+                                                color: settingsTab === 'configurations' ? '#3498db' : '#555'
+                                            }}
+                                        >
+                                            Configurations
+                                        </button>
+                                    </div>
+
+                                    {settingsTab === 'recommender' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Reconnections</label>
+                                                <input type="number" step="0.1" value={minLineReconnections} onChange={e => setMinLineReconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Close Coupling</label>
+                                                <input type="number" step="0.1" value={minCloseCoupling} onChange={e => setMinCloseCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Open Coupling</label>
+                                                <input type="number" step="0.1" value={minOpenCoupling} onChange={e => setMinOpenCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Disconnections</label>
+                                                <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
+                                                <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {settingsTab === 'configurations' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                            <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
+                                            <div style={{ display: 'flex', gap: '5px' }}>
+                                                <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                <button onClick={() => pickPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📁</button>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                                        <button onClick={handleCloseSettings} style={{ background: '#95a5a6', padding: '8px 20px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Close</button>
+                                        <button onClick={handleApplySettings} style={{ background: '#27ae60', padding: '8px 20px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Apply</button>
+                                    </div>
+                                </div>
+                            </div>
+                        )
+                    }
+
                     <div className="main-content">
                         <div className="action-feed">
+                            {showMonitoringWarning && totalLinesCount > 0 && (
+                                <div style={{
+                                    marginBottom: '15px',
+                                    padding: '10px 15px',
+                                    background: '#fff3cd',
+                                    border: '1px solid #ffeeba',
+                                    borderRadius: '6px',
+                                    color: '#856404',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                                }}>
+                                    <div>
+                                        <span style={{ marginRight: '10px' }}>⚠️ <strong>Lines Monitoring:</strong> {monitoredLinesCount} monitored out of {totalLinesCount} total lines.</span>
+                                        <button
+                                            onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }}
+                                            style={{
+                                                background: 'none',
+                                                border: 'none',
+                                                color: '#0056b3',
+                                                textDecoration: 'underline',
+                                                cursor: 'pointer',
+                                                padding: 0,
+                                                fontWeight: 600
+                                            }}
+                                        >
+                                            Change in settings
+                                        </button>
+                                    </div>
+                                    <button
+                                        onClick={() => setShowMonitoringWarning(false)}
+                                        style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            fontSize: '20px',
+                                            lineHeight: 1,
+                                            color: '#856404',
+                                            cursor: 'pointer',
+                                            padding: '0 5px'
+                                        }}
+                                        title="Dismiss"
+                                    >
+                                        &times;
+                                    </button>
+                                </div>
+                            )}
                             <div style={{
                                 marginBottom: '10px',
                                 padding: '6px 10px',
@@ -2372,7 +2602,7 @@
                         </div>
                     </div>
                     {error && <div style={{ position: 'fixed', bottom: 20, right: 20, background: '#e74c3c', color: 'white', padding: '10px 20px', borderRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>❌ {error}</div>}
-                </div>
+                </div >
             );
         }
 

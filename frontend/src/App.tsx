@@ -22,6 +22,78 @@ function App() {
   const [configLoading, setConfigLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Settings State
+  const [minLineReconnections, setMinLineReconnections] = useState<number>(2.0);
+  const [minCloseCoupling, setMinCloseCoupling] = useState<number>(3.0);
+  const [minOpenCoupling, setMinOpenCoupling] = useState<number>(2.0);
+  const [minLineDisconnections, setMinLineDisconnections] = useState<number>(3.0);
+  const [nPrioritizedActions, setNPrioritizedActions] = useState<number>(10);
+  const [linesMonitoringPath, setLinesMonitoringPath] = useState<string>('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
+  const [settingsBackup, setSettingsBackup] = useState<any>(null);
+
+  const handleOpenSettings = useCallback(() => {
+    setSettingsBackup({
+      minLineReconnections,
+      minCloseCoupling,
+      minOpenCoupling,
+      minLineDisconnections,
+      nPrioritizedActions,
+      linesMonitoringPath
+    });
+    setIsSettingsOpen(true);
+  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath]);
+
+  const handleCloseSettings = useCallback(() => {
+    if (settingsBackup) {
+      setMinLineReconnections(settingsBackup.minLineReconnections);
+      setMinCloseCoupling(settingsBackup.minCloseCoupling);
+      setMinOpenCoupling(settingsBackup.minOpenCoupling);
+      setMinLineDisconnections(settingsBackup.minLineDisconnections);
+      setNPrioritizedActions(settingsBackup.nPrioritizedActions);
+      setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+    }
+    setIsSettingsOpen(false);
+  }, [settingsBackup]);
+
+  const handleApplySettings = useCallback(async () => {
+    try {
+      await api.updateConfig({
+        network_path: networkPath,
+        action_file_path: actionPath,
+        min_line_reconnections: minLineReconnections,
+        min_close_coupling: minCloseCoupling,
+        min_open_coupling: minOpenCoupling,
+        min_line_disconnections: minLineDisconnections,
+        n_prioritized_actions: nPrioritizedActions,
+        lines_monitoring_path: linesMonitoringPath,
+      });
+      setSettingsBackup({
+        minLineReconnections,
+        minCloseCoupling,
+        minOpenCoupling,
+        minLineDisconnections,
+        nPrioritizedActions,
+        linesMonitoringPath
+      });
+      setInfoMessage('Settings applied successfully.');
+      setIsSettingsOpen(false);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
+    }
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath]);
+
+  const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
+    try {
+      const path = await api.pickPath(type);
+      if (path) setter(path);
+    } catch {
+      console.error('Failed to open file picker');
+    }
+  };
+
   // Nominal voltage filter state
   const [nominalVoltageMap, setNominalVoltageMap] = useState<Record<string, number>>({});
   const [uniqueVoltages, setUniqueVoltages] = useState<number[]>([]);
@@ -86,7 +158,16 @@ function App() {
     lastZoomState.current = { query: '', branch: '' };
 
     try {
-      await api.updateConfig({ network_path: networkPath, action_file_path: actionPath });
+      await api.updateConfig({
+        network_path: networkPath,
+        action_file_path: actionPath,
+        min_line_reconnections: minLineReconnections,
+        min_close_coupling: minCloseCoupling,
+        min_open_coupling: minOpenCoupling,
+        min_line_disconnections: minLineDisconnections,
+        n_prioritized_actions: nPrioritizedActions,
+        lines_monitoring_path: linesMonitoringPath,
+      });
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
         api.getBranches(),
@@ -113,7 +194,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions]);
 
   const fetchBaseDiagram = async (vlCount: number) => {
     try {
@@ -557,8 +638,120 @@ function App() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <header style={{ background: '#2c3e50', color: 'white', padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>Expert Recommender</h2>
-        <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+          <button
+            onClick={handleOpenSettings}
+            style={{
+              padding: '8px 10px', cursor: 'pointer',
+              background: '#e67e22', color: 'white',
+              border: 'none', borderRadius: '4px', fontWeight: 'bold',
+              fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}
+            title="Settings"
+          >
+            ⚙️
+          </button>
+        </div>
       </header>
+
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          <div style={{
+            background: 'white', padding: '25px', borderRadius: '8px',
+            width: '450px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+            display: 'flex', flexDirection: 'column', gap: '15px', color: 'black'
+          }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
+              <button
+                onClick={() => setSettingsTab('recommender')}
+                style={{
+                  flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                  border: 'none', borderBottom: settingsTab === 'recommender' ? '2px solid #3498db' : 'none',
+                  fontWeight: settingsTab === 'recommender' ? 'bold' : 'normal',
+                  color: settingsTab === 'recommender' ? '#3498db' : '#555'
+                }}
+              >
+                Recommender
+              </button>
+              <button
+                onClick={() => setSettingsTab('configurations')}
+                style={{
+                  flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                  border: 'none', borderBottom: settingsTab === 'configurations' ? '2px solid #3498db' : 'none',
+                  fontWeight: settingsTab === 'configurations' ? 'bold' : 'normal',
+                  color: settingsTab === 'configurations' ? '#3498db' : '#555'
+                }}
+              >
+                Configurations
+              </button>
+            </div>
+
+            {settingsTab === 'recommender' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Reconnections</label>
+                  <input type="number" step="0.1" value={minLineReconnections} onChange={e => setMinLineReconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Close Coupling</label>
+                  <input type="number" step="0.1" value={minCloseCoupling} onChange={e => setMinCloseCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Open Coupling</label>
+                  <input type="number" step="0.1" value={minOpenCoupling} onChange={e => setMinOpenCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Disconnections</label>
+                  <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
+                  <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+              </div>
+            )}
+
+            {settingsTab === 'configurations' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <button onClick={() => pickSettingsPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📁</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px', gap: '10px' }}>
+              <button
+                onClick={handleCloseSettings}
+                style={{
+                  padding: '8px 20px', background: '#e74c3c', color: 'white',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={handleApplySettings}
+                style={{
+                  padding: '8px 20px', background: '#3498db', color: 'white',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'
+                }}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfigurationPanel
         networkPath={networkPath}

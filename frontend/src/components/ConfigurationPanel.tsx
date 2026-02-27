@@ -89,17 +89,19 @@ const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({
                     </button>
                 </div>
             </div>
-            <button
-                onClick={onLoadConfig}
-                disabled={configLoading}
-                style={{
-                    padding: '8px 15px', cursor: configLoading ? 'not-allowed' : 'pointer',
-                    background: configLoading ? '#ccc' : '#3498db', color: 'white',
-                    border: 'none', borderRadius: '4px', fontWeight: 'bold',
-                }}
-            >
-                {configLoading ? 'Loading...' : 'Load Config'}
-            </button>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                    onClick={onLoadConfig}
+                    disabled={configLoading}
+                    style={{
+                        padding: '8px 15px', cursor: configLoading ? 'not-allowed' : 'pointer',
+                        background: configLoading ? '#ccc' : '#3498db', color: 'white',
+                        border: 'none', borderRadius: '4px', fontWeight: 'bold',
+                    }}
+                >
+                    {configLoading ? 'Loading...' : 'Load Config'}
+                </button>
+            </div>
             {branches.length > 0 && (
                 <div style={{ flex: '1 1 300px', display: 'flex', gap: '15px', alignItems: 'end' }}>
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>

@@ -37,43 +37,92 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
 
-    def update_config(self, network_path: str, action_file_path: str):
+    def update_config(self, settings):
         # Update the global config of the package
-        path_obj = Path(network_path)
+        path_obj = Path(settings.network_path)
         config.ENV_NAME = path_obj.name
         config.ENV_FOLDER = path_obj.parent
         config.ENV_PATH = path_obj
         
-        config.ACTION_FILE_PATH = Path(action_file_path)
+        config.ACTION_FILE_PATH = Path(settings.action_file_path)
         
-        # Load and cache the action dictionary immediately
-        self._dict_action = load_actions(config.ACTION_FILE_PATH)
+        # Apply the new settings parameters
+        config.MIN_LINE_RECONNECTIONS = settings.min_line_reconnections
+        config.MIN_CLOSE_COUPLING = settings.min_close_coupling
+        config.MIN_OPEN_COUPLING = settings.min_open_coupling
+        config.MIN_LINE_DISCONNECTIONS = settings.min_line_disconnections
+        config.N_PRIORITIZED_ACTIONS = settings.n_prioritized_actions
 
-        # Auto-generate disco actions if none exist
-        has_disco = any(k.startswith("disco_") for k in self._dict_action)
-        if not has_disco:
-            from expert_backend.services.network_service import network_service
-            branches = network_service.get_disconnectable_elements()
-            for branch in branches:
-                action_id = f"disco_{branch}"
-                self._dict_action[action_id] = {
-                    "description": f"Disconnection of line/transformer '{branch}'",
-                    "description_unitaire": f"Ouverture de la ligne '{branch}'",
-                    "content": {
-                        "set_bus": {
-                            "lines_or_id": {branch: -1},
-                            "lines_ex_id": {branch: -1},
-                            "loads_id": {},
-                            "generators_id": {},
-                        }
-                    },
-                }
-            print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
-            
-            # Save the updated dictionary back to file so the core analysis engine can load it
-            import json
-            with open(config.ACTION_FILE_PATH, 'w') as f:
-                json.dump(self._dict_action, f, indent=2)
+        # Force the requested global flags
+        config.MAX_RHO_BOTH_EXTREMITIES = True
+        
+        # Handle lines monitoring optionally
+        if hasattr(settings, 'lines_monitoring_path') and settings.lines_monitoring_path:
+            if os.path.exists(settings.lines_monitoring_path):
+                config.IGNORE_LINES_MONITORING = False
+                config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
+            else:
+                config.IGNORE_LINES_MONITORING = True
+                config.MONITORED_LINES_COUNT = 0
+                print(f"Ignoring lines monitoring (file path {settings.lines_monitoring_path} does not exist).")
+        else:
+            # Fallback to default in ENV_FOLDER if not provided by UI
+            env_folder = getattr(settings, 'network_path', None)
+            if env_folder:
+                default_monitoring_file = os.path.join(env_folder, "lignes_a_monitorer.csv")
+                if os.path.exists(default_monitoring_file):
+                    config.IGNORE_LINES_MONITORING = False
+                    config.LINES_MONITORING_FILE = Path(default_monitoring_file)
+                else:
+                    config.IGNORE_LINES_MONITORING = True
+                    config.MONITORED_LINES_COUNT = 0
+            else:
+                config.IGNORE_LINES_MONITORING = True
+                config.MONITORED_LINES_COUNT = 0
+
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True):
+            try:
+                from expert_op4grid_recommender.environment import load_interesting_lines
+                lines = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+                config.MONITORED_LINES_COUNT = len(lines)
+                print(f"Loaded lines monitoring file: {config.LINES_MONITORING_FILE} ({config.MONITORED_LINES_COUNT} lines)")
+            except Exception as e:
+                print(f"Failed to count lines in {config.LINES_MONITORING_FILE}: {e}")
+                config.MONITORED_LINES_COUNT = -1
+        
+        # Load and cache the action dictionary immediately if path changed or not loaded
+        new_action_path = Path(settings.action_file_path)
+        if getattr(self, '_last_action_path', None) != new_action_path or self._dict_action is None:
+            self._dict_action = load_actions(config.ACTION_FILE_PATH)
+            self._last_action_path = new_action_path
+
+            # Auto-generate disco actions if none exist
+            has_disco = any(k.startswith("disco_") for k in self._dict_action)
+            if not has_disco:
+                from expert_backend.services.network_service import network_service
+                branches = network_service.get_disconnectable_elements()
+                for branch in branches:
+                    action_id = f"disco_{branch}"
+                    self._dict_action[action_id] = {
+                        "description": f"Disconnection of line/transformer '{branch}'",
+                        "description_unitaire": f"Ouverture de la ligne '{branch}'",
+                        "content": {
+                            "set_bus": {
+                                "lines_or_id": {branch: -1},
+                                "lines_ex_id": {branch: -1},
+                                "loads_id": {},
+                                "generators_id": {},
+                            }
+                        },
+                    }
+                print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
+                
+                # Save the updated dictionary back to file so the core analysis engine can load it
+                import json
+                with open(config.ACTION_FILE_PATH, 'w') as f:
+                    json.dump(self._dict_action, f, indent=2)
+        else:
+            print("Action dictionary already loaded, skipping reload.")
 
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True
@@ -596,7 +645,15 @@ class RecommenderService:
         if not has_converged:
             raise RuntimeError(f"Contingency simulation for '{disconnected_element}' failed.")
 
-        lines_we_care_about = obs.name_line
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
+            try:
+                from expert_op4grid_recommender.environment import load_interesting_lines
+                lines_we_care_about = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+            except Exception as e:
+                print(f"Failed to load lines_we_care_about in simulate_manual_action: {e}")
+                lines_we_care_about = list(obs.name_line)
+        else:
+            lines_we_care_about = list(obs.name_line)
         lines_overloaded_ids = [
             i for i, l in enumerate(obs_simu_defaut.name_line)
             if l in lines_we_care_about and obs_simu_defaut.rho[i] >= 1
