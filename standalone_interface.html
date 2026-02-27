@@ -861,6 +861,7 @@
             const [minOpenCoupling, setMinOpenCoupling] = useState(2.0);
             const [minLineDisconnections, setMinLineDisconnections] = useState(3.0);
             const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
+            const [monitoringFactor, setMonitoringFactor] = useState(0.95);
             const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
             const [totalLinesCount, setTotalLinesCount] = useState(0);
             const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
@@ -877,7 +878,8 @@
                     minOpenCoupling,
                     minLineDisconnections,
                     nPrioritizedActions,
-                    linesMonitoringPath
+                    linesMonitoringPath,
+                    monitoringFactor
                 });
                 setIsSettingsOpen(true);
             };
@@ -890,6 +892,7 @@
                     setMinLineDisconnections(settingsBackup.minLineDisconnections);
                     setNPrioritizedActions(settingsBackup.nPrioritizedActions);
                     setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+                    setMonitoringFactor(settingsBackup.monitoringFactor);
                 }
                 setIsSettingsOpen(false);
             };
@@ -904,7 +907,8 @@
                         min_open_coupling: minOpenCoupling,
                         min_line_disconnections: minLineDisconnections,
                         n_prioritized_actions: nPrioritizedActions,
-                        lines_monitoring_path: linesMonitoringPath
+                        lines_monitoring_path: linesMonitoringPath,
+                        monitoring_factor: monitoringFactor
                     });
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
@@ -919,7 +923,8 @@
                         minOpenCoupling,
                         minLineDisconnections,
                         nPrioritizedActions,
-                        linesMonitoringPath
+                        linesMonitoringPath,
+                        monitoringFactor
                     });
                     setInfoMessage('Settings applied successfully.');
                     setIsSettingsOpen(false);
@@ -1028,7 +1033,8 @@
                         min_open_coupling: minOpenCoupling,
                         min_line_disconnections: minLineDisconnections,
                         n_prioritized_actions: nPrioritizedActions,
-                        lines_monitoring_path: linesMonitoringPath
+                        lines_monitoring_path: linesMonitoringPath,
+                        monitoring_factor: monitoringFactor
                     });
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
@@ -2099,11 +2105,20 @@
                                     )}
 
                                     {settingsTab === 'configurations' && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                            <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
-                                            <div style={{ display: 'flex', gap: '5px' }}>
-                                                <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
-                                                <button onClick={() => pickPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📁</button>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Monitoring Factor Thermal Limits</label>
+                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                                    <input type="number" step="0.01" min="0" max="2" value={monitoringFactor} onChange={e => setMonitoringFactor(parseFloat(e.target.value))} style={{ padding: '6px', width: '80px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <span style={{ fontSize: '0.85rem', color: '#666' }}>Multiplier applied to standard limits (e.g., 0.95)</span>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📁</button>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
@@ -2119,53 +2134,70 @@
 
                     <div className="main-content">
                         <div className="action-feed">
-                            {showMonitoringWarning && totalLinesCount > 0 && (
-                                <div style={{
-                                    marginBottom: '15px',
-                                    padding: '10px 15px',
-                                    background: '#fff3cd',
-                                    border: '1px solid #ffeeba',
-                                    borderRadius: '6px',
-                                    color: '#856404',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                                }}>
-                                    <div>
-                                        <span style={{ marginRight: '10px' }}>⚠️ <strong>Lines Monitoring:</strong> {monitoredLinesCount} monitored out of {totalLinesCount} total lines.</span>
-                                        <button
-                                            onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }}
-                                            style={{
-                                                background: 'none',
-                                                border: 'none',
-                                                color: '#0056b3',
-                                                textDecoration: 'underline',
-                                                cursor: 'pointer',
-                                                padding: 0,
-                                                fontWeight: 600
-                                            }}
-                                        >
-                                            Change in settings
-                                        </button>
+                            <div style={{ marginBottom: '15px', padding: '10px 15px', background: 'white', borderRadius: '8px', border: '1px solid #dee2e6', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                <h3 style={{ margin: '0 0 8px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ color: '#e74c3c' }}>⚠️</span> Overloads
+                                </h3>
+
+                                {showMonitoringWarning && totalLinesCount > 0 && (
+                                    <div style={{ marginBottom: '10px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '4px', color: '#856404', fontSize: '0.85rem' }}>
+                                        ⚠️ {monitoredLinesCount} monitored out of {totalLinesCount} total lines.
+                                        <strong> (Monitoring factor applied: {Math.round(monitoringFactor * 100)}%)</strong>
+                                        <button onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }} style={{ background: 'none', border: 'none', color: '#0056b3', textDecoration: 'underline', cursor: 'pointer', padding: '0 0 0 5px' }}>Change in settings</button>
+                                        <button onClick={() => setShowMonitoringWarning(false)} style={{ float: 'right', background: 'none', border: 'none', fontSize: '16px', lineHeight: 1, color: '#856404', cursor: 'pointer' }} title="Dismiss">&times;</button>
                                     </div>
-                                    <button
-                                        onClick={() => setShowMonitoringWarning(false)}
-                                        style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            fontSize: '20px',
-                                            lineHeight: 1,
-                                            color: '#856404',
-                                            cursor: 'pointer',
-                                            padding: '0 5px'
-                                        }}
-                                        title="Dismiss"
-                                    >
-                                        &times;
-                                    </button>
+                                )}
+
+                                <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'baseline',
+                                        gap: '8px',
+                                        padding: '6px',
+                                        background: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '#fff3cd' : 'transparent',
+                                        borderLeft: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '3px solid #ffc107' : '3px solid transparent',
+                                        borderBottom: '1px solid #eee'
+                                    }}>
+                                        <strong style={{ whiteSpace: 'nowrap' }}>N Overloads:</strong>
+                                        <div style={{ display: 'inline', wordBreak: 'break-word' }}>
+                                            {nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? (
+                                                nDiagram.lines_overloaded.map((lvl, i) => (
+                                                    <React.Fragment key={lvl}>
+                                                        {i > 0 && ', '}
+                                                        <button onClick={() => handleAssetClick(null, lvl, 'n')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#1e40af', fontWeight: 600, textDecoration: 'underline dotted' }}>{lvl}</button>
+                                                    </React.Fragment>
+                                                ))
+                                            ) : (
+                                                <span style={{ color: '#888', fontStyle: 'italic' }}>None</span>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div style={{
+                                        display: 'flex',
+                                        alignItems: 'baseline',
+                                        gap: '8px',
+                                        padding: '6px',
+                                        background: n1Diagram && n1Diagram.lines_overloaded && n1Diagram.lines_overloaded.length > 0 ? '#f8d7da' : 'transparent',
+                                        borderLeft: n1Diagram && n1Diagram.lines_overloaded && n1Diagram.lines_overloaded.length > 0 ? '3px solid #dc3545' : '3px solid transparent',
+                                        borderBottom: '1px solid #eee'
+                                    }}>
+                                        <strong style={{ whiteSpace: 'nowrap' }}>N-1 Overloads:</strong>
+                                        <div style={{ display: 'inline', wordBreak: 'break-word' }}>
+                                            {n1Diagram && n1Diagram.lines_overloaded && n1Diagram.lines_overloaded.length > 0 ? (
+                                                n1Diagram.lines_overloaded.map((lvl, i) => (
+                                                    <React.Fragment key={lvl}>
+                                                        {i > 0 && ', '}
+                                                        <button onClick={() => handleAssetClick(null, lvl, 'n-1')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#1e40af', fontWeight: 600, textDecoration: 'underline dotted' }}>{lvl}</button>
+                                                    </React.Fragment>
+                                                ))
+                                            ) : (
+                                                <span style={{ color: '#888', fontStyle: 'italic' }}>None</span>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
-                            )}
+                            </div>
                             <div style={{
                                 marginBottom: '10px',
                                 padding: '6px 10px',
@@ -2406,11 +2438,7 @@
                                     </div>
                                 )}
                             </div>
-                            {result?.lines_overloaded && result.lines_overloaded.length > 0 && (
-                                <div style={{ marginBottom: '10px', padding: '6px 10px', background: '#fff3cd', border: '1px solid #ffc107', borderRadius: '6px', fontSize: '13px' }}>
-                                    <strong>Overloaded lines:</strong> {result.lines_overloaded.join(', ')}
-                                </div>
-                            )}
+
 
                             {/* View mode toggle - only visible when an action is selected */}
 

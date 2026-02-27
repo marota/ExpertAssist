@@ -3,6 +3,7 @@ import './App.css';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
+import OverloadPanel from './components/OverloadPanel';
 import { api } from './api';
 import { usePanZoom } from './hooks/usePanZoom';
 import { processSvg, buildMetadataIndex, applyOverloadedHighlights, applyActionTargetHighlights, applyDeltaVisuals } from './utils/svgUtils';
@@ -29,6 +30,7 @@ function App() {
   const [minLineDisconnections, setMinLineDisconnections] = useState<number>(3.0);
   const [nPrioritizedActions, setNPrioritizedActions] = useState<number>(10);
   const [linesMonitoringPath, setLinesMonitoringPath] = useState<string>('');
+  const [monitoringFactor, setMonitoringFactor] = useState<number>(0.95);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
   const [settingsBackup, setSettingsBackup] = useState<any>(null);
@@ -40,10 +42,11 @@ function App() {
       minOpenCoupling,
       minLineDisconnections,
       nPrioritizedActions,
-      linesMonitoringPath
+      linesMonitoringPath,
+      monitoringFactor
     });
     setIsSettingsOpen(true);
-  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath]);
+  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor]);
 
   const handleCloseSettings = useCallback(() => {
     if (settingsBackup) {
@@ -53,6 +56,7 @@ function App() {
       setMinLineDisconnections(settingsBackup.minLineDisconnections);
       setNPrioritizedActions(settingsBackup.nPrioritizedActions);
       setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+      setMonitoringFactor(settingsBackup.monitoringFactor);
     }
     setIsSettingsOpen(false);
   }, [settingsBackup]);
@@ -68,6 +72,7 @@ function App() {
         min_line_disconnections: minLineDisconnections,
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
+        monitoring_factor: monitoringFactor,
       });
       setSettingsBackup({
         minLineReconnections,
@@ -75,7 +80,8 @@ function App() {
         minOpenCoupling,
         minLineDisconnections,
         nPrioritizedActions,
-        linesMonitoringPath
+        linesMonitoringPath,
+        monitoringFactor
       });
       setInfoMessage('Settings applied successfully.');
       setIsSettingsOpen(false);
@@ -83,7 +89,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor]);
 
   const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
     try {
@@ -167,6 +173,7 @@ function App() {
         min_line_disconnections: minLineDisconnections,
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
+        monitoring_factor: monitoringFactor,
       });
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
@@ -194,7 +201,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath]);
 
   const fetchBaseDiagram = async (vlCount: number) => {
     try {
@@ -772,22 +779,29 @@ function App() {
       />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', overflowY: 'auto' }}>
-          <ActionFeed
-            actions={result?.actions || {}}
-            actionScores={result?.action_scores}
-            linesOverloaded={result?.lines_overloaded || []}
-            selectedActionId={selectedActionId}
-            onActionSelect={handleActionSelect}
-            onAssetClick={handleAssetClick}
-            nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
-            edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
-            disconnectedElement={selectedBranch || null}
-            onManualActionAdded={handleManualActionAdded}
-            actionViewMode={actionViewMode}
-            onViewModeChange={handleViewModeChange}
-            analysisLoading={analysisLoading}
+        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', display: 'flex', flexDirection: 'column' }}>
+          <OverloadPanel
+            nOverloads={nDiagram?.lines_overloaded || []}
+            n1Overloads={n1Diagram?.lines_overloaded || []}
+            onAssetClick={handleAssetClick as any}
           />
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <ActionFeed
+              actions={result?.actions || {}}
+              actionScores={result?.action_scores}
+              linesOverloaded={result?.lines_overloaded || []}
+              selectedActionId={selectedActionId}
+              onActionSelect={handleActionSelect}
+              onAssetClick={handleAssetClick}
+              nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
+              edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
+              disconnectedElement={selectedBranch || null}
+              onManualActionAdded={handleManualActionAdded}
+              actionViewMode={actionViewMode}
+              onViewModeChange={handleViewModeChange}
+              analysisLoading={analysisLoading}
+            />
+          </div>
         </div>
         <div style={{ flex: 1, background: 'white', display: 'flex', flexDirection: 'column' }}>
           <VisualizationPanel
