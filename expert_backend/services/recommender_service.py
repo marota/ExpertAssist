@@ -54,6 +54,8 @@ class RecommenderService:
         config.N_PRIORITIZED_ACTIONS = settings.n_prioritized_actions
         if hasattr(settings, 'monitoring_factor'):
             config.MONITORING_FACTOR_THERMAL_LIMITS = settings.monitoring_factor
+        if hasattr(settings, 'pre_existing_overload_threshold') and settings.pre_existing_overload_threshold is not None:
+            config.PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD = settings.pre_existing_overload_threshold
 
         # Force the requested global flags
         config.MAX_RHO_BOTH_EXTREMITIES = True
@@ -381,6 +383,8 @@ class RecommenderService:
         pp.loadflow.run_ac(n, params)
         diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["lines_overloaded"] = self._get_overloaded_lines(n)
+        # Cache N-state element currents for N-1 comparison
+        self._n_state_currents = self._get_element_max_currents(n)
         return diagram
 
     def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
@@ -418,7 +422,11 @@ class RecommenderService:
             print(f"Warning: Failed to compute N-1 flow deltas: {e}")
             diagram["flow_deltas"] = {}
 
-        diagram["lines_overloaded"] = self._get_overloaded_lines(n)
+        # Exclude pre-existing overloads (already overloaded in N) unless worsened
+        n_state_currents = getattr(self, '_n_state_currents', None)
+        diagram["lines_overloaded"] = self._get_overloaded_lines(
+            n, n_state_currents=n_state_currents
+        )
 
         return diagram
 
@@ -518,28 +526,59 @@ class RecommenderService:
         }
 
 
-    def _get_overloaded_lines(self, network):
+    def _get_overloaded_lines(self, network, n_state_currents=None):
+        """Get overloaded lines and transformers.
+
+        Args:
+            network: pypowsybl network after load flow.
+            n_state_currents: If provided, dict {element_id: max_i_N} from the
+                N-state.  Pre-existing overloads (elements also overloaded in N)
+                are excluded unless their current increased by more than the
+                worsening threshold.
+        """
         import numpy as np
         limits = network.get_operational_limits()
         if limits.empty:
-            return []
-        limits = limits.reset_index()
-        current_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
-        limit_dict = dict(zip(current_limits['element_id'], current_limits['value']))
+            limit_dict = {}
+        else:
+            limits = limits.reset_index()
+            current_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
+            limit_dict = dict(zip(current_limits['element_id'], current_limits['value']))
         
-        lines = network.get_lines()[['i1', 'i2']]
         overloaded = []
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
-        for line_id, row in lines.iterrows():
-            if line_id in limit_dict:
-                limit = limit_dict[line_id]
+        worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+        default_limit = 9999.0  # Same default as the recommender
+
+        # Check both lines and 2-winding transformers
+        for df in [network.get_lines()[['i1', 'i2']], network.get_2_windings_transformers()[['i1', 'i2']]]:
+            for element_id, row in df.iterrows():
+                limit = limit_dict.get(element_id, default_limit)
                 i1 = row['i1']
                 i2 = row['i2']
                 if not np.isnan(i1) and not np.isnan(i2):
                     max_i = max(abs(i1), abs(i2))
                     if max_i > limit * monitoring_factor:
-                        overloaded.append(line_id)
+                        # If N-state currents provided, filter pre-existing overloads
+                        if n_state_currents is not None and element_id in n_state_currents:
+                            n_max_i = n_state_currents[element_id]
+                            if n_max_i > limit * monitoring_factor:
+                                # Was already overloaded in N — only keep if worsened
+                                if max_i <= n_max_i * (1 + worsening_threshold):
+                                    continue
+                        overloaded.append(element_id)
         return sanitize_for_json(overloaded)
+
+    def _get_element_max_currents(self, network):
+        """Return {element_id: max(|i1|, |i2|)} for all lines and transformers."""
+        import numpy as np
+        currents = {}
+        for df in [network.get_lines()[['i1', 'i2']], network.get_2_windings_transformers()[['i1', 'i2']]]:
+            for element_id, row in df.iterrows():
+                i1, i2 = row['i1'], row['i2']
+                if not np.isnan(i1) and not np.isnan(i2):
+                    currents[element_id] = max(abs(i1), abs(i2))
+        return currents
 
     def _get_network_flows(self, network):
         """Extract p1/p2 flows for lines and transformers from a simulated network."""

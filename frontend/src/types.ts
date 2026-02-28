@@ -8,6 +8,7 @@ export interface ConfigRequest {
     n_prioritized_actions: number;
     lines_monitoring_path?: string;
     monitoring_factor: number;
+    pre_existing_overload_threshold?: number;
 }
 
 export interface AnalysisRequest {

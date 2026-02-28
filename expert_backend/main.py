@@ -34,6 +34,7 @@ class ConfigRequest(BaseModel):
     n_prioritized_actions: int = 10
     lines_monitoring_path: str | None = None
     monitoring_factor: float = 0.95
+    pre_existing_overload_threshold: float = 0.02
 
 class AnalysisRequest(BaseModel):
     disconnected_element: str
