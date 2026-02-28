@@ -7,6 +7,7 @@ export interface ConfigRequest {
     min_line_disconnections: number;
     n_prioritized_actions: number;
     lines_monitoring_path?: string;
+    monitoring_factor: number;
 }
 
 export interface AnalysisRequest {
@@ -52,6 +53,7 @@ export interface DiagramData {
     action_id?: string;
     flow_deltas?: Record<string, FlowDelta>;
     originalViewBox?: ViewBox | null;
+    lines_overloaded?: string[];
 }
 
 export interface FlowDelta {
