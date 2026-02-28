@@ -18,6 +18,8 @@ interface VisualizationPanelProps {
     uniqueVoltages: number[];
     voltageRange: [number, number];
     onVoltageRangeChange: (range: [number, number]) => void;
+    actionViewMode: 'network' | 'delta';
+    onViewModeChange: (mode: 'network' | 'delta') => void;
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -37,7 +39,15 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     uniqueVoltages,
     voltageRange,
     onVoltageRangeChange,
+    actionViewMode,
+    onViewModeChange,
 }) => {
+    const showViewModeToggle = activeTab !== 'overflow' && (
+        (activeTab === 'n' && !!nDiagram?.svg) ||
+        (activeTab === 'n-1' && !!n1Diagram?.svg) ||
+        (activeTab === 'action' && !!actionDiagram?.svg)
+    );
+
     return (
         <>
             {/* Tab bar */}
@@ -90,10 +100,52 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         Overflow Analysis
                     </button>
                 )}
+
             </div>
 
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                {/* View Mode Overlay */}
+                {showViewModeToggle && (
+                    <div style={{
+                        position: 'absolute',
+                        top: '10px',
+                        right: '75px',
+                        zIndex: 100,
+                        display: 'flex',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        border: '1px solid #ccc',
+                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        backgroundColor: '#fff',
+                    }}>
+                        <button
+                            onClick={() => onViewModeChange('network')}
+                            style={{
+                                padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'network' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            Flows
+                        </button>
+                        <button
+                            onClick={() => onViewModeChange('delta')}
+                            style={{
+                                padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            Impacts
+                        </button>
+                    </div>
+                )}
+
                 {/* Overflow Container */}
                 {activeTab === 'overflow' && (
                     <div style={{

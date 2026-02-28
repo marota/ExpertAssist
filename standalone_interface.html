@@ -926,8 +926,11 @@
                         linesMonitoringPath,
                         monitoringFactor
                     });
-                    setInfoMessage('Settings applied successfully.');
+                    setInfoMessage('Settings applied successfully. Reloading network state...');
                     setIsSettingsOpen(false);
+
+                    // Re-fetch configuration and overloads to reflect limits change
+                    handleLoadConfig();
                 } catch (err) {
                     setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
                 }
@@ -1574,6 +1577,22 @@
                     }
                 }
 
+                // Standard diagram highlights
+                if (nDiagram && activeTab === 'n') {
+                    if (nSvgContainerRef.current) {
+                        applyActionTargetHighlights(nSvgContainerRef.current, null, null, null);
+                        const overloadedLines = nDiagram.lines_overloaded || [];
+                        applyOverloadedHighlights(nSvgContainerRef.current, nMetaIndex, overloadedLines);
+                    }
+                } else if (n1Diagram && activeTab === 'n-1') {
+                    // Apply standard overloads ONLY if NOT in delta mode
+                    if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
+                        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+                    }
+                    // Apply delta visuals (clears logic if mode != delta)
+                    applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
+                }
+
             }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
 
             // ===== VOLTAGE RANGE FILTER =====
@@ -2198,54 +2217,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <div style={{
-                                marginBottom: '10px',
-                                padding: '6px 10px',
-                                backgroundColor: '#f8f9fa',
-                                border: '1px solid #dee2e6',
-                                borderRadius: '6px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '8px',
-                            }}>
-                                <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
-                                <div style={{
-                                    display: 'flex',
-                                    borderRadius: '6px',
-                                    overflow: 'hidden',
-                                    border: '1px solid #ccc',
-                                    fontSize: '12px',
-                                    fontWeight: 600,
-                                }}>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('network'); }}
-                                        style={{
-                                            padding: '3px 10px',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                                            color: actionViewMode === 'network' ? '#fff' : '#555',
-                                            transition: 'all 0.15s ease',
-                                        }}
-                                    >
-                                        Flows
-                                    </button>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); setActionViewMode('delta'); }}
-                                        style={{
-                                            padding: '3px 10px',
-                                            border: 'none',
-                                            borderLeft: '1px solid #ccc',
-                                            cursor: 'pointer',
-                                            backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                                            color: actionViewMode === 'delta' ? '#fff' : '#555',
-                                            transition: 'all 0.15s ease',
-                                        }}
-                                    >
-                                        Δ Flows
-                                    </button>
-                                </div>
-                            </div>
+
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                                 <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
                                 <button
@@ -2448,7 +2420,7 @@
                                     const overloadedLines = result.lines_overloaded || [];
                                     // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
                                     const severity = details.max_rho != null
-                                        ? (details.max_rho > 1.0 ? 'red' : details.max_rho > 0.9 ? 'orange' : 'green')
+                                        ? (details.max_rho > monitoringFactor ? 'red' : details.max_rho > (monitoringFactor - 0.05) ? 'orange' : 'green')
                                         : (details.is_rho_reduction ? 'green' : 'red');
                                     const severityColors = {
                                         green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
@@ -2597,20 +2569,20 @@
                             <div style={{ display: 'flex', borderBottom: '1px solid #ccc' }}>
                                 <button
                                     onClick={() => setActiveTab('n')}
-                                    style={{ flex: 1, borderRadius: 0, background: activeTab === 'n' ? 'white' : '#ecf0f1', color: activeTab === 'n' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n' ? '3px solid #3498db' : 'none' }}
+                                    style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'n' ? 'white' : '#ecf0f1', color: activeTab === 'n' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n' ? '3px solid #3498db' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'n' ? 'bold' : 400 }}
                                 >
                                     Network (N)
                                 </button>
                                 <button
                                     onClick={() => setActiveTab('n-1')}
-                                    style={{ flex: 1, borderRadius: 0, background: activeTab === 'n-1' ? 'white' : '#ecf0f1', color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none' }}
+                                    style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'n-1' ? 'white' : '#ecf0f1', color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'n-1' ? 'bold' : 400 }}
                                 >
                                     Contingency (N-1)
                                 </button>
                                 {selectedActionId && (
                                     <button
                                         onClick={() => setActiveTab('action')}
-                                        style={{ flex: 1, borderRadius: 0, background: activeTab === 'action' ? 'white' : '#ecf0f1', color: activeTab === 'action' ? '#0056b3' : '#7f8c8d', borderBottom: activeTab === 'action' ? '3px solid #007bff' : 'none' }}
+                                        style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'action' ? 'white' : '#ecf0f1', color: activeTab === 'action' ? '#0056b3' : '#7f8c8d', borderBottom: activeTab === 'action' ? '3px solid #007bff' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'action' ? 'bold' : 400 }}
                                     >
                                         Action: {selectedActionId}
                                     </button>
@@ -2618,13 +2590,58 @@
                                 {result && (
                                     <button
                                         onClick={() => setActiveTab('overflow')}
-                                        style={{ flex: 1, borderRadius: 0, background: activeTab === 'overflow' ? 'white' : '#ecf0f1', color: activeTab === 'overflow' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'overflow' ? '3px solid #27ae60' : 'none' }}
+                                        style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'overflow' ? 'white' : '#ecf0f1', color: activeTab === 'overflow' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'overflow' ? '3px solid #27ae60' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'overflow' ? 'bold' : 400 }}
                                     >
                                         Overflow Analysis
                                     </button>
                                 )}
+
                             </div>
                             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                                {/* View Mode Overlay */}
+                                {(activeTab !== 'overflow' && (
+                                    (activeTab === 'n' && !!nDiagram?.svg) ||
+                                    (activeTab === 'n-1' && !!n1Diagram?.svg) ||
+                                    (activeTab === 'action' && !!actionDiagram?.svg)
+                                )) && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            top: '10px',
+                                            right: '75px',
+                                            zIndex: 100,
+                                            display: 'flex',
+                                            borderRadius: '6px',
+                                            overflow: 'hidden',
+                                            border: '1px solid #ccc',
+                                            boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            fontSize: '12px',
+                                            fontWeight: 600,
+                                            backgroundColor: '#fff',
+                                        }}>
+                                            <button
+                                                onClick={() => setActionViewMode('network')}
+                                                style={{
+                                                    padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                                    backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                                    color: actionViewMode === 'network' ? '#fff' : '#555',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                Flows
+                                            </button>
+                                            <button
+                                                onClick={() => setActionViewMode('delta')}
+                                                style={{
+                                                    padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                                    backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                                    color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                                    transition: 'all 0.15s ease'
+                                                }}
+                                            >
+                                                Impacts
+                                            </button>
+                                        </div>
+                                    )}
                                 {renderVisualization()}
                             </div>
                         </div>

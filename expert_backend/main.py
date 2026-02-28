@@ -33,6 +33,7 @@ class ConfigRequest(BaseModel):
     min_line_disconnections: float = 3.0
     n_prioritized_actions: int = 10
     lines_monitoring_path: str | None = None
+    monitoring_factor: float = 0.95
 
 class AnalysisRequest(BaseModel):
     disconnected_element: str
@@ -161,6 +162,8 @@ def get_network_diagram():
         diagram = recommender_service.get_network_diagram()
         return diagram
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/n1-diagram")

@@ -14,9 +14,8 @@ interface ActionFeedProps {
     edgesByEquipmentId: Map<string, EdgeMeta> | null;
     disconnectedElement: string | null;
     onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
-    actionViewMode: 'network' | 'delta';
-    onViewModeChange: (mode: 'network' | 'delta') => void;
     analysisLoading: boolean;
+    monitoringFactor: number;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -30,9 +29,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     edgesByEquipmentId,
     disconnectedElement,
     onManualActionAdded,
-    actionViewMode,
-    onViewModeChange,
     analysisLoading,
+    monitoringFactor,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -180,56 +178,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
     return (
         <div style={{ padding: '15px', height: '100%', overflowY: 'auto' }}>
-            {/* View mode toggle - always visible (matching standalone) */}
-            <div style={{
-                marginBottom: '10px',
-                padding: '6px 10px',
-                backgroundColor: '#f8f9fa',
-                border: '1px solid #dee2e6',
-                borderRadius: '6px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-            }}>
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#555' }}>View:</span>
-                <div style={{
-                    display: 'flex',
-                    borderRadius: '6px',
-                    overflow: 'hidden',
-                    border: '1px solid #ccc',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                }}>
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onViewModeChange('network'); }}
-                        style={{
-                            padding: '3px 10px',
-                            border: 'none',
-                            cursor: 'pointer',
-                            backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                            color: actionViewMode === 'network' ? '#fff' : '#555',
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
-                        Flows
-                    </button>
-                    <button
-                        onClick={(e) => { e.stopPropagation(); onViewModeChange('delta'); }}
-                        style={{
-                            padding: '3px 10px',
-                            border: 'none',
-                            borderLeft: '1px solid #ccc',
-                            cursor: 'pointer',
-                            backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                            color: actionViewMode === 'delta' ? '#fff' : '#555',
-                            transition: 'all 0.15s ease',
-                        }}
-                    >
-                        {'\u0394'} Flows
-                    </button>
-                </div>
-            </div>
-
             {/* Header with search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                 <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
@@ -431,25 +379,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     </div>
                 )}
             </div>
-
-            {linesOverloaded.length > 0 && (
-                <div style={{
-                    marginBottom: '10px',
-                    padding: '6px 10px',
-                    background: '#fff3cd',
-                    border: '1px solid #ffc107',
-                    borderRadius: '6px',
-                    fontSize: '13px',
-                }}>
-                    <strong>Overloaded lines:</strong> {linesOverloaded.join(', ')}
-                </div>
-            )}
-
             {sortedActionEntries.length > 0 ? (
                 sortedActionEntries.map(([id, details], index) => {
                     const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
                     const severity = details.max_rho != null
-                        ? (details.max_rho > 1.0 ? 'red' as const : details.max_rho > 0.9 ? 'orange' as const : 'green' as const)
+                        ? (details.max_rho > monitoringFactor ? 'red' as const : details.max_rho > (monitoringFactor - 0.05) ? 'orange' as const : 'green' as const)
                         : (details.is_rho_reduction ? 'green' as const : 'red' as const);
                     const severityColors = {
                         green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },

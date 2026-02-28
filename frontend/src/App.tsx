@@ -454,7 +454,7 @@ function App() {
         }
       }
     }
-  }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
+  }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
 
   // ===== Voltage Range Filter =====
   useEffect(() => {
@@ -797,9 +797,8 @@ function App() {
               edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
               disconnectedElement={selectedBranch || null}
               onManualActionAdded={handleManualActionAdded}
-              actionViewMode={actionViewMode}
-              onViewModeChange={handleViewModeChange}
               analysisLoading={analysisLoading}
+              monitoringFactor={monitoringFactor}
             />
           </div>
         </div>
@@ -821,6 +820,8 @@ function App() {
             uniqueVoltages={uniqueVoltages}
             voltageRange={voltageRange}
             onVoltageRangeChange={setVoltageRange}
+            actionViewMode={actionViewMode}
+            onViewModeChange={handleViewModeChange}
           />
         </div>
       </div>

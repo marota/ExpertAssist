@@ -52,6 +52,8 @@ class RecommenderService:
         config.MIN_OPEN_COUPLING = settings.min_open_coupling
         config.MIN_LINE_DISCONNECTIONS = settings.min_line_disconnections
         config.N_PRIORITIZED_ACTIONS = settings.n_prioritized_actions
+        if hasattr(settings, 'monitoring_factor'):
+            config.MONITORING_FACTOR_THERMAL_LIMITS = settings.monitoring_factor
 
         # Force the requested global flags
         config.MAX_RHO_BOTH_EXTREMITIES = True
@@ -257,13 +259,23 @@ class RecommenderService:
             prioritized = result.get("prioritized_actions", {})
             action_scores = sanitize_for_json(result.get("action_scores", {}))
 
+            monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+
             enriched_actions = {}
             for action_id, action_data in prioritized.items():
+                rho_before_raw = action_data.get("rho_before")
+                rho_after_raw = action_data.get("rho_after")
+                max_rho_raw = action_data.get("max_rho")
+                
+                rho_before = [r * monitoring_factor for r in rho_before_raw] if rho_before_raw else None
+                rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw else None
+                max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
+
                 enriched_actions[action_id] = {
                     "description_unitaire": action_data.get("description_unitaire") or "No description available",
-                    "rho_before": sanitize_for_json(action_data.get("rho_before")),
-                    "rho_after": sanitize_for_json(action_data.get("rho_after")),
-                    "max_rho": sanitize_for_json(action_data.get("max_rho")),
+                    "rho_before": sanitize_for_json(rho_before),
+                    "rho_after": sanitize_for_json(rho_after),
+                    "max_rho": sanitize_for_json(max_rho),
                     "max_rho_line": action_data.get("max_rho_line", ""),
                     "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
                 }
@@ -278,6 +290,13 @@ class RecommenderService:
                             val = action_obj.get(field)
                         topo[field] = sanitize_for_json(val) if val else {}
                     enriched_actions[action_id]["action_topology"] = topo
+
+        if getattr(config, 'IGNORE_LINES_MONITORING', False):
+            info_msg = "Note: Monitoring all lines in the network (IGNORE_LINES_MONITORING is enabled)."
+            if analysis_message:
+                analysis_message += " " + info_msg
+            else:
+                analysis_message = info_msg
 
         yield {
             "type": "result",
@@ -361,8 +380,14 @@ class RecommenderService:
         }
 
     def get_network_diagram(self, voltage_level_ids=None, depth=0):
+        import pypowsybl as pp
         n = self._load_network()
-        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        # Ensure flows are up-to-date
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lines_overloaded"] = self._get_overloaded_lines(n)
+        return diagram
 
     def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
@@ -398,6 +423,8 @@ class RecommenderService:
         except Exception as e:
             print(f"Warning: Failed to compute N-1 flow deltas: {e}")
             diagram["flow_deltas"] = {}
+
+        diagram["lines_overloaded"] = self._get_overloaded_lines(n)
 
         return diagram
 
@@ -495,6 +522,30 @@ class RecommenderService:
             "action_id": action_id,
             "voltage_level_id": voltage_level_id,
         }
+
+
+    def _get_overloaded_lines(self, network):
+        import numpy as np
+        limits = network.get_operational_limits()
+        if limits.empty:
+            return []
+        limits = limits.reset_index()
+        current_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
+        limit_dict = dict(zip(current_limits['element_id'], current_limits['value']))
+        
+        lines = network.get_lines()[['i1', 'i2']]
+        overloaded = []
+        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+        for line_id, row in lines.iterrows():
+            if line_id in limit_dict:
+                limit = limit_dict[line_id]
+                i1 = row['i1']
+                i2 = row['i2']
+                if not np.isnan(i1) and not np.isnan(i2):
+                    max_i = max(abs(i1), abs(i2))
+                    if max_i > limit * monitoring_factor:
+                        overloaded.append(line_id)
+        return sanitize_for_json(overloaded)
 
     def _get_network_flows(self, network):
         """Extract p1/p2 flows for lines and transformers from a simulated network."""
