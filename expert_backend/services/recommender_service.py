@@ -65,26 +65,20 @@ class RecommenderService:
                 config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
             else:
                 config.IGNORE_LINES_MONITORING = True
+                config.LINES_MONITORING_FILE = None
                 config.MONITORED_LINES_COUNT = 0
                 print(f"Ignoring lines monitoring (file path {settings.lines_monitoring_path} does not exist).")
         else:
-            # Fallback to default in ENV_FOLDER if not provided by UI
-            env_folder = getattr(settings, 'network_path', None)
-            if env_folder:
-                default_monitoring_file = os.path.join(env_folder, "lignes_a_monitorer.csv")
-                if os.path.exists(default_monitoring_file):
-                    config.IGNORE_LINES_MONITORING = False
-                    config.LINES_MONITORING_FILE = Path(default_monitoring_file)
-                else:
-                    config.IGNORE_LINES_MONITORING = True
-                    config.MONITORED_LINES_COUNT = 0
-            else:
-                config.IGNORE_LINES_MONITORING = True
-                config.MONITORED_LINES_COUNT = 0
+            # No monitoring file specified by UI → monitor all lines.
+            # The library's setup_environment_configs_pypowsybl will set
+            # lines_we_care_about = all lines when IGNORE_LINES_MONITORING is True.
+            config.IGNORE_LINES_MONITORING = True
+            config.LINES_MONITORING_FILE = None
+            config.MONITORED_LINES_COUNT = 0
 
         if not getattr(config, 'IGNORE_LINES_MONITORING', True):
             try:
-                from expert_op4grid_recommender.environment import load_interesting_lines
+                from expert_op4grid_recommender.data_loader import load_interesting_lines
                 lines = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
                 config.MONITORED_LINES_COUNT = len(lines)
                 print(f"Loaded lines monitoring file: {config.LINES_MONITORING_FILE} ({config.MONITORED_LINES_COUNT} lines)")
