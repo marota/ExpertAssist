@@ -346,9 +346,12 @@ function App() {
   }, []);
 
   // ===== Asset Click (from action card badges / rho line names) =====
-  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n-1' = 'action') => {
+  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n' | 'n-1' = 'action') => {
     setInspectQuery(assetName);
-    if (tab === 'n-1') {
+    if (tab === 'n') {
+      // Pre-existing overloads live in the N (pre-contingency) view
+      setActiveTab('n');
+    } else if (tab === 'n-1') {
       // Rho-before lines live in the N-1 (post-contingency) view
       setActiveTab('n-1');
     } else if (actionId !== selectedActionId) {
