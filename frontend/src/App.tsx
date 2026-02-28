@@ -31,6 +31,7 @@ function App() {
   const [nPrioritizedActions, setNPrioritizedActions] = useState<number>(10);
   const [linesMonitoringPath, setLinesMonitoringPath] = useState<string>('');
   const [monitoringFactor, setMonitoringFactor] = useState<number>(0.95);
+  const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState<number>(0.02);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
   const [settingsBackup, setSettingsBackup] = useState<any>(null);
@@ -43,10 +44,11 @@ function App() {
       minLineDisconnections,
       nPrioritizedActions,
       linesMonitoringPath,
-      monitoringFactor
+      monitoringFactor,
+      preExistingOverloadThreshold
     });
     setIsSettingsOpen(true);
-  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor]);
+  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold]);
 
   const handleCloseSettings = useCallback(() => {
     if (settingsBackup) {
@@ -57,6 +59,7 @@ function App() {
       setNPrioritizedActions(settingsBackup.nPrioritizedActions);
       setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
       setMonitoringFactor(settingsBackup.monitoringFactor);
+      setPreExistingOverloadThreshold(settingsBackup.preExistingOverloadThreshold);
     }
     setIsSettingsOpen(false);
   }, [settingsBackup]);
@@ -73,6 +76,7 @@ function App() {
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
         monitoring_factor: monitoringFactor,
+        pre_existing_overload_threshold: preExistingOverloadThreshold,
       });
       setSettingsBackup({
         minLineReconnections,
@@ -81,7 +85,8 @@ function App() {
         minLineDisconnections,
         nPrioritizedActions,
         linesMonitoringPath,
-        monitoringFactor
+        monitoringFactor,
+        preExistingOverloadThreshold
       });
       setInfoMessage('Settings applied successfully.');
       setIsSettingsOpen(false);
@@ -89,7 +94,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold]);
 
   const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
     try {
@@ -174,6 +179,7 @@ function App() {
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
         monitoring_factor: monitoringFactor,
+        pre_existing_overload_threshold: preExistingOverloadThreshold,
       });
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
@@ -201,7 +207,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold]);
 
   const fetchBaseDiagram = async (vlCount: number) => {
     try {
@@ -732,6 +738,13 @@ function App() {
                     <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
                     <button onClick={() => pickSettingsPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📁</button>
                   </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pre-existing Overload Threshold</label>
+                  <input type="number" step="0.01" min="0" max="1" value={preExistingOverloadThreshold} onChange={e => setPreExistingOverloadThreshold(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-10px' }}>
+                  Pre-existing overloads excluded from N-1 & max_rho unless worsened by this fraction (default 2%)
                 </div>
               </div>
             )}
