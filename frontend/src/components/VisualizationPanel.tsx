@@ -27,6 +27,7 @@ interface VisualizationPanelProps {
     onZoomIn: () => void;
     onZoomOut: () => void;
     hasBranches: boolean;
+    selectedBranch: string;
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -55,6 +56,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onZoomIn,
     onZoomOut,
     hasBranches,
+    selectedBranch,
 }) => {
     const showViewModeToggle = activeTab !== 'overflow' && (
         (activeTab === 'n' && !!nDiagram?.svg) ||
@@ -77,17 +79,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 >
                     Network (N)
                 </button>
-                <button
-                    onClick={() => onTabChange('n-1')}
-                    style={{
-                        flex: 1, borderRadius: 0, border: 'none', padding: '8px 15px', cursor: 'pointer', fontWeight: activeTab === 'n-1' ? 'bold' : 400,
-                        background: activeTab === 'n-1' ? 'white' : '#ecf0f1',
-                        color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d',
-                        borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none',
-                    }}
-                >
-                    Contingency (N-1)
-                </button>
+                {selectedBranch && (
+                    <button
+                        onClick={() => onTabChange('n-1')}
+                        style={{
+                            flex: 1, borderRadius: 0, border: 'none', padding: '8px 15px', cursor: 'pointer', fontWeight: activeTab === 'n-1' ? 'bold' : 400,
+                            background: activeTab === 'n-1' ? 'white' : '#ecf0f1',
+                            color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d',
+                            borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none',
+                        }}
+                    >
+                        Contingency (N-1)
+                    </button>
+                )}
                 {selectedActionId && (
                     <button
                         onClick={() => onTabChange('action')}

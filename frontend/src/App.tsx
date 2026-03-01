@@ -5,7 +5,10 @@ import ActionFeed from './components/ActionFeed';
 import OverloadPanel from './components/OverloadPanel';
 import { api } from './api';
 import { usePanZoom } from './hooks/usePanZoom';
-import { processSvg, buildMetadataIndex, applyOverloadedHighlights, applyActionTargetHighlights, applyDeltaVisuals } from './utils/svgUtils';
+import {
+  processSvg, buildMetadataIndex, applyOverloadedHighlights,
+  applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight
+} from './utils/svgUtils';
 import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId } from './types';
 
 function App() {
@@ -111,6 +114,10 @@ function App() {
 
   // ===== Analysis State =====
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [pendingAnalysisResult, setPendingAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [selectedActionIds, setSelectedActionIds] = useState<Set<string>>(new Set());
+  const [manuallyAddedIds, setManuallyAddedIds] = useState<Set<string>>(new Set());
+  const [rejectedActionIds, setRejectedActionIds] = useState<Set<string>>(new Set());
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [infoMessage, setInfoMessage] = useState('');
 
@@ -162,7 +169,10 @@ function App() {
     setNDiagram(null);
     setN1Diagram(null);
     setResult(null);
+    setPendingAnalysisResult(null);
     setSelectedActionId(null);
+    setSelectedActionIds(new Set());
+    setRejectedActionIds(new Set());
     setActionDiagram(null);
     setActiveTab('n');
     lastZoomState.current = { query: '', branch: '' };
@@ -254,6 +264,7 @@ function App() {
     setInfoMessage('');
     setSelectedActionId(null);
     setActionDiagram(null);
+    setPendingAnalysisResult(null);
     setActiveTab('overflow');
 
     try {
@@ -278,12 +289,8 @@ function App() {
             const event = JSON.parse(line);
             if (event.type === 'pdf') setResult(p => ({ ...p!, pdf_url: event.pdf_url } as AnalysisResult));
             else if (event.type === 'result') {
-              // Merge previously manually-added actions into the new result
-              setResult(prev => {
-                const prevActions = prev?.actions || {};
-                const merged = { ...prevActions, ...event.actions };
-                return { ...event, actions: merged };
-              });
+              // Store analysis result as pending — don't merge yet
+              setPendingAnalysisResult(event);
               if (event.message) setInfoMessage(event.message);
             }
             else if (event.type === 'error') setError('Analysis failed: ' + event.message);
@@ -298,6 +305,26 @@ function App() {
       setAnalysisLoading(false);
     }
   }, [selectedBranch]);
+
+  const handleDisplayPrioritizedActions = useCallback(() => {
+    if (!pendingAnalysisResult) return;
+    setResult(prev => {
+      // Preserve manually added / selected actions
+      const manualActionsData: Record<string, ActionDetail> = {};
+      if (prev?.actions) {
+        for (const [id, data] of Object.entries(prev.actions)) {
+          if (selectedActionIds.has(id)) {
+            manualActionsData[id] = data;
+          }
+        }
+      }
+      return {
+        ...pendingAnalysisResult,
+        actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
+      };
+    });
+    setPendingAnalysisResult(null);
+  }, [pendingAnalysisResult, selectedActionIds]);
 
   // ===== Action Selection =====
   const handleActionSelect = useCallback(async (actionId: string | null) => {
@@ -332,6 +359,37 @@ function App() {
     }
   }, [selectedActionId, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox, voltageLevels.length]);
 
+  const handleActionFavorite = useCallback((actionId: string) => {
+    setSelectedActionIds(prev => {
+      const next = new Set(prev);
+      next.add(actionId);
+      return next;
+    });
+    setRejectedActionIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+  }, []);
+
+  const handleActionReject = useCallback((actionId: string) => {
+    setRejectedActionIds(prev => {
+      const next = new Set(prev);
+      next.add(actionId);
+      return next;
+    });
+    setSelectedActionIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+    setManuallyAddedIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+  }, []);
+
   const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail, linesOverloaded: string[]) => {
     setResult(prev => {
       const base = prev || {
@@ -352,6 +410,9 @@ function App() {
         },
       };
     });
+
+    setSelectedActionIds(prev => new Set(prev).add(actionId));
+    setManuallyAddedIds(prev => new Set(prev).add(actionId));
     // Auto-select the newly added action (and fetch its diagram)
     handleActionSelect(actionId);
   }, [handleActionSelect]);
@@ -465,13 +526,14 @@ function App() {
 
     // N-1 Tab Logic
     if (activeTab === 'n-1') {
-      if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
-        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+      if (n1SvgContainerRef.current) {
+        if (actionViewMode !== 'delta' && n1MetaIndex && overloadedLines.length > 0) {
+          applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+        }
+        applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex, actionViewMode === 'delta');
+        applyContingencyHighlight(n1SvgContainerRef.current, n1MetaIndex, selectedBranch);
       }
-      applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex, actionViewMode === 'delta');
-    }
-
-    // Action Tab Logic
+    } // Action Tab Logic
     if (activeTab === 'action') {
       applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex, actionViewMode === 'delta');
 
@@ -895,12 +957,19 @@ function App() {
               actionScores={result?.action_scores}
               linesOverloaded={result?.lines_overloaded || []}
               selectedActionId={selectedActionId}
+              selectedActionIds={selectedActionIds}
+              rejectedActionIds={rejectedActionIds}
+              manuallyAddedIds={manuallyAddedIds}
+              pendingAnalysisResult={pendingAnalysisResult}
               onActionSelect={handleActionSelect}
+              onActionFavorite={handleActionFavorite}
+              onActionReject={handleActionReject}
               onAssetClick={handleAssetClick}
               nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
               edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
               disconnectedElement={selectedBranch || null}
               onManualActionAdded={handleManualActionAdded}
+              onDisplayPrioritizedActions={handleDisplayPrioritizedActions}
               analysisLoading={analysisLoading}
               monitoringFactor={monitoringFactor}
             />
@@ -933,6 +1002,7 @@ function App() {
             onZoomIn={handleManualZoomIn}
             onZoomOut={handleManualZoomOut}
             hasBranches={branches.length > 0}
+            selectedBranch={selectedBranch}
           />
         </div>
       </div>

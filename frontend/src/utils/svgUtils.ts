@@ -305,6 +305,57 @@ export const applyActionTargetHighlights = (
 };
 
 /**
+ * Apply yellow fluo halo to the disconnected branch in the N-1 state.
+ */
+export const applyContingencyHighlight = (
+    container: HTMLElement,
+    metaIndex: MetadataIndex | null,
+    disconnectedElement: string | null,
+) => {
+    if (!container || !metaIndex || !disconnectedElement) return;
+
+    const { edgesByEquipmentId } = metaIndex;
+    const edge = edgesByEquipmentId.get(disconnectedElement);
+    if (!edge || !edge.svgId) return;
+
+    let backgroundLayer = container.querySelector('#nad-background-layer');
+    if (!backgroundLayer) {
+        const svg = container.querySelector('svg');
+        if (svg) {
+            backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            backgroundLayer.setAttribute('id', 'nad-background-layer');
+            if (svg.firstChild) {
+                svg.insertBefore(backgroundLayer, svg.firstChild);
+            } else {
+                svg.appendChild(backgroundLayer);
+            }
+        }
+    }
+
+    const el = container.querySelector(`[id="${edge.svgId}"]`);
+    if (!el || !backgroundLayer) return;
+
+    const clone = el.cloneNode(true) as SVGGraphicsElement;
+    clone.removeAttribute('id');
+    clone.classList.add('nad-action-target');
+    clone.classList.add('nad-highlight-clone');
+
+    try {
+        const elCTM = (el as SVGGraphicsElement).getScreenCTM();
+        const bgCTM = (backgroundLayer as unknown as SVGGraphicsElement).getScreenCTM();
+        if (elCTM && bgCTM) {
+            const relativeCTM = bgCTM.inverse().multiply(elCTM);
+            const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
+            clone.setAttribute('transform', matrixStr);
+        }
+    } catch (e) {
+        console.warn('Failed to get CTM for contingency highlight:', e);
+    }
+    backgroundLayer.appendChild(clone);
+};
+
+
+/**
  * Apply delta flow visualizations (coloring + text replacement) on a container.
  * Saves original text in data-original-text attribute for restoration.
  */

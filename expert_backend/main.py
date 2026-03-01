@@ -281,6 +281,42 @@ def get_action_variant_sld(request: ActionVariantSldRequest):
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
+class NSldRequest(BaseModel):
+    voltage_level_id: str
+
+@app.post("/api/n-sld")
+def get_n_sld(request: NSldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the base network state."""
+    try:
+        diagram = recommender_service.get_n_sld(request.voltage_level_id)
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+class N1SldRequest(BaseModel):
+    disconnected_element: str
+    voltage_level_id: str
+
+@app.post("/api/n1-sld")
+def get_n1_sld(request: N1SldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the N-1 network state."""
+    try:
+        diagram = recommender_service.get_n1_sld(
+            request.disconnected_element,
+            request.voltage_level_id,
+        )
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/actions")
 def get_actions():
     """Return all available action IDs and descriptions from the loaded dictionary."""
