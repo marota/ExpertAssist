@@ -18,6 +18,16 @@ interface VisualizationPanelProps {
     uniqueVoltages: number[];
     voltageRange: [number, number];
     onVoltageRangeChange: (range: [number, number]) => void;
+    actionViewMode: 'network' | 'delta';
+    onViewModeChange: (mode: 'network' | 'delta') => void;
+    inspectQuery: string;
+    onInspectQueryChange: (query: string) => void;
+    inspectableItems: string[];
+    onResetView: () => void;
+    onZoomIn: () => void;
+    onZoomOut: () => void;
+    hasBranches: boolean;
+    selectedBranch: string;
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -37,7 +47,23 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     uniqueVoltages,
     voltageRange,
     onVoltageRangeChange,
+    actionViewMode,
+    onViewModeChange,
+    inspectQuery,
+    onInspectQueryChange,
+    inspectableItems,
+    onResetView,
+    onZoomIn,
+    onZoomOut,
+    hasBranches,
+    selectedBranch,
 }) => {
+    const showViewModeToggle = activeTab !== 'overflow' && (
+        (activeTab === 'n' && !!nDiagram?.svg) ||
+        (activeTab === 'n-1' && !!n1Diagram?.svg) ||
+        (activeTab === 'action' && !!actionDiagram?.svg)
+    );
+
     return (
         <>
             {/* Tab bar */}
@@ -53,17 +79,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                 >
                     Network (N)
                 </button>
-                <button
-                    onClick={() => onTabChange('n-1')}
-                    style={{
-                        flex: 1, borderRadius: 0, border: 'none', padding: '8px 15px', cursor: 'pointer', fontWeight: activeTab === 'n-1' ? 'bold' : 400,
-                        background: activeTab === 'n-1' ? 'white' : '#ecf0f1',
-                        color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d',
-                        borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none',
-                    }}
-                >
-                    Contingency (N-1)
-                </button>
+                {selectedBranch && (
+                    <button
+                        onClick={() => onTabChange('n-1')}
+                        style={{
+                            flex: 1, borderRadius: 0, border: 'none', padding: '8px 15px', cursor: 'pointer', fontWeight: activeTab === 'n-1' ? 'bold' : 400,
+                            background: activeTab === 'n-1' ? 'white' : '#ecf0f1',
+                            color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d',
+                            borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none',
+                        }}
+                    >
+                        Contingency (N-1)
+                    </button>
+                )}
                 {selectedActionId && (
                     <button
                         onClick={() => onTabChange('action')}
@@ -77,7 +105,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         Action: {selectedActionId}
                     </button>
                 )}
-                {result && (
+                {result?.pdf_url && (
                     <button
                         onClick={() => onTabChange('overflow')}
                         style={{
@@ -90,10 +118,52 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         Overflow Analysis
                     </button>
                 )}
+
             </div>
 
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                {/* View Mode Overlay */}
+                {showViewModeToggle && (
+                    <div style={{
+                        position: 'absolute',
+                        top: '10px',
+                        right: '75px',
+                        zIndex: 100,
+                        display: 'flex',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        border: '1px solid #ccc',
+                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        backgroundColor: '#fff',
+                    }}>
+                        <button
+                            onClick={() => onViewModeChange('network')}
+                            style={{
+                                padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'network' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            Flows
+                        </button>
+                        <button
+                            onClick={() => onViewModeChange('delta')}
+                            style={{
+                                padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            Impacts
+                        </button>
+                    </div>
+                )}
+
                 {/* Overflow Container */}
                 {activeTab === 'overflow' && (
                     <div style={{
@@ -252,6 +322,97 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         </div>
                     );
                 })()}
+
+                {/* Bottom-left overlay: Zoom + Inspect */}
+                {activeTab !== 'overflow' && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '12px',
+                        left: '12px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        alignItems: 'flex-start',
+                    }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <button
+                                onClick={onZoomIn}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom In"
+                            >
+                                +
+                            </button>
+                            <button
+                                onClick={onResetView}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 14px', cursor: 'pointer',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                🔍 Unzoom
+                            </button>
+                            <button
+                                onClick={onZoomOut}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom Out"
+                            >
+                                -
+                            </button>
+                        </div>
+
+                        {hasBranches && (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <input
+                                    list="inspectables"
+                                    value={inspectQuery}
+                                    onChange={e => onInspectQueryChange(e.target.value)}
+                                    placeholder="🔍 Inspect..."
+                                    style={{
+                                        padding: '5px 10px',
+                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        width: '180px',
+                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        background: 'white',
+                                    }}
+                                />
+                                <datalist id="inspectables">
+                                    {inspectableItems.map(b => <option key={b} value={b} />)}
+                                </datalist>
+                                {inspectQuery && (
+                                    <button
+                                        onClick={() => onInspectQueryChange('')}
+                                        style={{
+                                            background: '#e74c3c', color: 'white', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        }}
+                                        title="Clear"
+                                    >
+                                        X
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </>
     );

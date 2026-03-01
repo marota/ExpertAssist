@@ -1,11 +1,14 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import './App.css';
-import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
+import OverloadPanel from './components/OverloadPanel';
 import { api } from './api';
 import { usePanZoom } from './hooks/usePanZoom';
-import { processSvg, buildMetadataIndex, applyOverloadedHighlights, applyActionTargetHighlights, applyDeltaVisuals } from './utils/svgUtils';
+import {
+  processSvg, buildMetadataIndex, applyOverloadedHighlights,
+  applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight
+} from './utils/svgUtils';
 import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId } from './types';
 
 function App() {
@@ -22,6 +25,88 @@ function App() {
   const [configLoading, setConfigLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Settings State
+  const [minLineReconnections, setMinLineReconnections] = useState<number>(2.0);
+  const [minCloseCoupling, setMinCloseCoupling] = useState<number>(3.0);
+  const [minOpenCoupling, setMinOpenCoupling] = useState<number>(2.0);
+  const [minLineDisconnections, setMinLineDisconnections] = useState<number>(3.0);
+  const [nPrioritizedActions, setNPrioritizedActions] = useState<number>(10);
+  const [linesMonitoringPath, setLinesMonitoringPath] = useState<string>('');
+  const [monitoringFactor, setMonitoringFactor] = useState<number>(0.95);
+  const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState<number>(0.02);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
+  const [settingsBackup, setSettingsBackup] = useState<any>(null);
+
+  const handleOpenSettings = useCallback(() => {
+    setSettingsBackup({
+      minLineReconnections,
+      minCloseCoupling,
+      minOpenCoupling,
+      minLineDisconnections,
+      nPrioritizedActions,
+      linesMonitoringPath,
+      monitoringFactor,
+      preExistingOverloadThreshold
+    });
+    setIsSettingsOpen(true);
+  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold]);
+
+  const handleCloseSettings = useCallback(() => {
+    if (settingsBackup) {
+      setMinLineReconnections(settingsBackup.minLineReconnections);
+      setMinCloseCoupling(settingsBackup.minCloseCoupling);
+      setMinOpenCoupling(settingsBackup.minOpenCoupling);
+      setMinLineDisconnections(settingsBackup.minLineDisconnections);
+      setNPrioritizedActions(settingsBackup.nPrioritizedActions);
+      setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
+      setMonitoringFactor(settingsBackup.monitoringFactor);
+      setPreExistingOverloadThreshold(settingsBackup.preExistingOverloadThreshold);
+    }
+    setIsSettingsOpen(false);
+  }, [settingsBackup]);
+
+  const handleApplySettings = useCallback(async () => {
+    try {
+      await api.updateConfig({
+        network_path: networkPath,
+        action_file_path: actionPath,
+        min_line_reconnections: minLineReconnections,
+        min_close_coupling: minCloseCoupling,
+        min_open_coupling: minOpenCoupling,
+        min_line_disconnections: minLineDisconnections,
+        n_prioritized_actions: nPrioritizedActions,
+        lines_monitoring_path: linesMonitoringPath,
+        monitoring_factor: monitoringFactor,
+        pre_existing_overload_threshold: preExistingOverloadThreshold,
+      });
+      setSettingsBackup({
+        minLineReconnections,
+        minCloseCoupling,
+        minOpenCoupling,
+        minLineDisconnections,
+        nPrioritizedActions,
+        linesMonitoringPath,
+        monitoringFactor,
+        preExistingOverloadThreshold
+      });
+      setInfoMessage('Settings applied successfully.');
+      setIsSettingsOpen(false);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
+    }
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold]);
+
+  const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
+    try {
+      const path = await api.pickPath(type);
+      if (path) setter(path);
+    } catch {
+      console.error('Failed to open file picker');
+    }
+  };
+
   // Nominal voltage filter state
   const [nominalVoltageMap, setNominalVoltageMap] = useState<Record<string, number>>({});
   const [uniqueVoltages, setUniqueVoltages] = useState<number[]>([]);
@@ -29,6 +114,10 @@ function App() {
 
   // ===== Analysis State =====
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [pendingAnalysisResult, setPendingAnalysisResult] = useState<AnalysisResult | null>(null);
+  const [selectedActionIds, setSelectedActionIds] = useState<Set<string>>(new Set());
+  const [manuallyAddedIds, setManuallyAddedIds] = useState<Set<string>>(new Set());
+  const [rejectedActionIds, setRejectedActionIds] = useState<Set<string>>(new Set());
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [infoMessage, setInfoMessage] = useState('');
 
@@ -80,13 +169,27 @@ function App() {
     setNDiagram(null);
     setN1Diagram(null);
     setResult(null);
+    setPendingAnalysisResult(null);
     setSelectedActionId(null);
+    setSelectedActionIds(new Set());
+    setRejectedActionIds(new Set());
     setActionDiagram(null);
     setActiveTab('n');
     lastZoomState.current = { query: '', branch: '' };
 
     try {
-      await api.updateConfig({ network_path: networkPath, action_file_path: actionPath });
+      await api.updateConfig({
+        network_path: networkPath,
+        action_file_path: actionPath,
+        min_line_reconnections: minLineReconnections,
+        min_close_coupling: minCloseCoupling,
+        min_open_coupling: minOpenCoupling,
+        min_line_disconnections: minLineDisconnections,
+        n_prioritized_actions: nPrioritizedActions,
+        lines_monitoring_path: linesMonitoringPath,
+        monitoring_factor: monitoringFactor,
+        pre_existing_overload_threshold: preExistingOverloadThreshold,
+      });
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
         api.getBranches(),
@@ -113,7 +216,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold]);
 
   const fetchBaseDiagram = async (vlCount: number) => {
     try {
@@ -158,10 +261,10 @@ function App() {
     if (!selectedBranch) return;
     setAnalysisLoading(true);
     setError('');
-    setResult(null);
     setInfoMessage('');
     setSelectedActionId(null);
     setActionDiagram(null);
+    setPendingAnalysisResult(null);
     setActiveTab('overflow');
 
     try {
@@ -185,7 +288,11 @@ function App() {
           try {
             const event = JSON.parse(line);
             if (event.type === 'pdf') setResult(p => ({ ...p!, pdf_url: event.pdf_url } as AnalysisResult));
-            else if (event.type === 'result') { setResult(event); if (event.message) setInfoMessage(event.message); }
+            else if (event.type === 'result') {
+              // Store analysis result as pending — don't merge yet
+              setPendingAnalysisResult(event);
+              if (event.message) setInfoMessage(event.message);
+            }
             else if (event.type === 'error') setError('Analysis failed: ' + event.message);
           } catch (e) {
             console.error('Stream error:', e);
@@ -198,6 +305,26 @@ function App() {
       setAnalysisLoading(false);
     }
   }, [selectedBranch]);
+
+  const handleDisplayPrioritizedActions = useCallback(() => {
+    if (!pendingAnalysisResult) return;
+    setResult(prev => {
+      // Preserve manually added / selected actions
+      const manualActionsData: Record<string, ActionDetail> = {};
+      if (prev?.actions) {
+        for (const [id, data] of Object.entries(prev.actions)) {
+          if (selectedActionIds.has(id)) {
+            manualActionsData[id] = data;
+          }
+        }
+      }
+      return {
+        ...pendingAnalysisResult,
+        actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
+      };
+    });
+    setPendingAnalysisResult(null);
+  }, [pendingAnalysisResult, selectedActionIds]);
 
   // ===== Action Selection =====
   const handleActionSelect = useCallback(async (actionId: string | null) => {
@@ -232,17 +359,60 @@ function App() {
     }
   }, [selectedActionId, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox, voltageLevels.length]);
 
-  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail) => {
+  const handleActionFavorite = useCallback((actionId: string) => {
+    setSelectedActionIds(prev => {
+      const next = new Set(prev);
+      next.add(actionId);
+      return next;
+    });
+    setRejectedActionIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+  }, []);
+
+  const handleActionReject = useCallback((actionId: string) => {
+    setRejectedActionIds(prev => {
+      const next = new Set(prev);
+      next.add(actionId);
+      return next;
+    });
+    setSelectedActionIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+    setManuallyAddedIds(prev => {
+      const next = new Set(prev);
+      next.delete(actionId);
+      return next;
+    });
+  }, []);
+
+  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail, linesOverloaded: string[]) => {
     setResult(prev => {
-      if (!prev) return prev;
+      const base = prev || {
+        pdf_path: null,
+        pdf_url: null,
+        actions: {},
+        lines_overloaded: [],
+        message: '',
+        dc_fallback: false,
+      };
       return {
-        ...prev,
+        ...base,
+        // Use the simulation's overloaded lines if no prior analysis provided them
+        lines_overloaded: base.lines_overloaded.length > 0 ? base.lines_overloaded : linesOverloaded,
         actions: {
-          ...prev.actions,
+          ...base.actions,
           [actionId]: detail,
         },
       };
     });
+
+    setSelectedActionIds(prev => new Set(prev).add(actionId));
+    setManuallyAddedIds(prev => new Set(prev).add(actionId));
     // Auto-select the newly added action (and fetch its diagram)
     handleActionSelect(actionId);
   }, [handleActionSelect]);
@@ -252,9 +422,12 @@ function App() {
   }, []);
 
   // ===== Asset Click (from action card badges / rho line names) =====
-  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n-1' = 'action') => {
+  const handleAssetClick = useCallback((actionId: string, assetName: string, tab: 'action' | 'n' | 'n-1' = 'action') => {
     setInspectQuery(assetName);
-    if (tab === 'n-1') {
+    if (tab === 'n') {
+      // Pre-existing overloads live in the N (pre-contingency) view
+      setActiveTab('n');
+    } else if (tab === 'n-1') {
       // Rho-before lines live in the N-1 (post-contingency) view
       setActiveTab('n-1');
     } else if (actionId !== selectedActionId) {
@@ -264,6 +437,35 @@ function App() {
       setActiveTab('action');
     }
   }, [selectedActionId, handleActionSelect]);
+
+  // ===== Zoom Controls =====
+  const handleManualZoomIn = useCallback(() => {
+    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+    const vb = currentPZ?.viewBox;
+    if (currentPZ && vb) {
+      const scale = 0.8;
+      currentPZ.setViewBox({
+        x: vb.x + vb.w * (1 - scale) / 2,
+        y: vb.y + vb.h * (1 - scale) / 2,
+        w: vb.w * scale,
+        h: vb.h * scale,
+      });
+    }
+  }, [activeTab, actionPZ, nPZ, n1PZ]);
+
+  const handleManualZoomOut = useCallback(() => {
+    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+    const vb = currentPZ?.viewBox;
+    if (currentPZ && vb) {
+      const scale = 1.25;
+      currentPZ.setViewBox({
+        x: vb.x + vb.w * (1 - scale) / 2,
+        y: vb.y + vb.h * (1 - scale) / 2,
+        w: vb.w * scale,
+        h: vb.h * scale,
+      });
+    }
+  }, [activeTab, actionPZ, nPZ, n1PZ]);
 
   // ===== Reset View =====
   const handleManualReset = useCallback(() => {
@@ -324,13 +526,14 @@ function App() {
 
     // N-1 Tab Logic
     if (activeTab === 'n-1') {
-      if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
-        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+      if (n1SvgContainerRef.current) {
+        if (actionViewMode !== 'delta' && n1MetaIndex && overloadedLines.length > 0) {
+          applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
+        }
+        applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex, actionViewMode === 'delta');
+        applyContingencyHighlight(n1SvgContainerRef.current, n1MetaIndex, selectedBranch);
       }
-      applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex, actionViewMode === 'delta');
-    }
-
-    // Action Tab Logic
+    } // Action Tab Logic
     if (activeTab === 'action') {
       applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex, actionViewMode === 'delta');
 
@@ -366,7 +569,7 @@ function App() {
         }
       }
     }
-  }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
+  }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
 
   // ===== Voltage Range Filter =====
   useEffect(() => {
@@ -555,46 +758,222 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <header style={{ background: '#2c3e50', color: 'white', padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0 }}>Expert Recommender</h2>
-        <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
+      <header style={{
+        background: '#2c3e50', color: 'white', padding: '8px 20px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        gap: '15px', flexWrap: 'wrap'
+      }}>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', whiteSpace: 'nowrap' }}>⚡ Co-Study4Grid</h2>
+
+        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Network Path</label>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)}
+              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
+            />
+            <button
+              onClick={() => pickSettingsPath('dir', setNetworkPath)}
+              style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}
+            >
+              📂
+            </button>
+          </div>
+        </div>
+
+        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Action File Path</label>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              type="text" value={actionPath} onChange={e => setActionPath(e.target.value)}
+              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
+            />
+            <button
+              onClick={() => pickSettingsPath('file', setActionPath)}
+              style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}
+            >
+              📄
+            </button>
+          </div>
+        </div>
+
+        <button
+          onClick={handleLoadConfig} disabled={configLoading}
+          style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+        >
+          {configLoading ? '⏳ Loading...' : '🔄 Load Study'}
+        </button>
+
+        <button
+          onClick={handleOpenSettings}
+          style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+          title="Settings"
+        >
+          &#9881;
+        </button>
       </header>
 
-      <ConfigurationPanel
-        networkPath={networkPath}
-        actionPath={actionPath}
-        onNetworkPathChange={setNetworkPath}
-        onActionPathChange={setActionPath}
-        branches={branches}
-        selectedBranch={selectedBranch}
-        onBranchChange={setSelectedBranch}
-        inspectQuery={inspectQuery}
-        onInspectQueryChange={setInspectQuery}
-        inspectableItems={inspectableItems}
-        onLoadConfig={handleLoadConfig}
-        onRunAnalysis={handleRunAnalysis}
-        onResetView={handleManualReset}
-        configLoading={configLoading}
-        analysisLoading={analysisLoading}
-      />
+      {/* Settings Modal */}
+      {isSettingsOpen && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3000,
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          <div style={{
+            background: 'white', padding: '25px', borderRadius: '8px',
+            width: '450px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)',
+            display: 'flex', flexDirection: 'column', gap: '15px', color: 'black'
+          }}>
+            <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
+              <button
+                onClick={() => setSettingsTab('recommender')}
+                style={{
+                  flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                  border: 'none', borderBottom: settingsTab === 'recommender' ? '2px solid #3498db' : 'none',
+                  fontWeight: settingsTab === 'recommender' ? 'bold' : 'normal',
+                  color: settingsTab === 'recommender' ? '#3498db' : '#555'
+                }}
+              >
+                Recommender
+              </button>
+              <button
+                onClick={() => setSettingsTab('configurations')}
+                style={{
+                  flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                  border: 'none', borderBottom: settingsTab === 'configurations' ? '2px solid #3498db' : 'none',
+                  fontWeight: settingsTab === 'configurations' ? 'bold' : 'normal',
+                  color: settingsTab === 'configurations' ? '#3498db' : '#555'
+                }}
+              >
+                Configurations
+              </button>
+            </div>
+
+            {settingsTab === 'recommender' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Reconnections</label>
+                  <input type="number" step="0.1" value={minLineReconnections} onChange={e => setMinLineReconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Close Coupling</label>
+                  <input type="number" step="0.1" value={minCloseCoupling} onChange={e => setMinCloseCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Open Coupling</label>
+                  <input type="number" step="0.1" value={minOpenCoupling} onChange={e => setMinOpenCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Disconnections</label>
+                  <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
+                  <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+              </div>
+            )}
+
+            {settingsTab === 'configurations' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <input type="text" value={linesMonitoringPath} onChange={e => setLinesMonitoringPath(e.target.value)} placeholder="Leave empty for IGNORE_LINES_MONITORING=True" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <button onClick={() => pickSettingsPath('file', setLinesMonitoringPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📁</button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pre-existing Overload Threshold</label>
+                  <input type="number" step="0.01" min="0" max="1" value={preExistingOverloadThreshold} onChange={e => setPreExistingOverloadThreshold(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-10px' }}>
+                  Pre-existing overloads excluded from N-1 & max_rho unless worsened by this fraction (default 2%)
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px', gap: '10px' }}>
+              <button
+                onClick={handleCloseSettings}
+                style={{
+                  padding: '8px 20px', background: '#e74c3c', color: 'white',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'
+                }}
+              >
+                Close
+              </button>
+              <button
+                onClick={handleApplySettings}
+                style={{
+                  padding: '8px 20px', background: '#3498db', color: 'white',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'
+                }}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', overflowY: 'auto' }}>
-          <ActionFeed
-            actions={result?.actions || {}}
-            actionScores={result?.action_scores}
-            linesOverloaded={result?.lines_overloaded || []}
-            selectedActionId={selectedActionId}
-            onActionSelect={handleActionSelect}
-            onAssetClick={handleAssetClick}
-            nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
-            edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
-            disconnectedElement={selectedBranch || null}
-            onManualActionAdded={handleManualActionAdded}
-            actionViewMode={actionViewMode}
-            onViewModeChange={handleViewModeChange}
-            analysisLoading={analysisLoading}
-          />
+        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', display: 'flex', flexDirection: 'column', padding: '15px', gap: '15px' }}>
+          {/* Target Contingency selector */}
+          {branches.length > 0 && (
+            <div style={{ padding: '10px 15px', background: 'white', borderRadius: '8px', border: '1px solid #dee2e6', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>🎯 Select Contingency</label>
+              <input
+                list="contingencies"
+                value={selectedBranch}
+                onChange={e => setSelectedBranch(e.target.value)}
+                placeholder="Search line/bus..."
+                style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
+              />
+              <datalist id="contingencies">
+                {branches.map(b => <option key={b} value={b} />)}
+              </datalist>
+              <button
+                onClick={handleRunAnalysis}
+                disabled={!selectedBranch || analysisLoading}
+                style={{ marginTop: '8px', width: '100%', padding: '8px', background: (!selectedBranch || analysisLoading) ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+              >
+                {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
+              </button>
+            </div>
+          )}
+
+          <div style={{ flexShrink: 0 }}>
+            <OverloadPanel
+              nOverloads={nDiagram?.lines_overloaded || []}
+              n1Overloads={n1Diagram?.lines_overloaded || []}
+              onAssetClick={handleAssetClick as any}
+            />
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <ActionFeed
+              actions={result?.actions || {}}
+              actionScores={result?.action_scores}
+              linesOverloaded={result?.lines_overloaded || []}
+              selectedActionId={selectedActionId}
+              selectedActionIds={selectedActionIds}
+              rejectedActionIds={rejectedActionIds}
+              manuallyAddedIds={manuallyAddedIds}
+              pendingAnalysisResult={pendingAnalysisResult}
+              onActionSelect={handleActionSelect}
+              onActionFavorite={handleActionFavorite}
+              onActionReject={handleActionReject}
+              onAssetClick={handleAssetClick}
+              nodesByEquipmentId={nMetaIndex?.nodesByEquipmentId ?? null}
+              edgesByEquipmentId={nMetaIndex?.edgesByEquipmentId ?? null}
+              disconnectedElement={selectedBranch || null}
+              onManualActionAdded={handleManualActionAdded}
+              onDisplayPrioritizedActions={handleDisplayPrioritizedActions}
+              analysisLoading={analysisLoading}
+              monitoringFactor={monitoringFactor}
+            />
+          </div>
         </div>
         <div style={{ flex: 1, background: 'white', display: 'flex', flexDirection: 'column' }}>
           <VisualizationPanel
@@ -614,6 +993,16 @@ function App() {
             uniqueVoltages={uniqueVoltages}
             voltageRange={voltageRange}
             onVoltageRangeChange={setVoltageRange}
+            actionViewMode={actionViewMode}
+            onViewModeChange={handleViewModeChange}
+            inspectQuery={inspectQuery}
+            onInspectQueryChange={setInspectQuery}
+            inspectableItems={inspectableItems}
+            onResetView={handleManualReset}
+            onZoomIn={handleManualZoomIn}
+            onZoomOut={handleManualZoomOut}
+            hasBranches={branches.length > 0}
+            selectedBranch={selectedBranch}
           />
         </div>
       </div>

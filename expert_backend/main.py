@@ -27,6 +27,14 @@ app.mount("/results/pdf", StaticFiles(directory="Overflow_Graph"), name="pdfs")
 class ConfigRequest(BaseModel):
     network_path: str
     action_file_path: str
+    min_line_reconnections: float = 2.0
+    min_close_coupling: float = 3.0
+    min_open_coupling: float = 2.0
+    min_line_disconnections: float = 3.0
+    n_prioritized_actions: int = 10
+    lines_monitoring_path: str | None = None
+    monitoring_factor: float = 0.95
+    pre_existing_overload_threshold: float = 0.02
 
 class AnalysisRequest(BaseModel):
     disconnected_element: str
@@ -44,14 +52,33 @@ class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
 
+last_network_path = None
+
 @app.post("/api/config")
 def update_config(config: ConfigRequest):
+    global last_network_path
     try:
         # Load network first to verify path and get branches
-        network_service.load_network(config.network_path)
+        if config.network_path != last_network_path:
+            network_service.load_network(config.network_path)
+            last_network_path = config.network_path
         # Update recommender config
-        recommender_service.update_config(config.network_path, config.action_file_path)
-        return {"status": "success", "message": "Configuration updated and network loaded"}
+        recommender_service.update_config(config)
+        
+        # Get line counts
+        from expert_op4grid_recommender import config as recommender_config
+        total_lines = len(network_service.get_disconnectable_elements())
+        if getattr(recommender_config, 'IGNORE_LINES_MONITORING', True):
+            monitored_lines = total_lines
+        else:
+            monitored_lines = getattr(recommender_config, 'MONITORED_LINES_COUNT', total_lines)
+            
+        return {
+            "status": "success", 
+            "message": "Configuration updated and network loaded",
+            "total_lines_count": total_lines,
+            "monitored_lines_count": monitored_lines
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -136,6 +163,8 @@ def get_network_diagram():
         diagram = recommender_service.get_network_diagram()
         return diagram
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/n1-diagram")
@@ -242,6 +271,42 @@ def get_action_variant_sld(request: ActionVariantSldRequest):
     try:
         diagram = recommender_service.get_action_variant_sld(
             request.action_id,
+            request.voltage_level_id,
+        )
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+class NSldRequest(BaseModel):
+    voltage_level_id: str
+
+@app.post("/api/n-sld")
+def get_n_sld(request: NSldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the base network state."""
+    try:
+        diagram = recommender_service.get_n_sld(request.voltage_level_id)
+        return diagram
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+class N1SldRequest(BaseModel):
+    disconnected_element: str
+    voltage_level_id: str
+
+@app.post("/api/n1-sld")
+def get_n1_sld(request: N1SldRequest):
+    """Generate a Single Line Diagram (SLD) for a voltage level in the N-1 network state."""
+    try:
+        diagram = recommender_service.get_n1_sld(
+            request.disconnected_element,
             request.voltage_level_id,
         )
         return diagram

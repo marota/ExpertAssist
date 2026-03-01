@@ -37,43 +37,90 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
 
-    def update_config(self, network_path: str, action_file_path: str):
+    def update_config(self, settings):
         # Update the global config of the package
-        path_obj = Path(network_path)
+        path_obj = Path(settings.network_path)
         config.ENV_NAME = path_obj.name
         config.ENV_FOLDER = path_obj.parent
         config.ENV_PATH = path_obj
         
-        config.ACTION_FILE_PATH = Path(action_file_path)
+        config.ACTION_FILE_PATH = Path(settings.action_file_path)
         
-        # Load and cache the action dictionary immediately
-        self._dict_action = load_actions(config.ACTION_FILE_PATH)
+        # Apply the new settings parameters
+        config.MIN_LINE_RECONNECTIONS = settings.min_line_reconnections
+        config.MIN_CLOSE_COUPLING = settings.min_close_coupling
+        config.MIN_OPEN_COUPLING = settings.min_open_coupling
+        config.MIN_LINE_DISCONNECTIONS = settings.min_line_disconnections
+        config.N_PRIORITIZED_ACTIONS = settings.n_prioritized_actions
+        if hasattr(settings, 'monitoring_factor'):
+            config.MONITORING_FACTOR_THERMAL_LIMITS = settings.monitoring_factor
+        if hasattr(settings, 'pre_existing_overload_threshold') and settings.pre_existing_overload_threshold is not None:
+            config.PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD = settings.pre_existing_overload_threshold
 
-        # Auto-generate disco actions if none exist
-        has_disco = any(k.startswith("disco_") for k in self._dict_action)
-        if not has_disco:
-            from expert_backend.services.network_service import network_service
-            branches = network_service.get_disconnectable_elements()
-            for branch in branches:
-                action_id = f"disco_{branch}"
-                self._dict_action[action_id] = {
-                    "description": f"Disconnection of line/transformer '{branch}'",
-                    "description_unitaire": f"Ouverture de la ligne '{branch}'",
-                    "content": {
-                        "set_bus": {
-                            "lines_or_id": {branch: -1},
-                            "lines_ex_id": {branch: -1},
-                            "loads_id": {},
-                            "generators_id": {},
-                        }
-                    },
-                }
-            print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
-            
-            # Save the updated dictionary back to file so the core analysis engine can load it
-            import json
-            with open(config.ACTION_FILE_PATH, 'w') as f:
-                json.dump(self._dict_action, f, indent=2)
+        # Force the requested global flags
+        config.MAX_RHO_BOTH_EXTREMITIES = True
+        
+        # Handle lines monitoring optionally
+        if hasattr(settings, 'lines_monitoring_path') and settings.lines_monitoring_path:
+            if os.path.exists(settings.lines_monitoring_path):
+                config.IGNORE_LINES_MONITORING = False
+                config.LINES_MONITORING_FILE = Path(settings.lines_monitoring_path)
+            else:
+                config.IGNORE_LINES_MONITORING = True
+                config.LINES_MONITORING_FILE = None
+                config.MONITORED_LINES_COUNT = 0
+                print(f"Ignoring lines monitoring (file path {settings.lines_monitoring_path} does not exist).")
+        else:
+            # No monitoring file specified by UI → monitor all lines.
+            # The library's setup_environment_configs_pypowsybl will set
+            # lines_we_care_about = all lines when IGNORE_LINES_MONITORING is True.
+            config.IGNORE_LINES_MONITORING = True
+            config.LINES_MONITORING_FILE = None
+            config.MONITORED_LINES_COUNT = 0
+
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True):
+            try:
+                from expert_op4grid_recommender.data_loader import load_interesting_lines
+                lines = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+                config.MONITORED_LINES_COUNT = len(lines)
+                print(f"Loaded lines monitoring file: {config.LINES_MONITORING_FILE} ({config.MONITORED_LINES_COUNT} lines)")
+            except Exception as e:
+                print(f"Failed to count lines in {config.LINES_MONITORING_FILE}: {e}")
+                config.MONITORED_LINES_COUNT = -1
+        
+        # Load and cache the action dictionary immediately if path changed or not loaded
+        new_action_path = Path(settings.action_file_path)
+        if getattr(self, '_last_action_path', None) != new_action_path or self._dict_action is None:
+            self._dict_action = load_actions(config.ACTION_FILE_PATH)
+            self._last_action_path = new_action_path
+
+            # Auto-generate disco actions if none exist
+            has_disco = any(k.startswith("disco_") for k in self._dict_action)
+            if not has_disco:
+                from expert_backend.services.network_service import network_service
+                branches = network_service.get_disconnectable_elements()
+                for branch in branches:
+                    action_id = f"disco_{branch}"
+                    self._dict_action[action_id] = {
+                        "description": f"Disconnection of line/transformer '{branch}'",
+                        "description_unitaire": f"Ouverture de la ligne '{branch}'",
+                        "content": {
+                            "set_bus": {
+                                "lines_or_id": {branch: -1},
+                                "lines_ex_id": {branch: -1},
+                                "loads_id": {},
+                                "generators_id": {},
+                            }
+                        },
+                    }
+                print(f"[RecommenderService] Auto-generated {len(branches)} disco_ actions")
+                
+                # Save the updated dictionary back to file so the core analysis engine can load it
+                import json
+                with open(config.ACTION_FILE_PATH, 'w') as f:
+                    json.dump(self._dict_action, f, indent=2)
+        else:
+            print("Action dictionary already loaded, skipping reload.")
 
         # Inject missing config parameter and redirect output
         config.DO_VISUALIZATION = True
@@ -208,13 +255,23 @@ class RecommenderService:
             prioritized = result.get("prioritized_actions", {})
             action_scores = sanitize_for_json(result.get("action_scores", {}))
 
+            monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+
             enriched_actions = {}
             for action_id, action_data in prioritized.items():
+                rho_before_raw = action_data.get("rho_before")
+                rho_after_raw = action_data.get("rho_after")
+                max_rho_raw = action_data.get("max_rho")
+                
+                rho_before = [r * monitoring_factor for r in rho_before_raw] if rho_before_raw else None
+                rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw else None
+                max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
+
                 enriched_actions[action_id] = {
                     "description_unitaire": action_data.get("description_unitaire") or "No description available",
-                    "rho_before": sanitize_for_json(action_data.get("rho_before")),
-                    "rho_after": sanitize_for_json(action_data.get("rho_after")),
-                    "max_rho": sanitize_for_json(action_data.get("max_rho")),
+                    "rho_before": sanitize_for_json(rho_before),
+                    "rho_after": sanitize_for_json(rho_after),
+                    "max_rho": sanitize_for_json(max_rho),
                     "max_rho_line": action_data.get("max_rho_line", ""),
                     "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
                 }
@@ -229,6 +286,13 @@ class RecommenderService:
                             val = action_obj.get(field)
                         topo[field] = sanitize_for_json(val) if val else {}
                     enriched_actions[action_id]["action_topology"] = topo
+
+        if getattr(config, 'IGNORE_LINES_MONITORING', False):
+            info_msg = "Note: Monitoring all lines in the network (IGNORE_LINES_MONITORING is enabled)."
+            if analysis_message:
+                analysis_message += " " + info_msg
+            else:
+                analysis_message = info_msg
 
         yield {
             "type": "result",
@@ -312,8 +376,16 @@ class RecommenderService:
         }
 
     def get_network_diagram(self, voltage_level_ids=None, depth=0):
+        import pypowsybl as pp
         n = self._load_network()
-        return self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        # Ensure flows are up-to-date
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+        diagram["lines_overloaded"] = self._get_overloaded_lines(n, lines_we_care_about=self._get_lines_we_care_about())
+        # Cache N-state element currents for N-1 comparison
+        self._n_state_currents = self._get_element_max_currents(n)
+        return diagram
 
     def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
@@ -349,6 +421,12 @@ class RecommenderService:
         except Exception as e:
             print(f"Warning: Failed to compute N-1 flow deltas: {e}")
             diagram["flow_deltas"] = {}
+
+        # Exclude pre-existing overloads (already overloaded in N) unless worsened
+        n_state_currents = getattr(self, '_n_state_currents', None)
+        diagram["lines_overloaded"] = self._get_overloaded_lines(
+            n, n_state_currents=n_state_currents, lines_we_care_about=self._get_lines_we_care_about()
+        )
 
         return diagram
 
@@ -447,6 +525,120 @@ class RecommenderService:
             "voltage_level_id": voltage_level_id,
         }
 
+    def get_n_sld(self, voltage_level_id: str) -> dict:
+        """Generate a Single Line Diagram (SLD) in the base N state."""
+        import pypowsybl as pp
+        n = self._load_network()
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        
+        sld = n.get_single_line_diagram(voltage_level_id)
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string
+            svg = _get_svg_string(sld)
+        except Exception:
+            svg = str(sld)
+
+        return {
+            "svg": svg,
+            "voltage_level_id": voltage_level_id,
+        }
+
+    def get_n1_sld(self, disconnected_element: str, voltage_level_id: str) -> dict:
+        """Generate a Single Line Diagram (SLD) in the N-1 state."""
+        import pypowsybl as pp
+        n = self._load_network()
+        if disconnected_element:
+            try:
+                n.disconnect(disconnected_element)
+            except Exception as e:
+                print(f"Failed to disconnect element {disconnected_element} for SLD: {e}")
+        
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        
+        sld = n.get_single_line_diagram(voltage_level_id)
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string
+            svg = _get_svg_string(sld)
+        except Exception:
+            svg = str(sld)
+
+        return {
+            "svg": svg,
+            "voltage_level_id": voltage_level_id,
+            "disconnected_element": disconnected_element
+        }
+
+    def _get_lines_we_care_about(self):
+        """Return the set of monitored line IDs, or None if all lines are monitored."""
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
+            try:
+                from expert_op4grid_recommender.data_loader import load_interesting_lines
+                return set(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+            except Exception as e:
+                print(f"Warning: Failed to load lines_we_care_about: {e}")
+        return None
+
+    def _get_overloaded_lines(self, network, n_state_currents=None, lines_we_care_about=None):
+        """Get overloaded lines and transformers.
+
+        Args:
+            network: pypowsybl network after load flow.
+            n_state_currents: If provided, dict {element_id: max_i_N} from the
+                N-state.  Pre-existing overloads (elements also overloaded in N)
+                are excluded unless their current increased by more than the
+                worsening threshold.
+            lines_we_care_about: If provided, set of element IDs to monitor.
+                Only these elements are checked for overloads.
+        """
+        import numpy as np
+        limits = network.get_operational_limits()
+        if limits.empty:
+            limit_dict = {}
+        else:
+            limits = limits.reset_index()
+            current_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
+            limit_dict = dict(zip(current_limits['element_id'], current_limits['value']))
+        
+        overloaded = []
+        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+        worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+        default_limit = 9999.0  # Same default as the recommender
+
+        # Check both lines and 2-winding transformers
+        for df in [network.get_lines()[['i1', 'i2']], network.get_2_windings_transformers()[['i1', 'i2']]]:
+            for element_id, row in df.iterrows():
+                # Skip elements not in the monitored set
+                if lines_we_care_about is not None and element_id not in lines_we_care_about:
+                    continue
+                limit = limit_dict.get(element_id, default_limit)
+                i1 = row['i1']
+                i2 = row['i2']
+                if not np.isnan(i1) and not np.isnan(i2):
+                    max_i = max(abs(i1), abs(i2))
+                    if max_i > limit * monitoring_factor:
+                        # If N-state currents provided, filter pre-existing overloads
+                        if n_state_currents is not None and element_id in n_state_currents:
+                            n_max_i = n_state_currents[element_id]
+                            if n_max_i > limit * monitoring_factor:
+                                # Was already overloaded in N — only keep if worsened
+                                if max_i <= n_max_i * (1 + worsening_threshold):
+                                    continue
+                        overloaded.append(element_id)
+        return sanitize_for_json(overloaded)
+
+    def _get_element_max_currents(self, network):
+        """Return {element_id: max(|i1|, |i2|)} for all lines and transformers."""
+        import numpy as np
+        currents = {}
+        for df in [network.get_lines()[['i1', 'i2']], network.get_2_windings_transformers()[['i1', 'i2']]]:
+            for element_id, row in df.iterrows():
+                i1, i2 = row['i1'], row['i2']
+                if not np.isnan(i1) and not np.isnan(i2):
+                    currents[element_id] = max(abs(i1), abs(i2))
+        return currents
+
     def _get_network_flows(self, network):
         """Extract p1/p2 flows for lines and transformers from a simulated network."""
         import numpy as np
@@ -542,15 +734,20 @@ class RecommenderService:
         return flow_deltas
 
     def get_all_action_ids(self):
-        """Return a list of {id, description} for every action in the loaded dictionary."""
+        """Return a list of {id, description, type} for every action in the loaded dictionary."""
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
+        
+        from expert_op4grid_recommender.action_evaluation.classifier import ActionClassifier
+        classifier = ActionClassifier()
+        
         result = []
         for action_id, action_desc in self._dict_action.items():
             result.append({
                 "id": action_id,
                 "description": action_desc.get("description_unitaire",
                                                action_desc.get("description", "")),
+                "type": classifier.identify_action_type(action_desc)
             })
         return result
 
@@ -582,11 +779,14 @@ class RecommenderService:
         )
 
         # Fix thermal limits if needed (same as in run_analysis)
+        is_limit_scaled = False
         if np.mean(env.get_thermal_limit()) >= 10 ** 4:
             from expert_op4grid_recommender.main import set_thermal_limits
             n_grid = env.network_manager.network
-            env = set_thermal_limits(n_grid, env, thresold_thermal_limit=0.95)
+            mf = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+            env = set_thermal_limits(n_grid, env, thresold_thermal_limit=mf)
             obs = env.get_obs()
+            is_limit_scaled = True
 
         # Simulate the N-1 contingency
         act_reco_maintenance = env.action_space({})
@@ -596,11 +796,28 @@ class RecommenderService:
         if not has_converged:
             raise RuntimeError(f"Contingency simulation for '{disconnected_element}' failed.")
 
-        lines_we_care_about = obs.name_line
-        lines_overloaded_ids = [
-            i for i, l in enumerate(obs_simu_defaut.name_line)
-            if l in lines_we_care_about and obs_simu_defaut.rho[i] >= 1
-        ]
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
+            try:
+                from expert_op4grid_recommender.environment import load_interesting_lines
+                lines_we_care_about = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+            except Exception as e:
+                print(f"Failed to load lines_we_care_about in simulate_manual_action: {e}")
+                lines_we_care_about = list(obs.name_line)
+        else:
+            lines_we_care_about = list(obs.name_line)
+        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+        worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+        lines_overloaded_ids = []
+        for i, l in enumerate(obs_simu_defaut.name_line):
+            if l not in lines_we_care_about:
+                continue
+            if obs_simu_defaut.rho[i] < monitoring_factor:
+                continue
+            # Exclude pre-existing N overloads unless worsened
+            if obs.rho[i] >= monitoring_factor:
+                if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                    continue
+            lines_overloaded_ids.append(i)
         lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
 
         # Build the action object from its content
@@ -622,7 +839,11 @@ class RecommenderService:
             keep_variant=True,
         )
 
-        rho_before = baseline_rho
+        # Scale rho values by monitoring_factor to match run_analysis behavior
+        # (run_analysis always applies this scaling — see lines 266-268)
+        mf = monitoring_factor  # already fetched above
+
+        rho_before = (baseline_rho * mf).tolist() if baseline_rho is not None else None
         rho_after = None
         max_rho = 0.0
         max_rho_line = "N/A"
@@ -632,17 +853,21 @@ class RecommenderService:
         )
 
         if not info_action["exception"]:
-            rho_after = obs_simu_action.rho[lines_overloaded_ids]
+            rho_after = (obs_simu_action.rho[lines_overloaded_ids] * mf).tolist()
             if rho_before is not None:
-                is_rho_reduction = bool(np.all(rho_after + 0.01 < rho_before))
+                is_rho_reduction = bool(np.all(np.array(rho_after) + 0.01 < np.array(rho_before)))
             if lines_we_care_about is not None and len(lines_we_care_about) > 0:
                 care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
+                # Exclude pre-existing N overloads (same logic as lines_overloaded_ids)
+                for i in range(len(obs_simu_action.name_line)):
+                    if care_mask[i] and obs.rho[i] >= monitoring_factor:
+                        if obs_simu_action.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                            care_mask[i] = False
                 if np.any(care_mask):
-                    rhos_of_interest = obs_simu_action.rho[care_mask]
+                    rhos_of_interest = obs_simu_action.rho[care_mask] * mf
                     max_rho = float(np.max(rhos_of_interest))
-                    max_rho_line_idx = np.where(obs_simu_action.rho == max_rho)[0]
-                    if max_rho_line_idx.size > 0 and max_rho_line_idx[0] < len(obs.name_line):
-                        max_rho_line = obs.name_line[max_rho_line_idx[0]]
+                    valid_line_names = np.array(obs_simu_action.name_line)[care_mask]
+                    max_rho_line = valid_line_names[np.argmax(rhos_of_interest)]
 
         # Store the observation so get_action_variant_diagram can generate the NAD
         if not info_action["exception"] and obs_simu_action is not None:

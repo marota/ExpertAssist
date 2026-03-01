@@ -1,0 +1,167 @@
+"""Tests for NetworkService."""
+
+import os
+import pytest
+from unittest.mock import patch, MagicMock
+import pandas as pd
+
+from expert_backend.services.network_service import NetworkService
+
+
+class TestNetworkServiceInit:
+    def test_initial_state(self):
+        service = NetworkService()
+        assert service.network is None
+
+
+class TestLoadNetwork:
+    def test_load_network_file_not_found(self):
+        service = NetworkService()
+        with pytest.raises(FileNotFoundError, match="not found"):
+            service.load_network("/nonexistent/path")
+
+    @patch("expert_backend.services.network_service.pn")
+    def test_load_network_from_file(self, mock_pn, tmp_path):
+        # Create a fake xiidm file
+        xiidm = tmp_path / "test.xiidm"
+        xiidm.write_text("<network/>")
+
+        mock_network = MagicMock()
+        mock_network.id = "test_net"
+        mock_pn.load.return_value = mock_network
+
+        service = NetworkService()
+        result = service.load_network(str(xiidm))
+
+        mock_pn.load.assert_called_once_with(str(xiidm))
+        assert result["message"] == "Network loaded successfully"
+        assert result["id"] == "test_net"
+        assert service.network is mock_network
+
+    @patch("expert_backend.services.network_service.pn")
+    def test_load_network_from_directory(self, mock_pn, tmp_path):
+        # Create a directory with a xiidm file inside
+        xiidm = tmp_path / "grid.xiidm"
+        xiidm.write_text("<network/>")
+
+        mock_network = MagicMock()
+        mock_network.id = "dir_net"
+        mock_pn.load.return_value = mock_network
+
+        service = NetworkService()
+        result = service.load_network(str(tmp_path))
+
+        mock_pn.load.assert_called_once_with(str(xiidm))
+        assert result["id"] == "dir_net"
+
+    @patch("expert_backend.services.network_service.pn")
+    def test_load_network_from_directory_xml(self, mock_pn, tmp_path):
+        xml_file = tmp_path / "network.xml"
+        xml_file.write_text("<network/>")
+
+        mock_network = MagicMock()
+        mock_network.id = "xml_net"
+        mock_pn.load.return_value = mock_network
+
+        service = NetworkService()
+        result = service.load_network(str(tmp_path))
+        assert result["id"] == "xml_net"
+
+    def test_load_network_directory_no_xiidm(self, tmp_path):
+        # Empty directory
+        service = NetworkService()
+        with pytest.raises(FileNotFoundError, match="No .xiidm or .xml"):
+            service.load_network(str(tmp_path))
+
+
+class TestGetDisconnectableElements:
+    def test_network_not_loaded(self):
+        service = NetworkService()
+        with pytest.raises(ValueError, match="Network not loaded"):
+            service.get_disconnectable_elements()
+
+    def test_returns_sorted_elements(self, mock_network_service):
+        elements = mock_network_service.get_disconnectable_elements()
+        # Should include all lines and transformers, sorted
+        assert elements == ["LINE_A", "LINE_B", "LINE_C", "TRAFO_1", "TRAFO_2"]
+
+    def test_empty_lines_and_transformers(self):
+        service = NetworkService()
+        service.network = MagicMock()
+        service.network.get_lines.return_value = pd.DataFrame()
+        service.network.get_2_windings_transformers.return_value = pd.DataFrame()
+        assert service.get_disconnectable_elements() == []
+
+    def test_only_lines(self):
+        service = NetworkService()
+        service.network = MagicMock()
+        service.network.get_lines.return_value = pd.DataFrame(
+            {"dummy": [1, 2]}, index=["B_LINE", "A_LINE"]
+        )
+        service.network.get_2_windings_transformers.return_value = pd.DataFrame()
+        assert service.get_disconnectable_elements() == ["A_LINE", "B_LINE"]
+
+
+class TestGetVoltageLevels:
+    def test_network_not_loaded(self):
+        service = NetworkService()
+        with pytest.raises(ValueError, match="Network not loaded"):
+            service.get_voltage_levels()
+
+    def test_returns_sorted_voltage_levels(self, mock_network_service):
+        vls = mock_network_service.get_voltage_levels()
+        assert vls == ["VL1", "VL2", "VL3", "VL4", "VL5"]
+
+    def test_empty_voltage_levels(self):
+        service = NetworkService()
+        service.network = MagicMock()
+        service.network.get_voltage_levels.return_value = pd.DataFrame()
+        assert service.get_voltage_levels() == []
+
+
+class TestGetNominalVoltages:
+    def test_network_not_loaded(self):
+        service = NetworkService()
+        with pytest.raises(ValueError, match="Network not loaded"):
+            service.get_nominal_voltages()
+
+    def test_returns_mapping(self, mock_network_service):
+        mapping = mock_network_service.get_nominal_voltages()
+        assert mapping == {
+            "VL1": 400.0,
+            "VL2": 225.0,
+            "VL3": 90.0,
+            "VL4": 63.0,
+            "VL5": 20.0,
+        }
+
+    def test_empty_voltage_levels(self):
+        service = NetworkService()
+        service.network = MagicMock()
+        service.network.get_voltage_levels.return_value = pd.DataFrame()
+        assert service.get_nominal_voltages() == {}
+
+
+class TestGetElementVoltageLevels:
+    def test_network_not_loaded(self):
+        service = NetworkService()
+        with pytest.raises(ValueError, match="Network not loaded"):
+            service.get_element_voltage_levels("VL1")
+
+    def test_voltage_level_id(self, mock_network_service):
+        """A voltage level ID should resolve to itself."""
+        result = mock_network_service.get_element_voltage_levels("VL1")
+        assert result == ["VL1"]
+
+    def test_line_resolves_to_two_vls(self, mock_network_service):
+        """A line should resolve to its two endpoint voltage levels."""
+        result = mock_network_service.get_element_voltage_levels("LINE_A")
+        assert result == ["VL1", "VL2"]
+
+    def test_transformer_resolves_to_two_vls(self, mock_network_service):
+        result = mock_network_service.get_element_voltage_levels("TRAFO_1")
+        assert result == ["VL1", "VL4"]
+
+    def test_unknown_element_returns_empty(self, mock_network_service):
+        result = mock_network_service.get_element_voltage_levels("NONEXISTENT")
+        assert result == []
