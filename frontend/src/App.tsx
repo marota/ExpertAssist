@@ -252,7 +252,6 @@ function App() {
     if (!selectedBranch) return;
     setAnalysisLoading(true);
     setError('');
-    setResult(null);
     setInfoMessage('');
     setSelectedActionId(null);
     setActionDiagram(null);
@@ -279,7 +278,15 @@ function App() {
           try {
             const event = JSON.parse(line);
             if (event.type === 'pdf') setResult(p => ({ ...p!, pdf_url: event.pdf_url } as AnalysisResult));
-            else if (event.type === 'result') { setResult(event); if (event.message) setInfoMessage(event.message); }
+            else if (event.type === 'result') {
+              // Merge previously manually-added actions into the new result
+              setResult(prev => {
+                const prevActions = prev?.actions || {};
+                const merged = { ...prevActions, ...event.actions };
+                return { ...event, actions: merged };
+              });
+              if (event.message) setInfoMessage(event.message);
+            }
             else if (event.type === 'error') setError('Analysis failed: ' + event.message);
           } catch (e) {
             console.error('Stream error:', e);
@@ -326,13 +333,22 @@ function App() {
     }
   }, [selectedActionId, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox, voltageLevels.length]);
 
-  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail) => {
+  const handleManualActionAdded = useCallback((actionId: string, detail: ActionDetail, linesOverloaded: string[]) => {
     setResult(prev => {
-      if (!prev) return prev;
+      const base = prev || {
+        pdf_path: null,
+        pdf_url: null,
+        actions: {},
+        lines_overloaded: [],
+        message: '',
+        dc_fallback: false,
+      };
       return {
-        ...prev,
+        ...base,
+        // Use the simulation's overloaded lines if no prior analysis provided them
+        lines_overloaded: base.lines_overloaded.length > 0 ? base.lines_overloaded : linesOverloaded,
         actions: {
-          ...prev.actions,
+          ...base.actions,
           [actionId]: detail,
         },
       };

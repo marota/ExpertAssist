@@ -382,7 +382,7 @@ class RecommenderService:
         params = create_olf_rte_parameter()
         pp.loadflow.run_ac(n, params)
         diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
-        diagram["lines_overloaded"] = self._get_overloaded_lines(n)
+        diagram["lines_overloaded"] = self._get_overloaded_lines(n, lines_we_care_about=self._get_lines_we_care_about())
         # Cache N-state element currents for N-1 comparison
         self._n_state_currents = self._get_element_max_currents(n)
         return diagram
@@ -425,7 +425,7 @@ class RecommenderService:
         # Exclude pre-existing overloads (already overloaded in N) unless worsened
         n_state_currents = getattr(self, '_n_state_currents', None)
         diagram["lines_overloaded"] = self._get_overloaded_lines(
-            n, n_state_currents=n_state_currents
+            n, n_state_currents=n_state_currents, lines_we_care_about=self._get_lines_we_care_about()
         )
 
         return diagram
@@ -526,7 +526,17 @@ class RecommenderService:
         }
 
 
-    def _get_overloaded_lines(self, network, n_state_currents=None):
+    def _get_lines_we_care_about(self):
+        """Return the set of monitored line IDs, or None if all lines are monitored."""
+        if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
+            try:
+                from expert_op4grid_recommender.data_loader import load_interesting_lines
+                return set(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
+            except Exception as e:
+                print(f"Warning: Failed to load lines_we_care_about: {e}")
+        return None
+
+    def _get_overloaded_lines(self, network, n_state_currents=None, lines_we_care_about=None):
         """Get overloaded lines and transformers.
 
         Args:
@@ -535,6 +545,8 @@ class RecommenderService:
                 N-state.  Pre-existing overloads (elements also overloaded in N)
                 are excluded unless their current increased by more than the
                 worsening threshold.
+            lines_we_care_about: If provided, set of element IDs to monitor.
+                Only these elements are checked for overloads.
         """
         import numpy as np
         limits = network.get_operational_limits()
@@ -553,6 +565,9 @@ class RecommenderService:
         # Check both lines and 2-winding transformers
         for df in [network.get_lines()[['i1', 'i2']], network.get_2_windings_transformers()[['i1', 'i2']]]:
             for element_id, row in df.iterrows():
+                # Skip elements not in the monitored set
+                if lines_we_care_about is not None and element_id not in lines_we_care_about:
+                    continue
                 limit = limit_dict.get(element_id, default_limit)
                 i1 = row['i1']
                 i2 = row['i2']
@@ -675,15 +690,20 @@ class RecommenderService:
         return flow_deltas
 
     def get_all_action_ids(self):
-        """Return a list of {id, description} for every action in the loaded dictionary."""
+        """Return a list of {id, description, type} for every action in the loaded dictionary."""
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
+        
+        from expert_op4grid_recommender.action_evaluation.classifier import ActionClassifier
+        classifier = ActionClassifier()
+        
         result = []
         for action_id, action_desc in self._dict_action.items():
             result.append({
                 "id": action_id,
                 "description": action_desc.get("description_unitaire",
                                                action_desc.get("description", "")),
+                "type": classifier.identify_action_type(action_desc)
             })
         return result
 
@@ -715,11 +735,14 @@ class RecommenderService:
         )
 
         # Fix thermal limits if needed (same as in run_analysis)
+        is_limit_scaled = False
         if np.mean(env.get_thermal_limit()) >= 10 ** 4:
             from expert_op4grid_recommender.main import set_thermal_limits
             n_grid = env.network_manager.network
-            env = set_thermal_limits(n_grid, env, thresold_thermal_limit=0.95)
+            mf = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+            env = set_thermal_limits(n_grid, env, thresold_thermal_limit=mf)
             obs = env.get_obs()
+            is_limit_scaled = True
 
         # Simulate the N-1 contingency
         act_reco_maintenance = env.action_space({})
@@ -738,10 +761,19 @@ class RecommenderService:
                 lines_we_care_about = list(obs.name_line)
         else:
             lines_we_care_about = list(obs.name_line)
-        lines_overloaded_ids = [
-            i for i, l in enumerate(obs_simu_defaut.name_line)
-            if l in lines_we_care_about and obs_simu_defaut.rho[i] >= 1
-        ]
+        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+        worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+        lines_overloaded_ids = []
+        for i, l in enumerate(obs_simu_defaut.name_line):
+            if l not in lines_we_care_about:
+                continue
+            if obs_simu_defaut.rho[i] < monitoring_factor:
+                continue
+            # Exclude pre-existing N overloads unless worsened
+            if obs.rho[i] >= monitoring_factor:
+                if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                    continue
+            lines_overloaded_ids.append(i)
         lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
 
         # Build the action object from its content
@@ -763,7 +795,11 @@ class RecommenderService:
             keep_variant=True,
         )
 
-        rho_before = baseline_rho
+        # Scale rho values by monitoring_factor to match run_analysis behavior
+        # (run_analysis always applies this scaling — see lines 266-268)
+        mf = monitoring_factor  # already fetched above
+
+        rho_before = (baseline_rho * mf).tolist() if baseline_rho is not None else None
         rho_after = None
         max_rho = 0.0
         max_rho_line = "N/A"
@@ -773,17 +809,21 @@ class RecommenderService:
         )
 
         if not info_action["exception"]:
-            rho_after = obs_simu_action.rho[lines_overloaded_ids]
+            rho_after = (obs_simu_action.rho[lines_overloaded_ids] * mf).tolist()
             if rho_before is not None:
-                is_rho_reduction = bool(np.all(rho_after + 0.01 < rho_before))
+                is_rho_reduction = bool(np.all(np.array(rho_after) + 0.01 < np.array(rho_before)))
             if lines_we_care_about is not None and len(lines_we_care_about) > 0:
                 care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
+                # Exclude pre-existing N overloads (same logic as lines_overloaded_ids)
+                for i in range(len(obs_simu_action.name_line)):
+                    if care_mask[i] and obs.rho[i] >= monitoring_factor:
+                        if obs_simu_action.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                            care_mask[i] = False
                 if np.any(care_mask):
-                    rhos_of_interest = obs_simu_action.rho[care_mask]
+                    rhos_of_interest = obs_simu_action.rho[care_mask] * mf
                     max_rho = float(np.max(rhos_of_interest))
-                    max_rho_line_idx = np.where(obs_simu_action.rho == max_rho)[0]
-                    if max_rho_line_idx.size > 0 and max_rho_line_idx[0] < len(obs.name_line):
-                        max_rho_line = obs.name_line[max_rho_line_idx[0]]
+                    valid_line_names = np.array(obs_simu_action.name_line)[care_mask]
+                    max_rho_line = valid_line_names[np.argmax(rhos_of_interest)]
 
         # Store the observation so get_action_variant_diagram can generate the NAD
         if not info_action["exception"] and obs_simu_action is not None:

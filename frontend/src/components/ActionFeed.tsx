@@ -13,7 +13,7 @@ interface ActionFeedProps {
     nodesByEquipmentId: Map<string, NodeMeta> | null;
     edgesByEquipmentId: Map<string, EdgeMeta> | null;
     disconnectedElement: string | null;
-    onManualActionAdded: (actionId: string, detail: ActionDetail) => void;
+    onManualActionAdded: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     analysisLoading: boolean;
     monitoringFactor: number;
 }
@@ -38,6 +38,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [loadingActions, setLoadingActions] = useState(false);
     const [simulating, setSimulating] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true });
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
@@ -75,15 +76,32 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
             .filter(a => !alreadyShown.has(a.id))
+            .filter((a: any) => {
+                const t = a.type || 'unknown';
+                if ((t.includes('disco') || t.includes('open_line') || t.includes('open_load')) && !typeFilters.disco) return false;
+                if ((t.includes('reco') || t.includes('close_line') || t.includes('close_load')) && !typeFilters.reco) return false;
+                if (t === 'open_coupling' && !typeFilters.open) return false;
+                if (t === 'close_coupling' && !typeFilters.close) return false;
+                // If it's truly 'unknown' or something else, only show if all are checked or perhaps none?
+                // For now, if all filters are unchecked, return false.
+                if (!typeFilters.disco && !typeFilters.reco && !typeFilters.open && !typeFilters.close) return false;
+                return true;
+            })
             .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
             .slice(0, 20);
-    }, [searchQuery, availableActions, actions]);
+    }, [searchQuery, availableActions, actions, typeFilters]);
 
     // Format scored actions
     const scoredActionsList = useMemo(() => {
         if (!actionScores) return [];
         const list: { type: string; actionId: string; score: number }[] = [];
         for (const [type, data] of Object.entries(actionScores)) {
+            // Apply filtering
+            if (type === 'line_disconnection' && !typeFilters.disco) continue;
+            if (type === 'line_reconnection' && !typeFilters.reco) continue;
+            if (type === 'open_coupling' && !typeFilters.open) continue;
+            if (type === 'close_coupling' && !typeFilters.close) continue;
+
             const scores = data?.scores || {};
             for (const [actionId, score] of Object.entries(scores)) {
                 list.push({ type, actionId, score: Number(score) });
@@ -97,7 +115,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             }
             return b.score - a.score;
         });
-    }, [actionScores]);
+    }, [actionScores, typeFilters]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -115,7 +133,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
     const handleAddAction = async (actionId: string) => {
         if (!disconnectedElement) {
-            setError('Run an analysis first (need a contingency).');
+            setError('Select a contingency first.');
             return;
         }
         setSimulating(actionId);
@@ -130,7 +148,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 max_rho_line: result.max_rho_line,
                 is_rho_reduction: result.is_rho_reduction,
             };
-            onManualActionAdded(actionId, detail);
+            onManualActionAdded(actionId, detail, result.lines_overloaded || []);
             setSearchOpen(false);
             setSearchQuery('');
         } catch (e: unknown) {
@@ -180,7 +198,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         <div style={{ padding: '15px', height: '100%', overflowY: 'auto' }}>
             {/* Header with search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
-                <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
+                <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
                 <button
                     onClick={handleOpenSearch}
                     style={{
@@ -194,7 +212,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         fontWeight: 600,
                     }}
                 >
-                    + Add
+                    + Manual Selection
                 </button>
 
                 {/* Search dropdown */}
@@ -231,6 +249,20 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     boxSizing: 'border-box',
                                 }}
                             />
+                        </div>
+                        {/* Action type filter checkboxes */}
+                        <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
+                            {([['disco', 'Disconnections'], ['reco', 'Reconnections'], ['open', 'Open coupling'], ['close', 'Close coupling']] as const).map(([key, label]) => (
+                                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={typeFilters[key]}
+                                        onChange={() => setTypeFilters(prev => ({ ...prev, [key]: !prev[key] }))}
+                                        style={{ margin: 0, cursor: 'pointer' }}
+                                    />
+                                    {label}
+                                </label>
+                            ))}
                         </div>
                         {error && (
                             <div style={{
@@ -482,6 +514,17 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 <p style={{ color: '#666', fontStyle: 'italic' }}>
                     {analysisLoading ? 'Processing...' : 'No actions available.'}
                 </p>
+            )}
+
+            {/* Loading indicator shown below existing cards during analysis */}
+            {analysisLoading && sortedActionEntries.length > 0 && (
+                <div style={{
+                    textAlign: 'center', padding: '12px', color: '#666',
+                    fontStyle: 'italic', fontSize: '13px',
+                    borderTop: '1px dashed #ccc', marginTop: '8px',
+                }}>
+                    ⏳ Running analysis...
+                </div>
             )}
 
             {/* Fixed-position tooltip rendered outside any overflow context */}
