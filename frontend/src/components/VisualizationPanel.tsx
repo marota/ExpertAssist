@@ -20,6 +20,13 @@ interface VisualizationPanelProps {
     onVoltageRangeChange: (range: [number, number]) => void;
     actionViewMode: 'network' | 'delta';
     onViewModeChange: (mode: 'network' | 'delta') => void;
+    inspectQuery: string;
+    onInspectQueryChange: (query: string) => void;
+    inspectableItems: string[];
+    onResetView: () => void;
+    onZoomIn: () => void;
+    onZoomOut: () => void;
+    hasBranches: boolean;
 }
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
@@ -41,6 +48,13 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onVoltageRangeChange,
     actionViewMode,
     onViewModeChange,
+    inspectQuery,
+    onInspectQueryChange,
+    inspectableItems,
+    onResetView,
+    onZoomIn,
+    onZoomOut,
+    hasBranches,
 }) => {
     const showViewModeToggle = activeTab !== 'overflow' && (
         (activeTab === 'n' && !!nDiagram?.svg) ||
@@ -304,6 +318,97 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         </div>
                     );
                 })()}
+
+                {/* Bottom-left overlay: Zoom + Inspect */}
+                {activeTab !== 'overflow' && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '12px',
+                        left: '12px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        alignItems: 'flex-start',
+                    }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <button
+                                onClick={onZoomIn}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom In"
+                            >
+                                +
+                            </button>
+                            <button
+                                onClick={onResetView}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 14px', cursor: 'pointer',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                🔍 Unzoom
+                            </button>
+                            <button
+                                onClick={onZoomOut}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom Out"
+                            >
+                                -
+                            </button>
+                        </div>
+
+                        {hasBranches && (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <input
+                                    list="inspectables"
+                                    value={inspectQuery}
+                                    onChange={e => onInspectQueryChange(e.target.value)}
+                                    placeholder="🔍 Inspect..."
+                                    style={{
+                                        padding: '5px 10px',
+                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        width: '180px',
+                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        background: 'white',
+                                    }}
+                                />
+                                <datalist id="inspectables">
+                                    {inspectableItems.map(b => <option key={b} value={b} />)}
+                                </datalist>
+                                {inspectQuery && (
+                                    <button
+                                        onClick={() => onInspectQueryChange('')}
+                                        style={{
+                                            background: '#e74c3c', color: 'white', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        }}
+                                        title="Clear"
+                                    >
+                                        X
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </>
     );
