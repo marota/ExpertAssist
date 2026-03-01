@@ -525,6 +525,50 @@ class RecommenderService:
             "voltage_level_id": voltage_level_id,
         }
 
+    def get_n_sld(self, voltage_level_id: str) -> dict:
+        """Generate a Single Line Diagram (SLD) in the base N state."""
+        import pypowsybl as pp
+        n = self._load_network()
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        
+        sld = n.get_single_line_diagram(voltage_level_id)
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string
+            svg = _get_svg_string(sld)
+        except Exception:
+            svg = str(sld)
+
+        return {
+            "svg": svg,
+            "voltage_level_id": voltage_level_id,
+        }
+
+    def get_n1_sld(self, disconnected_element: str, voltage_level_id: str) -> dict:
+        """Generate a Single Line Diagram (SLD) in the N-1 state."""
+        import pypowsybl as pp
+        n = self._load_network()
+        if disconnected_element:
+            try:
+                n.disconnect(disconnected_element)
+            except Exception as e:
+                print(f"Failed to disconnect element {disconnected_element} for SLD: {e}")
+        
+        params = create_olf_rte_parameter()
+        pp.loadflow.run_ac(n, params)
+        
+        sld = n.get_single_line_diagram(voltage_level_id)
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string
+            svg = _get_svg_string(sld)
+        except Exception:
+            svg = str(sld)
+
+        return {
+            "svg": svg,
+            "voltage_level_id": voltage_level_id,
+            "disconnected_element": disconnected_element
+        }
 
     def _get_lines_we_care_about(self):
         """Return the set of monitored line IDs, or None if all lines are monitored."""

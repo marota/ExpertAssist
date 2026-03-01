@@ -642,30 +642,35 @@
 
         // Build Map indices from metadata for O(1) lookups in zoomToElement
         const buildMetadataIndex = (metadata) => {
-            if (!metadata) return null;
-            const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
-            const nodes = meta.nodes || [];
-            const edges = meta.edges || [];
+            try {
+                if (!metadata) return null;
+                const meta = typeof metadata === 'string' ? JSON.parse(metadata) : metadata;
+                const nodes = meta.nodes || [];
+                const edges = meta.edges || [];
 
-            const nodesByEquipmentId = new Map();
-            const nodesBySvgId = new Map();
-            const edgesByEquipmentId = new Map();
-            const edgesByNode = new Map(); // svgId -> [edge, ...]
+                const nodesByEquipmentId = new Map();
+                const nodesBySvgId = new Map();
+                const edgesByEquipmentId = new Map();
+                const edgesByNode = new Map();
 
-            nodes.forEach(n => {
-                nodesByEquipmentId.set(n.equipmentId, n);
-                nodesBySvgId.set(n.svgId, n);
-            });
+                nodes.forEach(n => {
+                    nodesByEquipmentId.set(n.equipmentId, n);
+                    nodesBySvgId.set(n.svgId, n);
+                });
 
-            edges.forEach(e => {
-                edgesByEquipmentId.set(e.equipmentId, e);
-                if (!edgesByNode.has(e.node1)) edgesByNode.set(e.node1, []);
-                edgesByNode.get(e.node1).push(e);
-                if (!edgesByNode.has(e.node2)) edgesByNode.set(e.node2, []);
-                edgesByNode.get(e.node2).push(e);
-            });
+                edges.forEach(e => {
+                    edgesByEquipmentId.set(e.equipmentId, e);
+                    if (!edgesByNode.has(e.node1)) edgesByNode.set(e.node1, []);
+                    edgesByNode.get(e.node1).push(e);
+                    if (!edgesByNode.has(e.node2)) edgesByNode.set(e.node2, []);
+                    edgesByNode.get(e.node2).push(e);
+                });
 
-            return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
+                return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
+            } catch (err) {
+                console.error('[buildMetadataIndex] error:', err);
+                return null;
+            }
         };
 
         // Apply orange highlights to overloaded line edges on a given SVG container
@@ -845,6 +850,50 @@
             });
         };
 
+        // Apply yellow fluo halo to the disconnected branch in the N-1 state.
+        const applyContingencyHighlight = (container, metaIndex, disconnectedElement) => {
+            if (!container || !metaIndex || !disconnectedElement) return;
+
+            const { edgesByEquipmentId } = metaIndex;
+            const edge = edgesByEquipmentId.get(disconnectedElement);
+            if (!edge || !edge.svgId) return;
+
+            let backgroundLayer = container.querySelector('#nad-background-layer');
+            if (!backgroundLayer) {
+                const svg = container.querySelector('svg');
+                if (svg) {
+                    backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    backgroundLayer.setAttribute('id', 'nad-background-layer');
+                    if (svg.firstChild) {
+                        svg.insertBefore(backgroundLayer, svg.firstChild);
+                    } else {
+                        svg.appendChild(backgroundLayer);
+                    }
+                }
+            }
+
+            const el = container.querySelector(`[id="${edge.svgId}"]`);
+            if (!el || !backgroundLayer) return;
+
+            const clone = el.cloneNode(true);
+            clone.removeAttribute('id');
+            clone.classList.add('nad-action-target');
+            clone.classList.add('nad-highlight-clone');
+
+            try {
+                const elCTM = el.getScreenCTM();
+                const bgCTM = backgroundLayer.getScreenCTM();
+                if (elCTM && bgCTM) {
+                    const relativeCTM = bgCTM.inverse().multiply(elCTM);
+                    const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
+                    clone.setAttribute('transform', matrixStr);
+                }
+            } catch (e) {
+                console.warn('Failed to get CTM for contingency highlight:', e);
+            }
+            backgroundLayer.appendChild(clone);
+        };
+
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
@@ -879,6 +928,11 @@
             const [analysisLoading, setAnalysisLoading] = useState(false);
             const [analysisRan, setAnalysisRan] = useState(false);
             const [manualActionIds, setManualActionIds] = useState(new Set());
+            const [manuallyAddedIds, setManuallyAddedIds] = useState(new Set());
+            const [rejectedActionIds, setRejectedActionIds] = useState(new Set());
+            const [suggestedTab, setSuggestedTab] = useState('prioritized');
+            const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
+            const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
             const [pendingAnalysisResult, setPendingAnalysisResult] = useState(null);
 
             const handleOpenSettings = () => {
@@ -1090,22 +1144,25 @@
             // the user must explicitly click Apply in settings.
 
             const processSvg = (rawSvg, vlCount) => {
-                const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
-                let vb = null;
-                if (match) {
-                    const parts = match[1].split(/\s+|,/).map(parseFloat);
-                    if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                try {
+                    const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
+                    let vb = null;
+                    if (match) {
+                        const parts = match[1].split(/\s+|,/).map(parseFloat);
+                        if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                    }
+
+                    const svgTag = rawSvg.match(/<svg[^>]*>/)?.[0] || '';
+                    const widthMatch = svgTag.match(/\bwidth=["']([^"']+)["']/);
+                    const heightMatch = svgTag.match(/\bheight=["']([^"']+)["']/);
+                    console.log(`[SVG processSvg] vlCount=${vlCount}, viewBox=${vb ? `${vb.w.toFixed(0)}x${vb.h.toFixed(0)}` : 'none'} @ ${widthMatch?.[1] || 'none'}x${heightMatch?.[1] || 'none'}`);
+
+                    const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
+                    return { svg, viewBox: vb };
+                } catch (err) {
+                    console.error('[processSvg] error:', err);
+                    return { svg: rawSvg, viewBox: null };
                 }
-
-                // Diagnostic: log SVG root attributes and embedded CSS for debugging
-                const svgTag = rawSvg.match(/<svg[^>]*>/)?.[0] || '';
-                const widthMatch = svgTag.match(/\bwidth=["']([^"']+)["']/);
-                const heightMatch = svgTag.match(/\bheight=["']([^"']+)["']/);
-                console.log(`[SVG processSvg] vlCount=${vlCount}, viewBox=${vb ? `${vb.w.toFixed(0)}x${vb.h.toFixed(0)}` : 'none'}, svgWidth=${widthMatch?.[1] || 'none'}, svgHeight=${heightMatch?.[1] || 'none'}`);
-
-                // Boost text/label sizes for large grids before injection
-                const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
-                return { svg, viewBox: vb };
             };
             const handleManualZoomIn = () => {
                 const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
@@ -1261,6 +1318,7 @@
 
             // Fetch action variant diagram when an action card is clicked
             const handleActionSelect = async (actionId) => {
+
                 if (actionId === selectedActionId) {
                     // Deselect — return to previous diagram tab
                     setSelectedActionId(null);
@@ -1293,6 +1351,37 @@
                 }
             };
 
+            const handleActionFavorite = (actionId) => {
+                setManualActionIds(prev => {
+                    const next = new Set(prev);
+                    next.add(actionId);
+                    return next;
+                });
+                setRejectedActionIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(actionId);
+                    return next;
+                });
+            };
+
+            const handleActionReject = (actionId) => {
+                setRejectedActionIds(prev => {
+                    const next = new Set(prev);
+                    next.add(actionId);
+                    return next;
+                });
+                setManualActionIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(actionId);
+                    return next;
+                });
+                setManuallyAddedIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(actionId);
+                    return next;
+                });
+            };
+
             // ===== Asset Click (from action card badges / rho line names) =====
             const handleAssetClick = (actionId, assetName, tab = 'action') => {
                 setInspectQuery(assetName);
@@ -1311,21 +1400,36 @@
             const handleVlDoubleClick = async (actionId, vlName) => {
                 setOverlayTransform({ scale: 1, tx: 0, ty: 0 });
                 setOverlayPos({ x: 16, y: 16 });
-                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null });
+                // Default to 'action' state because they clicked from an action diagram
+                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: 'action' });
+                fetchSldVariant(vlName, actionId, 'action');
+            };
+
+            const fetchSldVariant = async (vlName, actionId, sldTab) => {
+                setVlOverlay(prev => prev ? { ...prev, loading: true, error: null, tab: sldTab } : null);
                 try {
-                    const res = await axios.post(API_BASE + '/api/action-variant-sld', {
-                        action_id: actionId,
-                        voltage_level_id: vlName,
-                    });
+                    let endpoint = '';
+                    let payload = {};
+                    if (sldTab === 'n') {
+                        endpoint = '/api/n-sld';
+                        payload = { voltage_level_id: vlName };
+                    } else if (sldTab === 'n-1') {
+                        endpoint = '/api/n1-sld';
+                        payload = { voltage_level_id: vlName, disconnected_element: selectedBranch };
+                    } else {
+                        endpoint = '/api/action-variant-sld';
+                        payload = { action_id: actionId, voltage_level_id: vlName };
+                    }
+                    const res = await axios.post(API_BASE + endpoint, payload);
                     setVlOverlay(prev =>
-                        prev && prev.vlName === vlName && prev.actionId === actionId
+                        prev && prev.vlName === vlName && prev.actionId === actionId && prev.tab === sldTab
                             ? { ...prev, svg: res.data.svg, loading: false }
                             : prev
                     );
                 } catch (err) {
-                    setVlOverlay(prev => prev
+                    setVlOverlay(prev => prev && prev.tab === sldTab
                         ? { ...prev, loading: false, error: err?.response?.data?.detail || 'Failed to load diagram' }
-                        : null
+                        : prev
                     );
                 }
             };
@@ -1431,6 +1535,7 @@
                     const detail = res.data;
                     // Track this as a manually added action
                     setManualActionIds(prev => new Set([...prev, actionId]));
+                    setManuallyAddedIds(prev => new Set([...prev, actionId]));
                     // Merge into result
                     setResult(prev => {
                         const base = prev || { actions: {}, lines_overloaded: [] };
@@ -1525,26 +1630,30 @@
             // When returning from the overflow tab, each tab keeps its own
             // saved zoom state.
             useEffect(() => {
-                const prevTab = prevTabRef.current;
-                prevTabRef.current = activeTab;
+                try {
+                    const prevTab = prevTabRef.current;
+                    prevTabRef.current = activeTab;
 
-                // Don't sync when coming from / going to overflow
-                if (prevTab === 'overflow' || activeTab === 'overflow') return;
+                    // Don't sync when coming from / going to overflow
+                    if (prevTab === 'overflow' || activeTab === 'overflow') return;
 
-                // Find the source viewBox from the previous tab
-                const sourceVB = prevTab === 'n' ? nPZ.viewBox
-                    : prevTab === 'n-1' ? n1PZ.viewBox
-                        : prevTab === 'action' ? actionPZ.viewBox
-                            : null;
-                if (!sourceVB) return;
+                    // Find the source viewBox from the previous tab
+                    const sourceVB = prevTab === 'n' ? nPZ?.viewBox
+                        : prevTab === 'n-1' ? n1PZ?.viewBox
+                            : prevTab === 'action' ? actionPZ?.viewBox
+                                : null;
+                    if (!sourceVB) return;
 
-                // Apply to the new active tab
-                if (activeTab === 'n' && nPZ.setViewBox) {
-                    nPZ.setViewBox(sourceVB);
-                } else if (activeTab === 'n-1' && n1PZ.setViewBox) {
-                    n1PZ.setViewBox(sourceVB);
-                } else if (activeTab === 'action' && actionPZ.setViewBox) {
-                    actionPZ.setViewBox(sourceVB);
+                    // Apply to the new active tab
+                    if (activeTab === 'n' && nPZ?.setViewBox) {
+                        nPZ.setViewBox(sourceVB);
+                    } else if (activeTab === 'n-1' && n1PZ?.setViewBox) {
+                        n1PZ.setViewBox(sourceVB);
+                    } else if (activeTab === 'action' && actionPZ?.setViewBox) {
+                        actionPZ.setViewBox(sourceVB);
+                    }
+                } catch (err) {
+                    console.error('[ZoomSync] error:', err);
                 }
             }, [activeTab]);
 
@@ -1566,123 +1675,122 @@
             // Highlight overloaded lines in orange on N-1 and Action diagrams,
             // and highlight acted-upon lines in yellow fluo on Action diagram.
             useEffect(() => {
-                const overloadedLines = result?.lines_overloaded || [];
+                try {
+                    const overloadedLines = result?.lines_overloaded || [];
 
-                // Helper to apply delta visuals
-                const applyDeltaVisuals = (container, diagram, metaIndex) => {
-                    if (!container || !diagram || !metaIndex) return;
+                    // Helper to apply delta visuals
+                    const applyDeltaVisuals = (container, diagram, metaIndex) => {
+                        if (!container || !diagram || !metaIndex) return;
 
-                    // Clear delta classes
-                    container.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
-                    container.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
-                    container.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
+                        // Clear delta classes
+                        container.querySelectorAll('.nad-delta-positive').forEach(el => el.classList.remove('nad-delta-positive'));
+                        container.querySelectorAll('.nad-delta-negative').forEach(el => el.classList.remove('nad-delta-negative'));
+                        container.querySelectorAll('.nad-delta-grey').forEach(el => el.classList.remove('nad-delta-grey'));
 
-                    // Restore original text labels
-                    container.querySelectorAll('[data-original-text]').forEach(el => {
-                        el.textContent = el.getAttribute('data-original-text');
-                        el.removeAttribute('data-original-text');
-                    });
+                        // Restore original text labels
+                        container.querySelectorAll('[data-original-text]').forEach(el => {
+                            el.textContent = el.getAttribute('data-original-text');
+                            el.removeAttribute('data-original-text');
+                        });
 
-                    // Resize delta logic
-                    if (actionViewMode === 'delta' && diagram.flow_deltas) {
-                        const { edgesByEquipmentId } = metaIndex;
-                        const flowDeltas = diagram.flow_deltas;
-                        const idMap = new Map();
-                        container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
+                        // Resize delta logic
+                        if (actionViewMode === 'delta' && diagram.flow_deltas) {
+                            const { edgesByEquipmentId } = metaIndex;
+                            const flowDeltas = diagram.flow_deltas;
+                            const idMap = new Map();
+                            container.querySelectorAll('[id]').forEach(el => idMap.set(el.id, el));
 
-                        for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
-                            const edge = edgesByEquipmentId.get(lineId);
-                            if (!edge || !edge.svgId) continue;
+                            for (const [lineId, deltaInfo] of Object.entries(flowDeltas)) {
+                                const edge = edgesByEquipmentId.get(lineId);
+                                if (!edge || !edge.svgId) continue;
 
-                            const el = idMap.get(edge.svgId);
-                            if (el) {
-                                const classMap = {
-                                    positive: 'nad-delta-positive',
-                                    negative: 'nad-delta-negative',
-                                    grey: 'nad-delta-grey',
-                                };
-                                const cls = classMap[deltaInfo.category];
-                                if (cls) el.classList.add(cls);
-                            }
+                                const el = idMap.get(edge.svgId);
+                                if (el) {
+                                    const classMap = {
+                                        positive: 'nad-delta-positive',
+                                        negative: 'nad-delta-negative',
+                                        grey: 'nad-delta-grey',
+                                    };
+                                    const cls = classMap[deltaInfo.category];
+                                    if (cls) el.classList.add(cls);
+                                }
 
-                            const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
-                            const edgeInfoIds = [edge.edgeInfo1?.svgId, edge.edgeInfo2?.svgId].filter(Boolean);
+                                const deltaStr = deltaInfo.delta >= 0 ? `+${deltaInfo.delta.toFixed(1)}` : deltaInfo.delta.toFixed(1);
+                                const edgeInfoIds = [edge.edgeInfo1?.svgId, edge.edgeInfo2?.svgId].filter(Boolean);
 
-                            for (const infoSvgId of edgeInfoIds) {
-                                const infoEl = idMap.get(infoSvgId);
-                                if (!infoEl) continue;
-                                const textTargets = infoEl.querySelectorAll('foreignObject, text');
-                                textTargets.forEach(t => {
-                                    if (!t.hasAttribute('data-original-text')) {
-                                        t.setAttribute('data-original-text', t.textContent);
-                                    }
-                                    t.textContent = `Δ ${deltaStr}`;
-                                });
-                            }
-                        }
-                    }
-                };
-
-                // 1. N-1 Tab Logic
-                if (activeTab === 'n-1') {
-                    // Apply standard overloads ONLY if NOT in delta mode
-                    if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
-                        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
-                    }
-                    // Apply delta visuals (clears logic if mode != delta)
-                    applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
-                }
-
-                // 2. Action Tab Logic
-                if (activeTab === 'action') {
-                    // Apply delta visuals
-                    applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex);
-
-                    // Standard action highlights (Action targets & Overloads)
-                    const actionDetail = result?.actions?.[selectedActionId];
-
-                    if (actionDetail) {
-                        if (actionViewMode !== 'delta') {
-                            // Highlight overloads (post-action)
-                            const stillOverloaded = [];
-                            if (overloadedLines.length > 0 && actionDetail.rho_after) {
-                                overloadedLines.forEach((name, i) => {
-                                    if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
-                                        stillOverloaded.push(name);
-                                    }
-                                });
-                            }
-                            if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
-                                if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
-                                    stillOverloaded.push(actionDetail.max_rho_line);
+                                for (const infoSvgId of edgeInfoIds) {
+                                    const infoEl = idMap.get(infoSvgId);
+                                    if (!infoEl) continue;
+                                    const textTargets = infoEl.querySelectorAll('foreignObject, text');
+                                    textTargets.forEach(t => {
+                                        if (!t.hasAttribute('data-original-text')) {
+                                            t.setAttribute('data-original-text', t.textContent);
+                                        }
+                                        t.textContent = `Δ ${deltaStr}`;
+                                    });
                                 }
                             }
-                            applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
                         }
+                    };
 
-                        // Always highlight action targets (Yellow halo)
-                        applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
-                    } else {
-                        if (actionSvgContainerRef.current) applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+
+                    // 2. Action Tab Logic
+                    if (activeTab === 'action') {
+                        // Apply delta visuals
+                        applyDeltaVisuals(actionSvgContainerRef.current, actionDiagram, actionMetaIndex);
+
+                        // Standard action highlights (Action targets & Overloads)
+                        const actionDetail = result?.actions?.[selectedActionId];
+
+                        if (actionDetail) {
+                            if (actionViewMode !== 'delta') {
+                                // Highlight overloads (post-action)
+                                const stillOverloaded = [];
+                                if (overloadedLines.length > 0 && actionDetail.rho_after) {
+                                    overloadedLines.forEach((name, i) => {
+                                        if (actionDetail.rho_after[i] != null && actionDetail.rho_after[i] > 1.0) {
+                                            stillOverloaded.push(name);
+                                        }
+                                    });
+                                }
+                                if (actionDetail.max_rho != null && actionDetail.max_rho > 1.0 && actionDetail.max_rho_line) {
+                                    if (!stillOverloaded.includes(actionDetail.max_rho_line)) {
+                                        stillOverloaded.push(actionDetail.max_rho_line);
+                                    }
+                                }
+                                applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, stillOverloaded);
+                            }
+
+                            // Always highlight action targets (Yellow halo)
+                            applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
+                        } else {
+                            if (actionSvgContainerRef.current) applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+                        }
                     }
+
+                    // Standard diagram highlights
+                    if (nDiagram && activeTab === 'n') {
+                        if (nSvgContainerRef.current) {
+                            applyActionTargetHighlights(nSvgContainerRef.current, null, null, null);
+                            const overloadedLines = nDiagram.lines_overloaded || [];
+                            applyOverloadedHighlights(nSvgContainerRef.current, nMetaIndex, overloadedLines);
+                        }
+                    } else if (n1Diagram && activeTab === 'n-1' && n1SvgContainerRef.current && n1MetaIndex) {
+                        // Apply standard overloads ONLY if NOT in delta mode
+                        const n1Overloaded = n1Diagram.lines_overloaded || [];
+                        if (actionViewMode !== 'delta' && n1Overloaded.length > 0) {
+                            applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, n1Overloaded);
+                        }
+                        // Apply delta visuals (clears logic if mode != delta)
+                        applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
+                        // Apply contingency highlight (yellow halo on disconnected element)
+                        applyContingencyHighlight(n1SvgContainerRef.current, n1MetaIndex, selectedBranch);
+                    }
+
+                } catch (err) {
+                    console.error('[HighlightEffect] crash:', err);
+                    setError('Decoration error: ' + err.message);
                 }
-
-                // Standard diagram highlights
-                if (nDiagram && activeTab === 'n') {
-                    if (nSvgContainerRef.current) {
-                        applyActionTargetHighlights(nSvgContainerRef.current, null, null, null);
-                        const overloadedLines = nDiagram.lines_overloaded || [];
-                        applyOverloadedHighlights(nSvgContainerRef.current, nMetaIndex, overloadedLines);
-                    }
-                } else if (n1Diagram && activeTab === 'n-1') {
-                    // Apply standard overloads ONLY if NOT in delta mode
-                    if (actionViewMode !== 'delta' && n1SvgContainerRef.current && n1MetaIndex && overloadedLines.length > 0) {
-                        applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, overloadedLines);
-                    }
-                    // Apply delta visuals (clears logic if mode != delta)
-                    applyDeltaVisuals(n1SvgContainerRef.current, n1Diagram, n1MetaIndex);
-                }
-
             }, [n1Diagram, actionDiagram, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
 
             // ===== VOLTAGE RANGE FILTER =====
@@ -2047,11 +2155,37 @@
                             }}>
                                 {/* Header — drag handle */}
                                 <div onMouseDown={startOverlayDrag} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0, cursor: 'move', userSelect: 'none' }}>
-                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#065f46' }}>
-                                        {vlOverlay.vlName} — post-action SLD
-                                    </span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#065f46' }}>
+                                            {vlOverlay.vlName}
+                                        </span>
+                                        <div style={{ display: 'flex', gap: '4px' }}>
+                                            {['n', 'n-1', 'action'].map(tabMode => (
+                                                <button
+                                                    key={tabMode}
+                                                    onMouseDown={e => e.stopPropagation()} // Prevent dragging when clicking tabs
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        fetchSldVariant(vlOverlay.vlName, vlOverlay.actionId, tabMode);
+                                                    }}
+                                                    style={{
+                                                        background: vlOverlay.tab === tabMode ? '#059669' : '#e5e7eb',
+                                                        color: vlOverlay.tab === tabMode ? 'white' : '#374151',
+                                                        border: 'none',
+                                                        borderRadius: '4px',
+                                                        padding: '2px 8px',
+                                                        fontSize: '11px',
+                                                        fontWeight: vlOverlay.tab === tabMode ? 'bold' : 'normal',
+                                                        cursor: vlOverlay.loading ? 'wait' : 'pointer'
+                                                    }}>
+                                                    {tabMode.toUpperCase()}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
                                     <button
-                                        onClick={() => setVlOverlay(null)}
+                                        onMouseDown={e => e.stopPropagation()}
+                                        onClick={(e) => { e.stopPropagation(); setVlOverlay(null); }}
                                         style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
                                         title="Close">✕</button>
                                 </div>
@@ -2081,7 +2215,173 @@
                 );
             };
 
+            const sortedActionEntries = React.useMemo(() => {
+                return Object.entries(result?.actions || {}).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
+            }, [result?.actions]);
 
+            const analysisActionIds = React.useMemo(() => {
+                const ids = new Set();
+                if (!result?.action_scores) return ids;
+                for (const data of Object.values(result.action_scores)) {
+                    const scores = data?.scores || {};
+                    for (const actionId of Object.keys(scores)) {
+                        ids.add(actionId);
+                    }
+                }
+                return ids;
+            }, [result?.action_scores]);
+
+            const selectedEntries = React.useMemo(() => {
+                return sortedActionEntries.filter(([id]) => manualActionIds.has(id));
+            }, [sortedActionEntries, manualActionIds]);
+
+            const prioritizedEntries = React.useMemo(() => {
+                return sortedActionEntries.filter(([id]) => !manualActionIds.has(id) && !rejectedActionIds.has(id));
+            }, [sortedActionEntries, manualActionIds, rejectedActionIds]);
+
+            const rejectedEntries = React.useMemo(() => {
+                return sortedActionEntries.filter(([id]) => rejectedActionIds.has(id));
+            }, [sortedActionEntries, rejectedActionIds]);
+
+            const renderActionList = (entries) => {
+                return entries.map(([id, details], index) => {
+                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+                    const overloadedLines = result.lines_overloaded || [];
+                    // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
+                    const severity = details.max_rho != null
+                        ? (details.max_rho > monitoringFactor ? 'red' : details.max_rho > (monitoringFactor - 0.05) ? 'orange' : 'green')
+                        : (details.is_rho_reduction ? 'green' : 'red');
+                    const severityColors = {
+                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
+                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
+                    };
+                    const sc = severityColors[severity];
+                    const clickableLinkStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#1e40af', fontWeight: 600, textDecoration: 'underline dotted' };
+                    const renderRho = (arr, tab) => {
+                        if (!arr || arr.length === 0) return '—';
+                        return arr.map((v, i) => {
+                            const lineName = overloadedLines[i] || `line ${i}`;
+                            return (
+                                <React.Fragment key={i}>
+                                    {i > 0 && ', '}
+                                    <button style={clickableLinkStyle} title={`Zoom to ${lineName}`}
+                                        onClick={(e) => { e.stopPropagation(); handleAssetClick(id, lineName, tab); }}
+                                    >{lineName}</button>
+                                    {`: ${(v * 100).toFixed(1)}%`}
+                                </React.Fragment>
+                            );
+                        });
+                    };
+                    const isSelected = selectedActionId === id;
+                    return (
+                        <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
+                            borderLeftColor: isSelected ? '#007bff' : sc.border,
+                            cursor: 'pointer',
+                            background: isSelected ? '#e7f1ff' : 'white',
+                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                            transition: 'all 0.15s ease'
+                        }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
+                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                    {isSelected && (
+                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                            VIEWING
+                                        </span>
+                                    )}
+                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                        {sc.label}
+                                    </span>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
+                                <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
+                                {(() => {
+                                    const nodeMeta = nMetaIndex && nMetaIndex.nodesByEquipmentId;
+                                    const edgeMeta = nMetaIndex && nMetaIndex.edgesByEquipmentId;
+                                    const vlName = nodeMeta ? getActionTargetVoltageLevel(details, id, nodeMeta) : null;
+                                    if (vlName) {
+                                        return (
+                                            <button
+                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted', flexShrink: 0 }}
+                                                title={`Click: zoom to ${vlName} | Double-click: open focused diagram`}
+                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, vlName, 'action'); }}
+                                                onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, vlName); }}>
+                                                {vlName}
+                                            </button>
+                                        );
+                                    }
+                                    const badgeBtn = (name, bg, color, title) => (
+                                        <button key={name}
+                                            style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
+                                            title={title}
+                                            onClick={(e) => { e.stopPropagation(); handleAssetClick(id, name, 'action'); }}>
+                                            {name}
+                                        </button>
+                                    );
+                                    const lineNames = edgeMeta
+                                        ? getActionTargetLines(details, id, edgeMeta)
+                                        : Array.from(new Set([
+                                            ...Object.keys(details.action_topology?.lines_ex_bus || {}),
+                                            ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                        ]));
+                                    if (lineNames.length > 0) return (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                            {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name}`))}
+                                        </div>
+                                    );
+                                    // Fallback: gen/load equipment names from topology
+                                    const topo = details.action_topology;
+                                    const equipNames = [
+                                        ...Object.keys(topo?.gens_bus || {}),
+                                        ...Object.keys(topo?.loads_bus || {}),
+                                    ];
+                                    if (equipNames.length > 0) return (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                            {equipNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`))}
+                                        </div>
+                                    );
+                                    return null;
+                                })()}
+                            </div>
+                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                                <div>
+                                    <div>Rho before: {renderRho(details.rho_before, 'n-1')}</div>
+                                    <div>Rho after: {renderRho(details.rho_after, 'action')}</div>
+                                    {maxRhoPct != null && (
+                                        <div style={{ marginTop: '3px' }}>
+                                            Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                            {details.max_rho_line && (
+                                                <span style={{ color: '#888' }}> on <button
+                                                    style={clickableLinkStyle} title={`Zoom to ${details.max_rho_line}`}
+                                                    onClick={(e) => { e.stopPropagation(); handleAssetClick(id, details.max_rho_line, 'action'); }}
+                                                >{details.max_rho_line}</button></span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                                <div style={{ display: 'flex', gap: '4px', flexShrink: 0, paddingBottom: '2px' }}>
+                                    {!manualActionIds.has(id) && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleActionFavorite(id); }}
+                                            style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                            title="Select this action"
+                                        ><span style={{ fontSize: '14px' }}>⭐</span></button>
+                                    )}
+                                    {!rejectedActionIds.has(id) && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleActionReject(id); }}
+                                            style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                            title={manualActionIds.has(id) ? "Remove from selected" : "Reject this action"}
+                                        ><span style={{ fontSize: '14px' }}>❌</span></button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                });
+            };
 
             return (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -2499,157 +2799,94 @@
                                 </div>
                             )}
 
-                            {/* Display prioritized actions button */}
-                            {pendingAnalysisResult && !analysisLoading && (
-                                <button
-                                    onClick={handleDisplayPrioritizedActions}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px 16px',
-                                        margin: '8px 0',
-                                        background: 'linear-gradient(135deg, #27ae60, #2ecc71)',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: 700,
-                                        boxShadow: '0 2px 8px rgba(39,174,96,0.3)',
-                                        transition: 'transform 0.1s',
-                                    }}
-                                    onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
-                                    onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-                                >
-                                    📊 Display {Object.keys(pendingAnalysisResult.actions || {}).length} prioritized actions
-                                </button>
-                            )}
-
-                            {result?.actions && Object.keys(result.actions).length > 0 ? (
-                                Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
-                                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
-                                    const overloadedLines = result.lines_overloaded || [];
-                                    // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
-                                    const severity = details.max_rho != null
-                                        ? (details.max_rho > monitoringFactor ? 'red' : details.max_rho > (monitoringFactor - 0.05) ? 'orange' : 'green')
-                                        : (details.is_rho_reduction ? 'green' : 'red');
-                                    const severityColors = {
-                                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
-                                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved — low margin' },
-                                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' }
-                                    };
-                                    const sc = severityColors[severity];
-                                    const clickableLinkStyle = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#1e40af', fontWeight: 600, textDecoration: 'underline dotted' };
-                                    const renderRho = (arr, tab) => {
-                                        if (!arr || arr.length === 0) return '—';
-                                        return arr.map((v, i) => {
-                                            const lineName = overloadedLines[i] || `line ${i}`;
+                            <div style={{ marginBottom: '15px' }}>
+                                <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '4px', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
+                                    Selected Actions
+                                    {selectedEntries.length > 0 && <span style={{ background: '#e9ecef', color: '#495057', fontSize: '11px', padding: '2px 6px', borderRadius: '10px' }}>{selectedEntries.length}</span>}
+                                </h4>
+                                {selectedEntries.length > 0 ? (
+                                    <>
+                                        {!dismissedSelectedWarning && selectedEntries.some(([id]) => manuallyAddedIds.has(id) && analysisActionIds.has(id)) && (() => {
+                                            const overlapIds = selectedEntries.filter(([id]) => manuallyAddedIds.has(id) && analysisActionIds.has(id)).map(([id]) => id).join(', ');
                                             return (
-                                                <React.Fragment key={i}>
-                                                    {i > 0 && ', '}
-                                                    <button style={clickableLinkStyle} title={`Zoom to ${lineName}`}
-                                                        onClick={(e) => { e.stopPropagation(); handleAssetClick(id, lineName, tab); }}
-                                                    >{lineName}</button>
-                                                    {`: ${(v * 100).toFixed(1)}%`}
-                                                </React.Fragment>
-                                            );
-                                        });
-                                    };
-                                    const isSelected = selectedActionId === id;
-                                    return (
-                                        <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
-                                            borderLeftColor: isSelected ? '#007bff' : sc.border,
-                                            cursor: 'pointer',
-                                            background: isSelected ? '#e7f1ff' : 'white',
-                                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
-                                            transition: 'all 0.15s ease'
-                                        }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <h4 style={{ margin: 0, color: isSelected ? '#0056b3' : undefined }}>#{index + 1} — {id}</h4>
-                                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                                    {isSelected && (
-                                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
-                                                            VIEWING
-                                                        </span>
-                                                    )}
-                                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
-                                                        {sc.label}
-                                                    </span>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', color: '#856404' }}>
+                                                    <div>⚠️ User warning: The following manually selected actions are also recommended by the recent analysis run: {overlapIds}</div>
+                                                    <button onClick={() => setDismissedSelectedWarning(true)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">&times;</button>
                                                 </div>
-                                            </div>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
-                                                <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
-                                                {(() => {
-                                                    const nodeMeta = nMetaIndex && nMetaIndex.nodesByEquipmentId;
-                                                    const edgeMeta = nMetaIndex && nMetaIndex.edgesByEquipmentId;
-                                                    const vlName = nodeMeta ? getActionTargetVoltageLevel(details, id, nodeMeta) : null;
-                                                    if (vlName) {
-                                                        return (
-                                                            <button
-                                                                style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, backgroundColor: '#d1fae5', color: '#065f46', textDecoration: 'underline dotted', flexShrink: 0 }}
-                                                                title={`Click: zoom to ${vlName} | Double-click: open focused diagram`}
-                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, vlName, 'action'); }}
-                                                                onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, vlName); }}>
-                                                                {vlName}
-                                                            </button>
-                                                        );
-                                                    }
-                                                    const badgeBtn = (name, bg, color, title) => (
-                                                        <button key={name}
-                                                            style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
-                                                            title={title}
-                                                            onClick={(e) => { e.stopPropagation(); handleAssetClick(id, name, 'action'); }}>
-                                                            {name}
-                                                        </button>
-                                                    );
-                                                    const lineNames = edgeMeta
-                                                        ? getActionTargetLines(details, id, edgeMeta)
-                                                        : Array.from(new Set([
-                                                            ...Object.keys(details.action_topology?.lines_ex_bus || {}),
-                                                            ...Object.keys(details.action_topology?.lines_or_bus || {}),
-                                                        ]));
-                                                    if (lineNames.length > 0) {
-                                                        return (
-                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                                                {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name} in action visualization`))}
-                                                            </div>
-                                                        );
-                                                    }
-                                                    // Fallback: gen/load equipment names from topology
-                                                    const topo = details.action_topology;
-                                                    const equipNames = [
-                                                        ...Object.keys(topo?.gens_bus || {}),
-                                                        ...Object.keys(topo?.loads_bus || {}),
-                                                    ];
-                                                    if (equipNames.length > 0) {
-                                                        return (
-                                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                                                {equipNames.map(name => badgeBtn(name, '#fef3c7', '#92400e', `Zoom to ${name} in action visualization`))}
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return null;
-                                                })()}
-                                            </div>
-                                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                                <div>Rho before: {renderRho(details.rho_before, 'n-1')}</div>
-                                                <div>Rho after: {renderRho(details.rho_after, 'action')}</div>
-                                                {maxRhoPct != null && (
-                                                    <div style={{ marginTop: '3px' }}>
-                                                        Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                                        {details.max_rho_line && (
-                                                            <span style={{ color: '#888' }}> on <button
-                                                                style={{ ...clickableLinkStyle, color: '#888' }}
-                                                                title={`Zoom to ${details.max_rho_line}`}
-                                                                onClick={(e) => { e.stopPropagation(); handleAssetClick(id, details.max_rho_line, 'action'); }}
-                                                            >{details.max_rho_line}</button></span>
-                                                        )}
+                                            );
+                                        })()}
+                                        {renderActionList(selectedEntries)}
+                                    </>
+                                ) : (
+                                    <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0 15px 0' }}>Select an action manually or from suggested ones.</p>
+                                )}
+                            </div>
+
+                            <div style={{ marginBottom: '15px' }}>
+                                <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '10px' }}>
+                                    <button
+                                        onClick={() => setSuggestedTab('prioritized')}
+                                        style={{ flex: 1, padding: '8px', cursor: 'pointer', border: 'none', background: 'none', borderBottom: suggestedTab === 'prioritized' ? '2px solid #007bff' : 'none', fontWeight: suggestedTab === 'prioritized' ? 'bold' : 'normal', color: suggestedTab === 'prioritized' ? '#007bff' : '#666', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
+                                    >Suggested Actions {prioritizedEntries.length > 0 && <span style={{ background: suggestedTab === 'prioritized' ? '#e7f1ff' : '#f8f9fa', color: suggestedTab === 'prioritized' ? '#007bff' : '#6c757d', fontSize: '11px', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>{prioritizedEntries.length}</span>}</button>
+                                    <button
+                                        onClick={() => setSuggestedTab('rejected')}
+                                        style={{ flex: 1, padding: '8px', cursor: 'pointer', border: 'none', background: 'none', borderBottom: suggestedTab === 'rejected' ? '2px solid #e74c3c' : 'none', fontWeight: suggestedTab === 'rejected' ? 'bold' : 'normal', color: suggestedTab === 'rejected' ? '#e74c3c' : '#666', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
+                                    >Rejected Actions {rejectedEntries.length > 0 && <span style={{ background: suggestedTab === 'rejected' ? '#fdecea' : '#f8f9fa', color: suggestedTab === 'rejected' ? '#e74c3c' : '#6c757d', fontSize: '11px', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>{rejectedEntries.length}</span>}</button>
+                                </div>
+
+                                {/* Display prioritized actions button inside Suggested Actions section */}
+                                {pendingAnalysisResult && !analysisLoading && (
+                                    <button
+                                        onClick={handleDisplayPrioritizedActions}
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 16px',
+                                            margin: '0 0 10px 0',
+                                            background: 'linear-gradient(135deg, #27ae60, #2ecc71)',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            fontSize: '14px',
+                                            fontWeight: 700,
+                                            boxShadow: '0 2px 8px rgba(39,174,96,0.3)',
+                                            transition: 'transform 0.1s',
+                                        }}
+                                        onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
+                                        onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+                                    >
+                                        📊 Display {Object.keys(pendingAnalysisResult.actions || {}).length} prioritized actions
+                                    </button>
+                                )}
+
+                                {suggestedTab === 'prioritized' && (
+                                    prioritizedEntries.length > 0 ? renderActionList(prioritizedEntries) : (
+                                        !analysisLoading && !pendingAnalysisResult ? (
+                                            <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>Run analysis to get action suggestions.</p>
+                                        ) : (!analysisLoading && pendingAnalysisResult ? (
+                                            <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>No suggested actions available.</p>
+                                        ) : null)
+                                    )
+                                )}
+                                {suggestedTab === 'rejected' && (
+                                    rejectedEntries.length > 0 ? (
+                                        <>
+                                            {!dismissedRejectedWarning && rejectedEntries.some(([id]) => analysisActionIds.has(id)) && (() => {
+                                                const overlapIds = rejectedEntries.filter(([id]) => analysisActionIds.has(id)).map(([id]) => id).join(', ');
+                                                return (
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', color: '#856404' }}>
+                                                        <div>⚠️ User warning: The following manually rejected actions were recommended by the recent analysis run: {overlapIds}</div>
+                                                        <button onClick={() => setDismissedRejectedWarning(true)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">&times;</button>
                                                     </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            ) : !analysisLoading && !pendingAnalysisResult && <p style={{ color: '#666', fontStyle: 'italic' }}>No actions available.</p>}
+                                                );
+                                            })()}
+                                            {renderActionList(rejectedEntries)}
+                                        </>
+                                    ) : (
+                                        <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>No rejected actions.</p>
+                                    )
+                                )}
+                            </div>
 
                             {/* Fixed-position tooltip rendered outside any overflow context */}
                             {scoreTooltip && (
@@ -2683,12 +2920,14 @@
                                 >
                                     Network (N)
                                 </button>
-                                <button
-                                    onClick={() => setActiveTab('n-1')}
-                                    style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'n-1' ? 'white' : '#ecf0f1', color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'n-1' ? 'bold' : 400 }}
-                                >
-                                    Contingency (N-1)
-                                </button>
+                                {selectedBranch && (
+                                    <button
+                                        onClick={() => setActiveTab('n-1')}
+                                        style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'n-1' ? 'white' : '#ecf0f1', color: activeTab === 'n-1' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'n-1' ? '3px solid #e74c3c' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'n-1' ? 'bold' : 400 }}
+                                    >
+                                        Contingency (N-1)
+                                    </button>
+                                )}
                                 {selectedActionId && (
                                     <button
                                         onClick={() => setActiveTab('action')}

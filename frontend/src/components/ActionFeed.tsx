@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail, NodeMeta, EdgeMeta } from '../types';
+import type { ActionDetail, NodeMeta, EdgeMeta, AnalysisResult } from '../types';
 import { api } from '../api';
 import { getActionTargetVoltageLevel, getActionTargetLines } from '../utils/svgUtils';
 
@@ -8,7 +8,13 @@ interface ActionFeedProps {
     actionScores?: Record<string, Record<string, unknown>>;
     linesOverloaded: string[];
     selectedActionId: string | null;
+    selectedActionIds: Set<string>;
+    rejectedActionIds: Set<string>;
+    pendingAnalysisResult: AnalysisResult | null;
+    onDisplayPrioritizedActions: () => void;
     onActionSelect: (actionId: string | null) => void;
+    onActionFavorite: (actionId: string) => void;
+    onActionReject: (actionId: string) => void;
     onAssetClick: (actionId: string, assetName: string, tab?: 'action' | 'n-1') => void;
     nodesByEquipmentId: Map<string, NodeMeta> | null;
     edgesByEquipmentId: Map<string, EdgeMeta> | null;
@@ -16,6 +22,7 @@ interface ActionFeedProps {
     onManualActionAdded: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     analysisLoading: boolean;
     monitoringFactor: number;
+    manuallyAddedIds: Set<string>;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -23,7 +30,13 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     actionScores,
     linesOverloaded,
     selectedActionId,
+    selectedActionIds,
+    rejectedActionIds,
+    pendingAnalysisResult,
+    onDisplayPrioritizedActions,
     onActionSelect,
+    onActionFavorite,
+    onActionReject,
     onAssetClick,
     nodesByEquipmentId,
     edgesByEquipmentId,
@@ -31,6 +44,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     onManualActionAdded,
     analysisLoading,
     monitoringFactor,
+    manuallyAddedIds,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -42,6 +56,9 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
+    const [suggestedTab, setSuggestedTab] = useState<'prioritized' | 'rejected'>('prioritized');
+    const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
+    const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
 
     const showTooltip = (e: React.MouseEvent, content: React.ReactNode) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -193,6 +210,149 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const sortedActionEntries = useMemo(() => {
         return Object.entries(actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
     }, [actions]);
+
+    const analysisActionIds = useMemo(() => {
+        const ids = new Set<string>();
+        if (!actionScores) return ids;
+        for (const data of Object.values(actionScores)) {
+            const scores = data?.scores || {};
+            for (const actionId of Object.keys(scores)) {
+                ids.add(actionId);
+            }
+        }
+        return ids;
+    }, [actionScores]);
+
+    const selectedEntries = useMemo(() => {
+        return sortedActionEntries.filter(([id]) => selectedActionIds.has(id));
+    }, [sortedActionEntries, selectedActionIds]);
+
+    const prioritizedEntries = useMemo(() => {
+        return sortedActionEntries.filter(([id]) => !selectedActionIds.has(id) && !rejectedActionIds.has(id));
+    }, [sortedActionEntries, selectedActionIds, rejectedActionIds]);
+
+    const rejectedEntries = useMemo(() => {
+        return sortedActionEntries.filter(([id]) => rejectedActionIds.has(id));
+    }, [sortedActionEntries, rejectedActionIds]);
+
+    const renderActionList = (entries: [string, ActionDetail][]) => {
+        return entries.map(([id, details], index) => {
+            const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+            const severity = details.max_rho != null
+                ? (details.max_rho > monitoringFactor ? 'red' as const : details.max_rho > (monitoringFactor - 0.05) ? 'orange' as const : 'green' as const)
+                : (details.is_rho_reduction ? 'green' as const : 'red' as const);
+            const severityColors = {
+                green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
+                orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved \u2014 low margin' },
+                red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
+            };
+            const sc = severityColors[severity];
+            const isSelected = selectedActionId === id;
+            return (
+                <div key={id} style={{
+                    background: isSelected ? '#e7f1ff' : 'white',
+                    border: '1px solid #ddd',
+                    borderRadius: '8px',
+                    padding: '10px',
+                    marginBottom: '10px',
+                    boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                    borderLeft: `5px solid ${isSelected ? '#007bff' : sc.border}`,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                }} onClick={() => onActionSelect(id)}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h4 style={{ margin: 0, fontSize: '14px', color: isSelected ? '#0056b3' : undefined }}>
+                            #{index + 1} {'\u2014'} {id}
+                        </h4>
+                        <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                            {isSelected && (
+                                <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
+                                    VIEWING
+                                </span>
+                            )}
+                            <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
+                                {sc.label}
+                            </span>
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
+                        <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
+                        {(() => {
+                            const badgeBtn = (name: string, bg: string, color: string, title: string) => (
+                                <button key={name}
+                                    style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
+                                    title={title}
+                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
+                                    {name}
+                                </button>
+                            );
+                            const vlName = nodesByEquipmentId
+                                ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
+                                : null;
+                            if (vlName) return badgeBtn(vlName, '#d1fae5', '#065f46', `Zoom to voltage level ${vlName}`);
+                            const lineNames = edgesByEquipmentId
+                                ? getActionTargetLines(details, id, edgesByEquipmentId)
+                                : Array.from(new Set([
+                                    ...Object.keys(details.action_topology?.lines_ex_bus || {}),
+                                    ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                ]));
+                            if (lineNames.length > 0) return (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                    {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name}`))}
+                                </div>
+                            );
+                            // Fallback: gen/load equipment names from topology
+                            const topo = details.action_topology;
+                            const equipNames = [
+                                ...Object.keys(topo?.gens_bus || {}),
+                                ...Object.keys(topo?.loads_bus || {}),
+                            ];
+                            if (equipNames.length > 0) return (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
+                                    {equipNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`))}
+                                </div>
+                            );
+                            return null;
+                        })()}
+                    </div>
+                    <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                        <div>
+                            <div>Rho before: {renderRho(details.rho_before, id, 'n-1')}</div>
+                            <div>Rho after: {renderRho(details.rho_after, id, 'action')}</div>
+                            {maxRhoPct != null && (
+                                <div style={{ marginTop: '3px' }}>
+                                    Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
+                                    {details.max_rho_line && (
+                                        <span style={{ color: '#888' }}> on <button
+                                            style={{ ...clickableLinkStyle, color: '#888' }}
+                                            title={`Zoom to ${details.max_rho_line}`}
+                                            onClick={(e) => { e.stopPropagation(); onAssetClick(id, details.max_rho_line, 'action'); }}
+                                        >{details.max_rho_line}</button></span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '4px', flexShrink: 0, paddingBottom: '2px' }}>
+                            {!selectedActionIds.has(id) && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onActionFavorite(id); }}
+                                    style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title="Select this action"
+                                ><span style={{ fontSize: '14px' }}>⭐</span></button>
+                            )}
+                            {!rejectedActionIds.has(id) && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); onActionReject(id); }}
+                                    style={{ background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', padding: '4px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                                    title={selectedActionIds.has(id) ? "Remove from selected" : "Reject this action"}
+                                ><span style={{ fontSize: '14px' }}>❌</span></button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+    };
 
     return (
         <div style={{ padding: '15px', height: '100%', overflowY: 'auto' }}>
@@ -411,121 +571,105 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     </div>
                 )}
             </div>
-            {sortedActionEntries.length > 0 ? (
-                sortedActionEntries.map(([id, details], index) => {
-                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
-                    const severity = details.max_rho != null
-                        ? (details.max_rho > monitoringFactor ? 'red' as const : details.max_rho > (monitoringFactor - 0.05) ? 'orange' as const : 'green' as const)
-                        : (details.is_rho_reduction ? 'green' as const : 'red' as const);
-                    const severityColors = {
-                        green: { border: '#28a745', badgeBg: '#d4edda', badgeText: '#155724', label: 'Solves overload' },
-                        orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved \u2014 low margin' },
-                        red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
-                    };
-                    const sc = severityColors[severity];
-                    const isSelected = selectedActionId === id;
-                    return (
-                        <div key={id} style={{
-                            background: isSelected ? '#e7f1ff' : 'white',
-                            border: '1px solid #ddd',
-                            borderRadius: '8px',
-                            padding: '10px',
-                            marginBottom: '10px',
-                            boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
-                            borderLeft: `5px solid ${isSelected ? '#007bff' : sc.border}`,
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                        }} onClick={() => onActionSelect(id)}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <h4 style={{ margin: 0, fontSize: '14px', color: isSelected ? '#0056b3' : undefined }}>
-                                    #{index + 1} {'\u2014'} {id}
-                                </h4>
-                                <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                    {isSelected && (
-                                        <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 6px', borderRadius: '4px', background: '#007bff', color: 'white' }}>
-                                            VIEWING
-                                        </span>
-                                    )}
-                                    <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px', background: sc.badgeBg, color: sc.badgeText }}>
-                                        {sc.label}
-                                    </span>
+            <div style={{ marginBottom: '15px' }}>
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '4px', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
+                    Selected Actions
+                    {selectedEntries.length > 0 && <span style={{ background: '#e9ecef', color: '#495057', fontSize: '11px', padding: '2px 6px', borderRadius: '10px' }}>{selectedEntries.length}</span>}
+                </h4>
+                {selectedEntries.length > 0 ? (
+                    <>
+                        {!dismissedSelectedWarning && selectedEntries.some(([id]) => manuallyAddedIds.has(id) && analysisActionIds.has(id)) && (() => {
+                            const overlapIds = selectedEntries.filter(([id]) => manuallyAddedIds.has(id) && analysisActionIds.has(id)).map(([id]) => id).join(', ');
+                            return (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', color: '#856404' }}>
+                                    <div>⚠️ User warning: The following manually selected actions are also recommended by the recent analysis run: {overlapIds}</div>
+                                    <button onClick={() => setDismissedSelectedWarning(true)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">&times;</button>
                                 </div>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
-                                <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
-                                {(() => {
-                                    const badgeBtn = (name: string, bg: string, color: string, title: string) => (
-                                        <button key={name}
-                                            style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
-                                            title={title}
-                                            onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
-                                            {name}
-                                        </button>
-                                    );
-                                    const vlName = nodesByEquipmentId
-                                        ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
-                                        : null;
-                                    if (vlName) return badgeBtn(vlName, '#d1fae5', '#065f46', `Zoom to voltage level ${vlName}`);
-                                    const lineNames = edgesByEquipmentId
-                                        ? getActionTargetLines(details, id, edgesByEquipmentId)
-                                        : Array.from(new Set([
-                                            ...Object.keys(details.action_topology?.lines_ex_bus || {}),
-                                            ...Object.keys(details.action_topology?.lines_or_bus || {}),
-                                        ]));
-                                    if (lineNames.length > 0) return (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                            {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name}`))}
-                                        </div>
-                                    );
-                                    // Fallback: gen/load equipment names from topology
-                                    const topo = details.action_topology;
-                                    const equipNames = [
-                                        ...Object.keys(topo?.gens_bus || {}),
-                                        ...Object.keys(topo?.loads_bus || {}),
-                                    ];
-                                    if (equipNames.length > 0) return (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                            {equipNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`))}
-                                        </div>
-                                    );
-                                    return null;
-                                })()}
-                            </div>
-                            <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px' }}>
-                                <div>Rho before: {renderRho(details.rho_before, id, 'n-1')}</div>
-                                <div>Rho after: {renderRho(details.rho_after, id, 'action')}</div>
-                                {maxRhoPct != null && (
-                                    <div style={{ marginTop: '3px' }}>
-                                        Max rho: <strong style={{ color: sc.border }}>{maxRhoPct}%</strong>
-                                        {details.max_rho_line && (
-                                            <span style={{ color: '#888' }}> on <button
-                                                style={{ ...clickableLinkStyle, color: '#888' }}
-                                                title={`Zoom to ${details.max_rho_line}`}
-                                                onClick={(e) => { e.stopPropagation(); onAssetClick(id, details.max_rho_line, 'action'); }}
-                                            >{details.max_rho_line}</button></span>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })
-            ) : (
-                <p style={{ color: '#666', fontStyle: 'italic' }}>
-                    {analysisLoading ? 'Processing...' : 'No actions available.'}
-                </p>
-            )}
+                            );
+                        })()}
+                        {renderActionList(selectedEntries)}
+                    </>
+                ) : (
+                    <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0 15px 0' }}>Select an action manually or from suggested ones.</p>
+                )}
+            </div>
 
-            {/* Loading indicator shown below existing cards during analysis */}
-            {analysisLoading && sortedActionEntries.length > 0 && (
-                <div style={{
-                    textAlign: 'center', padding: '12px', color: '#666',
-                    fontStyle: 'italic', fontSize: '13px',
-                    borderTop: '1px dashed #ccc', marginTop: '8px',
-                }}>
-                    ⏳ Running analysis...
+            <div style={{ marginBottom: '15px' }}>
+                <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '10px' }}>
+                    <button
+                        onClick={() => setSuggestedTab('prioritized')}
+                        style={{ flex: 1, padding: '8px', cursor: 'pointer', border: 'none', background: 'none', borderBottom: suggestedTab === 'prioritized' ? '2px solid #007bff' : 'none', fontWeight: suggestedTab === 'prioritized' ? 'bold' : 'normal', color: suggestedTab === 'prioritized' ? '#007bff' : '#666', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
+                    >Suggested Actions {prioritizedEntries.length > 0 && <span style={{ background: suggestedTab === 'prioritized' ? '#e7f1ff' : '#f8f9fa', color: suggestedTab === 'prioritized' ? '#007bff' : '#6c757d', fontSize: '11px', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>{prioritizedEntries.length}</span>}</button>
+                    <button
+                        onClick={() => setSuggestedTab('rejected')}
+                        style={{ flex: 1, padding: '8px', cursor: 'pointer', border: 'none', background: 'none', borderBottom: suggestedTab === 'rejected' ? '2px solid #e74c3c' : 'none', fontWeight: suggestedTab === 'rejected' ? 'bold' : 'normal', color: suggestedTab === 'rejected' ? '#e74c3c' : '#666', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px' }}
+                    >Rejected Actions {rejectedEntries.length > 0 && <span style={{ background: suggestedTab === 'rejected' ? '#fdecea' : '#f8f9fa', color: suggestedTab === 'rejected' ? '#e74c3c' : '#6c757d', fontSize: '11px', padding: '2px 6px', borderRadius: '10px', fontWeight: 'bold' }}>{rejectedEntries.length}</span>}</button>
                 </div>
-            )}
+
+                {/* Display prioritized actions button inside Suggested Actions section */}
+                {pendingAnalysisResult && !analysisLoading && (
+                    <button
+                        onClick={onDisplayPrioritizedActions}
+                        style={{
+                            width: '100%',
+                            padding: '10px 16px',
+                            margin: '0 0 10px 0',
+                            background: 'linear-gradient(135deg, #27ae60, #2ecc71)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            fontWeight: 700,
+                            boxShadow: '0 2px 8px rgba(39,174,96,0.3)',
+                            transition: 'transform 0.1s',
+                        }}
+                        onMouseEnter={(e) => (e.target as HTMLButtonElement).style.transform = 'scale(1.02)'}
+                        onMouseLeave={(e) => (e.target as HTMLButtonElement).style.transform = 'scale(1)'}
+                    >
+                        📊 Display {Object.keys(pendingAnalysisResult.actions || {}).length} prioritized actions
+                    </button>
+                )}
+
+                {/* Loading indicator shown below existing cards during analysis */}
+                {analysisLoading && (
+                    <div style={{
+                        textAlign: 'center', padding: '12px', color: '#856404',
+                        background: '#fff3cd', fontSize: '13px', fontWeight: 600,
+                        borderRadius: '8px', margin: '8px 0',
+                    }}>
+                        ⚙️ Processing analysis...
+                    </div>
+                )}
+
+                {suggestedTab === 'prioritized' && (
+                    prioritizedEntries.length > 0 ? renderActionList(prioritizedEntries) : (
+                        !analysisLoading && !pendingAnalysisResult ? (
+                            <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>Run analysis to get action suggestions.</p>
+                        ) : (!analysisLoading && pendingAnalysisResult ? (
+                            <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>No suggested actions available.</p>
+                        ) : null)
+                    )
+                )}
+                {suggestedTab === 'rejected' && (
+                    rejectedEntries.length > 0 ? (
+                        <>
+                            {!dismissedRejectedWarning && rejectedEntries.some(([id]) => analysisActionIds.has(id)) && (() => {
+                                const overlapIds = rejectedEntries.filter(([id]) => analysisActionIds.has(id)).map(([id]) => id).join(', ');
+                                return (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', color: '#856404' }}>
+                                        <div>⚠️ User warning: The following manually rejected actions were recommended by the recent analysis run: {overlapIds}</div>
+                                        <button onClick={() => setDismissedRejectedWarning(true)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">&times;</button>
+                                    </div>
+                                );
+                            })()}
+                            {renderActionList(rejectedEntries)}
+                        </>
+                    ) : (
+                        <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>No rejected actions.</p>
+                    )
+                )}
+            </div>
 
             {/* Fixed-position tooltip rendered outside any overflow context */}
             {tooltip && (
