@@ -871,6 +871,9 @@
             const [settingsTab, setSettingsTab] = useState('recommender');
             const [settingsBackup, setSettingsBackup] = useState(null);
             const [analysisLoading, setAnalysisLoading] = useState(false);
+            const [analysisRan, setAnalysisRan] = useState(false);
+            const [manualActionIds, setManualActionIds] = useState(new Set());
+            const [pendingAnalysisResult, setPendingAnalysisResult] = useState(null);
 
             const handleOpenSettings = () => {
                 setSettingsBackup({
@@ -968,6 +971,7 @@
             const [loadingAvailableActions, setLoadingAvailableActions] = useState(false);
             const [simulatingActionId, setSimulatingActionId] = useState(null);
             const [searchError, setSearchError] = useState('');
+            const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true });
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
             const [scoreTooltip, setScoreTooltip] = useState(null);
@@ -1159,8 +1163,10 @@
             // Auto-switch to overflow tab when analysis runs
             const handleRunAnalysis = async () => {
                 if (!selectedBranch) return;
-                setAnalysisLoading(true); setError(''); setResult(null); setInfoMessage('');
-                setSelectedActionId(null); setActionDiagram(null);
+                setAnalysisLoading(true); setError(''); setInfoMessage('');
+                setAnalysisRan(false);
+                setPendingAnalysisResult(null);
+                // Keep result (manual actions) intact — don't clear it
                 setActiveTab('overflow');
 
                 try {
@@ -1184,7 +1190,11 @@
                             try {
                                 const event = JSON.parse(line);
                                 if (event.type === 'pdf') setResult(p => ({ ...p, pdf_url: event.pdf_url }));
-                                else if (event.type === 'result') { setResult(event); if (event.message) setInfoMessage(event.message); }
+                                else if (event.type === 'result') {
+                                    // Store analysis result as pending — don't merge yet
+                                    setPendingAnalysisResult(event);
+                                    if (event.message) setInfoMessage(event.message);
+                                }
                                 else if (event.type === 'error') setError('Analysis failed: ' + event.message);
                             } catch (e) {
                                 console.error('Stream error:', e);
@@ -1192,7 +1202,28 @@
                         }
                     }
                 } catch (err) { setError('Analysis failed: ' + err.message); }
-                finally { setAnalysisLoading(false); }
+                finally { setAnalysisLoading(false); setAnalysisRan(true); }
+            };
+
+            // Merge pending analysis result with existing manual actions
+            const handleDisplayPrioritizedActions = () => {
+                if (!pendingAnalysisResult) return;
+                setResult(prev => {
+                    // Preserve manually added actions
+                    const manualActionsData = {};
+                    if (prev?.actions) {
+                        for (const [id, data] of Object.entries(prev.actions)) {
+                            if (manualActionIds.has(id)) {
+                                manualActionsData[id] = data;
+                            }
+                        }
+                    }
+                    return {
+                        ...pendingAnalysisResult,
+                        actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
+                    };
+                });
+                setPendingAnalysisResult(null);
             };
 
             // Fetch action variant diagram when an action card is clicked
@@ -1365,13 +1396,16 @@
                         disconnected_element: selectedBranch
                     });
                     const detail = res.data;
+                    // Track this as a manually added action
+                    setManualActionIds(prev => new Set([...prev, actionId]));
                     // Merge into result
                     setResult(prev => {
-                        if (!prev) return prev;
+                        const base = prev || { actions: {}, lines_overloaded: [] };
                         return {
-                            ...prev,
+                            ...base,
+                            lines_overloaded: (base.lines_overloaded && base.lines_overloaded.length > 0) ? base.lines_overloaded : (detail.lines_overloaded || []),
                             actions: {
-                                ...prev.actions,
+                                ...(base.actions || {}),
                                 [actionId]: {
                                     description_unitaire: detail.description_unitaire,
                                     rho_before: detail.rho_before,
@@ -1411,15 +1445,30 @@
                 const existingIds = new Set(result?.actions ? Object.keys(result.actions) : []);
                 return availableActions
                     .filter(a => !existingIds.has(a.id))
+                    .filter(a => {
+                        const t = a.type || 'unknown';
+                        if ((t.includes('disco') || t.includes('open_line') || t.includes('open_load')) && !typeFilters.disco) return false;
+                        if ((t.includes('reco') || t.includes('close_line') || t.includes('close_load')) && !typeFilters.reco) return false;
+                        if (t.includes('open_coupling') && !typeFilters.open) return false;
+                        if (t.includes('close_coupling') && !typeFilters.close) return false;
+                        if (!typeFilters.disco && !typeFilters.reco && !typeFilters.open && !typeFilters.close) return false;
+                        return true;
+                    })
                     .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
                     .slice(0, 20);
-            }, [searchQuery, availableActions, result?.actions]);
+            }, [searchQuery, availableActions, result?.actions, typeFilters]);
 
             // Format scored actions
             const scoredActionsList = useMemo(() => {
                 if (!result?.action_scores) return [];
                 const list = [];
                 for (const [type, data] of Object.entries(result.action_scores)) {
+                    // Apply filtering
+                    if (type === 'line_disconnection' && !typeFilters.disco) continue;
+                    if (type === 'line_reconnection' && !typeFilters.reco) continue;
+                    if (type === 'open_coupling' && !typeFilters.open) continue;
+                    if (type === 'close_coupling' && !typeFilters.close) continue;
+
                     const scores = data?.scores || {};
                     for (const [actionId, score] of Object.entries(scores)) {
                         list.push({ type, actionId, score: Number(score) });
@@ -1433,7 +1482,7 @@
                     }
                     return b.score - a.score;
                 });
-            }, [result?.action_scores]);
+            }, [result?.action_scores, typeFilters]);
 
 
 
@@ -2175,8 +2224,7 @@
 
                                 {showMonitoringWarning && totalLinesCount > 0 && (
                                     <div style={{ marginBottom: '10px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '4px', color: '#856404', fontSize: '0.85rem' }}>
-                                        ⚠️ {monitoredLinesCount} monitored out of {totalLinesCount} total lines.
-                                        <strong> (Monitoring factor applied: {Math.round(monitoringFactor * 100)}%)</strong>
+                                        ⚠️ {monitoredLinesCount} out of {totalLinesCount} lines monitored. Monitoring factor applied: {Math.round(monitoringFactor * 100)}%. {Math.round(preExistingOverloadThreshold * 100)}% loading increase threshold for considering worsened overload in N.
                                         <button onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }} style={{ background: 'none', border: 'none', color: '#0056b3', textDecoration: 'underline', cursor: 'pointer', padding: '0 0 0 5px' }}>Change in settings</button>
                                         <button onClick={() => setShowMonitoringWarning(false)} style={{ float: 'right', background: 'none', border: 'none', fontSize: '16px', lineHeight: 1, color: '#856404', cursor: 'pointer' }} title="Dismiss">&times;</button>
                                     </div>
@@ -2188,8 +2236,8 @@
                                         alignItems: 'baseline',
                                         gap: '8px',
                                         padding: '6px',
-                                        background: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '#fff3cd' : 'transparent',
-                                        borderLeft: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '3px solid #ffc107' : '3px solid transparent',
+                                        background: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '#ffe0cc' : 'transparent',
+                                        borderLeft: nDiagram && nDiagram.lines_overloaded && nDiagram.lines_overloaded.length > 0 ? '3px solid #ff8c00' : '3px solid transparent',
                                         borderBottom: '1px solid #eee'
                                     }}>
                                         <strong style={{ whiteSpace: 'nowrap' }}>N Overloads:</strong>
@@ -2234,7 +2282,7 @@
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
-                                <h3 style={{ margin: 0, flex: 1 }}>Actions</h3>
+                                <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
                                 <button
                                     onClick={handleOpenSearch}
                                     style={{
@@ -2248,7 +2296,7 @@
                                         fontWeight: 600,
                                     }}
                                 >
-                                    + Add
+                                    + Manual Selection
                                 </button>
 
                                 {searchOpen && (
@@ -2284,6 +2332,19 @@
                                                     boxSizing: 'border-box',
                                                 }}
                                             />
+                                        </div>
+                                        <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
+                                            {[['disco', 'Disconnections'], ['reco', 'Reconnections'], ['open', 'Open coupling'], ['close', 'Close coupling']].map(([key, label]) => (
+                                                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={typeFilters[key]}
+                                                        onChange={(e) => setTypeFilters(prev => ({ ...prev, [key]: e.target.checked }))}
+                                                        style={{ margin: 0 }}
+                                                    />
+                                                    {label}
+                                                </label>
+                                            ))}
                                         </div>
                                         {searchError && (
                                             <div style={{ padding: '6px 8px', fontSize: '12px', color: '#dc3545', borderTop: '1px solid #eee' }}>
@@ -2429,6 +2490,38 @@
 
                             {/* View mode toggle - only visible when an action is selected */}
 
+                            {/* Processing indicator during analysis */}
+                            {analysisLoading && (
+                                <div style={{ padding: '12px', textAlign: 'center', color: '#856404', background: '#fff3cd', borderRadius: '8px', margin: '8px 0', fontSize: '13px', fontWeight: 600 }}>
+                                    ⚙️ Processing analysis...
+                                </div>
+                            )}
+
+                            {/* Display prioritized actions button */}
+                            {pendingAnalysisResult && !analysisLoading && (
+                                <button
+                                    onClick={handleDisplayPrioritizedActions}
+                                    style={{
+                                        width: '100%',
+                                        padding: '10px 16px',
+                                        margin: '8px 0',
+                                        background: 'linear-gradient(135deg, #27ae60, #2ecc71)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '8px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 700,
+                                        boxShadow: '0 2px 8px rgba(39,174,96,0.3)',
+                                        transition: 'transform 0.1s',
+                                    }}
+                                    onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
+                                    onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+                                >
+                                    📊 Display {Object.keys(pendingAnalysisResult.actions || {}).length} prioritized actions
+                                </button>
+                            )}
+
                             {result?.actions && Object.keys(result.actions).length > 0 ? (
                                 Object.entries(result.actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999)).map(([id, details], index) => {
                                     const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
@@ -2554,7 +2647,7 @@
                                         </div>
                                     );
                                 })
-                            ) : <p style={{ color: '#666', fontStyle: 'italic' }}>{analysisLoading ? 'Processing...' : 'No actions available.'}</p>}
+                            ) : !analysisLoading && !pendingAnalysisResult && <p style={{ color: '#666', fontStyle: 'italic' }}>No actions available.</p>}
 
                             {/* Fixed-position tooltip rendered outside any overflow context */}
                             {scoreTooltip && (
@@ -2602,7 +2695,7 @@
                                         Action: {selectedActionId}
                                     </button>
                                 )}
-                                {result && (
+                                {analysisRan && result && (
                                     <button
                                         onClick={() => setActiveTab('overflow')}
                                         style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'overflow' ? 'white' : '#ecf0f1', color: activeTab === 'overflow' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'overflow' ? '3px solid #27ae60' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'overflow' ? 'bold' : 400 }}
@@ -2614,8 +2707,7 @@
                             </div>
                             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
                                 {/* View Mode Overlay */}
-                                {(activeTab !== 'overflow' && (
-                                    (activeTab === 'n' && !!nDiagram?.svg) ||
+                                {(activeTab !== 'overflow' && activeTab !== 'n' && (
                                     (activeTab === 'n-1' && !!n1Diagram?.svg) ||
                                     (activeTab === 'action' && !!actionDiagram?.svg)
                                 )) && (

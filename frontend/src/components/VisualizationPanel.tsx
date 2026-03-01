@@ -87,7 +87,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         Action: {selectedActionId}
                     </button>
                 )}
-                {result && (
+                {result?.pdf_url && (
                     <button
                         onClick={() => onTabChange('overflow')}
                         style={{
