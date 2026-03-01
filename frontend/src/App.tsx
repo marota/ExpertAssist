@@ -701,7 +701,7 @@ function App() {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         gap: '15px', flexWrap: 'wrap'
       }}>
-        <h2 style={{ margin: 0, fontSize: '1.1rem', whiteSpace: 'nowrap' }}>⚡ Expert Recommender</h2>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', whiteSpace: 'nowrap' }}>⚡ Co-Study4Grid</h2>
 
         <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Network Path</label>
@@ -744,10 +744,10 @@ function App() {
 
         <button
           onClick={handleOpenSettings}
-          style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+          style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
           title="Settings"
         >
-          ⚙️
+          &#9881;
         </button>
       </header>
 
