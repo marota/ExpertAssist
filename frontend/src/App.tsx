@@ -1,6 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import './App.css';
-import ConfigurationPanel from './components/ConfigurationPanel';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
 import OverloadPanel from './components/OverloadPanel';
@@ -378,6 +377,35 @@ function App() {
     }
   }, [selectedActionId, handleActionSelect]);
 
+  // ===== Zoom Controls =====
+  const handleManualZoomIn = useCallback(() => {
+    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+    const vb = currentPZ?.viewBox;
+    if (currentPZ && vb) {
+      const scale = 0.8;
+      currentPZ.setViewBox({
+        x: vb.x + vb.w * (1 - scale) / 2,
+        y: vb.y + vb.h * (1 - scale) / 2,
+        w: vb.w * scale,
+        h: vb.h * scale,
+      });
+    }
+  }, [activeTab, actionPZ, nPZ, n1PZ]);
+
+  const handleManualZoomOut = useCallback(() => {
+    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+    const vb = currentPZ?.viewBox;
+    if (currentPZ && vb) {
+      const scale = 1.25;
+      currentPZ.setViewBox({
+        x: vb.x + vb.w * (1 - scale) / 2,
+        y: vb.y + vb.h * (1 - scale) / 2,
+        w: vb.w * scale,
+        h: vb.h * scale,
+      });
+    }
+  }, [activeTab, actionPZ, nPZ, n1PZ]);
+
   // ===== Reset View =====
   const handleManualReset = useCallback(() => {
     setInspectQuery('');
@@ -668,23 +696,59 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <header style={{ background: '#2c3e50', color: 'white', padding: '10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0 }}>Expert Recommender</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
-          <button
-            onClick={handleOpenSettings}
-            style={{
-              padding: '8px 10px', cursor: 'pointer',
-              background: '#e67e22', color: 'white',
-              border: 'none', borderRadius: '4px', fontWeight: 'bold',
-              fontSize: '1.2rem', display: 'flex', alignItems: 'center', justifyContent: 'center'
-            }}
-            title="Settings"
-          >
-            ⚙️
-          </button>
+      <header style={{
+        background: '#2c3e50', color: 'white', padding: '8px 20px',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        gap: '15px', flexWrap: 'wrap'
+      }}>
+        <h2 style={{ margin: 0, fontSize: '1.1rem', whiteSpace: 'nowrap' }}>⚡ Expert Recommender</h2>
+
+        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Network Path</label>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)}
+              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
+            />
+            <button
+              onClick={() => pickSettingsPath('dir', setNetworkPath)}
+              style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}
+            >
+              📂
+            </button>
+          </div>
         </div>
+
+        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Action File Path</label>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              type="text" value={actionPath} onChange={e => setActionPath(e.target.value)}
+              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
+            />
+            <button
+              onClick={() => pickSettingsPath('file', setActionPath)}
+              style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}
+            >
+              📄
+            </button>
+          </div>
+        </div>
+
+        <button
+          onClick={handleLoadConfig} disabled={configLoading}
+          style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+        >
+          {configLoading ? '⏳ Loading...' : '🔄 Load Study'}
+        </button>
+
+        <button
+          onClick={handleOpenSettings}
+          style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+          title="Settings"
+        >
+          ⚙️
+        </button>
       </header>
 
       {/* Settings Modal */}
@@ -792,31 +856,39 @@ function App() {
         </div>
       )}
 
-      <ConfigurationPanel
-        networkPath={networkPath}
-        actionPath={actionPath}
-        onNetworkPathChange={setNetworkPath}
-        onActionPathChange={setActionPath}
-        branches={branches}
-        selectedBranch={selectedBranch}
-        onBranchChange={setSelectedBranch}
-        inspectQuery={inspectQuery}
-        onInspectQueryChange={setInspectQuery}
-        inspectableItems={inspectableItems}
-        onLoadConfig={handleLoadConfig}
-        onRunAnalysis={handleRunAnalysis}
-        onResetView={handleManualReset}
-        configLoading={configLoading}
-        analysisLoading={analysisLoading}
-      />
-
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', display: 'flex', flexDirection: 'column' }}>
-          <OverloadPanel
-            nOverloads={nDiagram?.lines_overloaded || []}
-            n1Overloads={n1Diagram?.lines_overloaded || []}
-            onAssetClick={handleAssetClick as any}
-          />
+        <div style={{ width: '25%', background: '#eee', borderRight: '1px solid #ccc', display: 'flex', flexDirection: 'column', padding: '15px', gap: '15px' }}>
+          {/* Target Contingency selector */}
+          {branches.length > 0 && (
+            <div style={{ padding: '10px 15px', background: 'white', borderRadius: '8px', border: '1px solid #dee2e6', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>🎯 Select Contingency</label>
+              <input
+                list="contingencies"
+                value={selectedBranch}
+                onChange={e => setSelectedBranch(e.target.value)}
+                placeholder="Search line/bus..."
+                style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
+              />
+              <datalist id="contingencies">
+                {branches.map(b => <option key={b} value={b} />)}
+              </datalist>
+              <button
+                onClick={handleRunAnalysis}
+                disabled={!selectedBranch || analysisLoading}
+                style={{ marginTop: '8px', width: '100%', padding: '8px', background: (!selectedBranch || analysisLoading) ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+              >
+                {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
+              </button>
+            </div>
+          )}
+
+          <div style={{ flexShrink: 0 }}>
+            <OverloadPanel
+              nOverloads={nDiagram?.lines_overloaded || []}
+              n1Overloads={n1Diagram?.lines_overloaded || []}
+              onAssetClick={handleAssetClick as any}
+            />
+          </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
             <ActionFeed
               actions={result?.actions || {}}
@@ -854,6 +926,13 @@ function App() {
             onVoltageRangeChange={setVoltageRange}
             actionViewMode={actionViewMode}
             onViewModeChange={handleViewModeChange}
+            inspectQuery={inspectQuery}
+            onInspectQueryChange={setInspectQuery}
+            inspectableItems={inspectableItems}
+            onResetView={handleManualReset}
+            onZoomIn={handleManualZoomIn}
+            onZoomOut={handleManualZoomOut}
+            hasBranches={branches.length > 0}
           />
         </div>
       </div>

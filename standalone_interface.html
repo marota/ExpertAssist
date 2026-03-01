@@ -22,26 +22,32 @@
         header {
             background: #2c3e50;
             color: white;
-            padding: 10px 20px;
+            padding: 8px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-
-        .config-panel {
-            background: #f4f4f4;
-            padding: 15px;
-            border-bottom: 1px solid #ccc;
-            display: flex;
-            flex-wrap: wrap;
             gap: 15px;
-            align-items: end;
+            flex-wrap: wrap;
         }
 
-        .config-panel input {
-            padding: 8px;
-            border: 1px solid #ccc;
+        header input[type="text"] {
+            padding: 5px 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
             border-radius: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 0.8rem;
+            min-width: 0;
+        }
+
+        header input[type="text"]::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        header label {
+            font-size: 0.7rem;
+            opacity: 0.8;
+            white-space: nowrap;
         }
 
         .main-content {
@@ -1101,6 +1107,33 @@
                 const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
                 return { svg, viewBox: vb };
             };
+            const handleManualZoomIn = () => {
+                const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+                const vb = currentPZ?.viewBox;
+                if (currentPZ && vb) {
+                    const scale = 0.8;
+                    currentPZ.setViewBox({
+                        x: vb.x + vb.w * (1 - scale) / 2,
+                        y: vb.y + vb.h * (1 - scale) / 2,
+                        w: vb.w * scale,
+                        h: vb.h * scale,
+                    });
+                }
+            };
+
+            const handleManualZoomOut = () => {
+                const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
+                const vb = currentPZ?.viewBox;
+                if (currentPZ && vb) {
+                    const scale = 1.25;
+                    currentPZ.setViewBox({
+                        x: vb.x + vb.w * (1 - scale) / 2,
+                        y: vb.y + vb.h * (1 - scale) / 2,
+                        w: vb.w * scale,
+                        h: vb.h * scale,
+                    });
+                }
+            };
 
             const handleManualReset = () => {
                 setInspectQuery('');
@@ -2053,68 +2086,26 @@
             return (
                 <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
                     <header>
-                        <h2 style={{ margin: 0 }}>⚡ Expert Recommender</h2>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                            <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Standalone Interface v3.0 (Multi-Tab)</div>
-                            <button onClick={handleOpenSettings} style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '8px 10px', fontSize: '1.2rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">⚙️</button>
-                        </div>
-                    </header>
-                    <div className="config-panel">
-                        <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                            <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Network Path</label>
-                            <div style={{ display: 'flex', gap: '5px' }}>
-                                <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1 }} />
-                                <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d' }}>📂</button>
+                        <h2 style={{ margin: 0, fontSize: '1.1rem', whiteSpace: 'nowrap' }}>⚡ Expert Recommender</h2>
+                        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <label>Network Path</label>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                                <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+                                <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📂</button>
                             </div>
                         </div>
-                        <div style={{ flex: '1 1 250px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                            <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Action File Path</label>
-                            <div style={{ display: 'flex', gap: '5px' }}>
-                                <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1 }} />
-                                <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d' }}>📄</button>
+                        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <label>Action File Path</label>
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                                <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+                                <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📄</button>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                            <button onClick={handleLoadConfig} disabled={configLoading}>
-                                {configLoading ? '⏳ Loading...' : '🔄 Load Config'}
-                            </button>
-                        </div>
-                        {branches.length > 0 && (
-                            <div style={{ flex: '1 1 300px', display: 'flex', gap: '15px', alignItems: 'end' }}>
-                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Target Contingency</label>
-                                    <input list="contingencies" value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)} placeholder="Search line/bus..." style={{ padding: '8px' }} />
-                                    <datalist id="contingencies">{branches.map(b => <option key={b} value={b} />)}</datalist>
-                                </div>
-                                <button onClick={handleRunAnalysis} disabled={!selectedBranch || analysisLoading} style={{ background: '#27ae60' }}>
-                                    {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
-                                </button>
-                            </div>
-                        )}
-                        {branches.length > 0 && (
-                            <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                <label style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>Inspect Line/Bus/VL</label>
-                                <div style={{ display: 'flex', gap: '5px' }}>
-                                    <input
-                                        list="inspectables"
-                                        value={inspectQuery}
-                                        onChange={e => setInspectQuery(e.target.value)}
-                                        placeholder="Zoom to..."
-                                        style={{ flex: 1, padding: '8px', border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc' }}
-                                    />
-                                    <datalist id="inspectables">{inspectableItems.map(b => <option key={b} value={b} />)}</datalist>
-                                    {inspectQuery && (
-                                        <button onClick={() => setInspectQuery('')} style={{ background: '#e74c3c', padding: '0 10px' }} title="Clear">
-                                            ✖
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                        <button onClick={handleManualReset} style={{ background: '#bdc3c7', color: '#333' }}>
-                            Reset View
+                        <button onClick={handleLoadConfig} disabled={configLoading} style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                            {configLoading ? '⏳ Loading...' : '🔄 Load Study'}
                         </button>
-                    </div>
+                        <button onClick={handleOpenSettings} style={{ background: '#e67e22', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">⚙️</button>
+                    </header>
 
                     {
                         isSettingsOpen && (
@@ -2217,6 +2208,17 @@
 
                     <div className="main-content">
                         <div className="action-feed">
+                            {/* Target Contingency selector */}
+                            {branches.length > 0 && (
+                                <div style={{ marginBottom: '10px', padding: '10px 15px', background: 'white', borderRadius: '8px', border: '1px solid #dee2e6', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                    <label style={{ fontSize: '0.8rem', fontWeight: 'bold', display: 'block', marginBottom: '5px' }}>🎯 Select Contingency</label>
+                                    <input list="contingencies" value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)} placeholder="Search line/bus..." style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }} />
+                                    <datalist id="contingencies">{branches.map(b => <option key={b} value={b} />)}</datalist>
+                                    <button onClick={handleRunAnalysis} disabled={!selectedBranch || analysisLoading} style={{ marginTop: '8px', width: '100%', padding: '8px', background: (!selectedBranch || analysisLoading) ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}>
+                                        {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
+                                    </button>
+                                </div>
+                            )}
                             <div style={{ marginBottom: '15px', padding: '10px 15px', background: 'white', borderRadius: '8px', border: '1px solid #dee2e6', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                                 <h3 style={{ margin: '0 0 8px 0', fontSize: '15px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <span style={{ color: '#e74c3c' }}>⚠️</span> Overloads
@@ -2749,6 +2751,63 @@
                                             </button>
                                         </div>
                                     )}
+
+                                {/* Bottom-left overlay: Zoom + Inspect */}
+                                {activeTab !== 'overflow' && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        bottom: '12px',
+                                        left: '12px',
+                                        zIndex: 100,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '6px',
+                                        nItems: 'flex-start',
+                                    }}>
+                                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                            <button onClick={handleManualZoomIn} style={{
+                                                background: 'white', color: '#333', border: '1px solid #ccc',
+                                                borderRadius: '4px', padding: '5px 12px', cursor: 'pointer',
+                                                fontSize: '14px', fontWeight: 600, boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            }} title="Zoom In">+</button>
+                                            <button onClick={handleManualReset} style={{
+                                                background: 'white', color: '#333', border: '1px solid #ccc',
+                                                borderRadius: '4px', padding: '5px 14px', cursor: 'pointer',
+                                                fontSize: '12px', fontWeight: 600, boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            }}>🔍 Unzoom</button>
+                                            <button onClick={handleManualZoomOut} style={{
+                                                background: 'white', color: '#333', border: '1px solid #ccc',
+                                                borderRadius: '4px', padding: '5px 12px', cursor: 'pointer',
+                                                fontSize: '14px', fontWeight: 600, boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            }} title="Zoom Out">-</button>
+                                        </div>
+                                        {branches.length > 0 && (
+                                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                                <input
+                                                    list="inspectables"
+                                                    value={inspectQuery}
+                                                    onChange={e => setInspectQuery(e.target.value)}
+                                                    placeholder="🔍 Inspect..."
+                                                    style={{
+                                                        padding: '5px 10px',
+                                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
+                                                        borderRadius: '4px',
+                                                        fontSize: '12px',
+                                                        width: '180px',
+                                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                                        background: 'white',
+                                                    }}
+                                                />
+                                                <datalist id="inspectables">{inspectableItems.map(b => <option key={b} value={b} />)}</datalist>
+                                                {inspectQuery && (
+                                                    <button onClick={() => setInspectQuery('')} style={{ background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)' }} title="Clear">
+                                                        ✖
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 {renderVisualization()}
                             </div>
                         </div>
