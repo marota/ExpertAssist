@@ -287,12 +287,17 @@ class RecommenderService:
                         topo[field] = sanitize_for_json(val) if val else {}
                     enriched_actions[action_id]["action_topology"] = topo
 
-        if getattr(config, 'IGNORE_LINES_MONITORING', False):
-            info_msg = "Note: Monitoring all lines in the network (IGNORE_LINES_MONITORING is enabled)."
-            if analysis_message:
-                analysis_message += " " + info_msg
-            else:
-                analysis_message = info_msg
+        from expert_backend.services.network_service import network_service
+        total_branches = len(network_service.get_disconnectable_elements())
+        monitored_branches = len(network_service.get_monitored_elements())
+        excluded_branches = total_branches - monitored_branches
+        
+        info_msg = f"Note: {monitored_branches} out of {total_branches} lines monitored ({excluded_branches} without permanent limits)."
+        
+        if analysis_message:
+            analysis_message += " " + info_msg
+        else:
+            analysis_message = info_msg
 
         yield {
             "type": "result",
@@ -612,7 +617,12 @@ class RecommenderService:
                 # Skip elements not in the monitored set
                 if lines_we_care_about is not None and element_id not in lines_we_care_about:
                     continue
-                limit = limit_dict.get(element_id, default_limit)
+                
+                limit = limit_dict.get(element_id)
+                if limit is None:
+                    # No permanent limit found for this branch, skip monitoring
+                    continue
+                    
                 i1 = row['i1']
                 i2 = row['i2']
                 if not np.isnan(i1) and not np.isnan(i2):
@@ -805,12 +815,33 @@ class RecommenderService:
                 lines_we_care_about = list(obs.name_line)
         else:
             lines_we_care_about = list(obs.name_line)
+        # Identify branches with permanent limits in this environment
+        try:
+            from expert_backend.services.network_service import network_service
+            # network_service.network is actually different from env.network_manager.network
+            # but they should represent the same grid structure. 
+            # To be safe, we calculate it from the env's network.
+            n_grid_env = env.network_manager.network
+            limits_env = n_grid_env.get_operational_limits()
+            if not limits_env.empty:
+                perm_limits_env = limits_env[(limits_env['type'] == 'CURRENT') & (limits_env['acceptable_duration'] == -1)]
+                branches_with_limits = set(perm_limits_env['element_id'].unique())
+            else:
+                branches_with_limits = set()
+        except Exception as e:
+            print(f"Warning: Failed to identify branches with limits in simulate_manual_action: {e}")
+            branches_with_limits = set(obs_simu_defaut.name_line) # Fallback to all
+
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
         worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
         lines_overloaded_ids = []
         for i, l in enumerate(obs_simu_defaut.name_line):
             if l not in lines_we_care_about:
                 continue
+            # Exclude branches with no permanent limits
+            if l not in branches_with_limits:
+                continue
+                
             if obs_simu_defaut.rho[i] < monitoring_factor:
                 continue
             # Exclude pre-existing N overloads unless worsened
@@ -860,9 +891,14 @@ class RecommenderService:
                 care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
                 # Exclude pre-existing N overloads (same logic as lines_overloaded_ids)
                 for i in range(len(obs_simu_action.name_line)):
-                    if care_mask[i] and obs.rho[i] >= monitoring_factor:
-                        if obs_simu_action.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                    l = obs_simu_action.name_line[i]
+                    if care_mask[i]:
+                        # Filter by permanent limits
+                        if l not in branches_with_limits:
                             care_mask[i] = False
+                        elif obs.rho[i] >= monitoring_factor:
+                            if obs_simu_action.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                                care_mask[i] = False
                 if np.any(care_mask):
                     rhos_of_interest = obs_simu_action.rho[care_mask] * mf
                     max_rho = float(np.max(rhos_of_interest))
