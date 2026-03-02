@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, FlowDelta } from '../types';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -39,14 +39,55 @@ interface VisualizationPanelProps {
 interface SldOverlayProps {
     vlOverlay: VlOverlay;
     actionViewMode: 'network' | 'delta';
+    n1FlowDeltas: Record<string, FlowDelta> | null | undefined;
+    actionFlowDeltas: Record<string, FlowDelta> | null | undefined;
     onOverlayClose: () => void;
     onOverlaySldTabChange: (tab: SldTab) => void;
 }
 
-const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, onOverlayClose, onOverlaySldTabChange }) => {
+const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1FlowDeltas, actionFlowDeltas, onOverlayClose, onOverlaySldTabChange }) => {
     const overlayBodyRef = useRef<HTMLDivElement>(null);
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
     const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
+
+    // Apply / clear delta flow colors on the SLD whenever svg, tab, or mode changes.
+    // In Impacts mode the lines are colored orange/blue/grey by flow delta category,
+    // mirroring the NAD coloring.  In Flows mode all delta classes are removed so the
+    // diagram shows its native voltage coloring.
+    useEffect(() => {
+        const container = overlayBodyRef.current;
+        if (!container) return;
+
+        // Clear any previously applied SLD delta classes
+        const SLD_DELTA_CLASSES = ['sld-delta-positive', 'sld-delta-negative', 'sld-delta-grey'];
+        container.querySelectorAll(SLD_DELTA_CLASSES.map(c => '.' + c).join(','))
+            .forEach(el => el.classList.remove(...SLD_DELTA_CLASSES));
+
+        if (!vlOverlay.svg || actionViewMode !== 'delta') return;
+
+        // Choose deltas based on the SLD tab being shown
+        const deltas: Record<string, FlowDelta> | null | undefined =
+            vlOverlay.tab === 'n-1' ? n1FlowDeltas
+            : vlOverlay.tab === 'action' ? actionFlowDeltas
+            : null;
+
+        if (!deltas) return;
+
+        // Build a quick lookup of all SVG elements that carry an id
+        const elMap = new Map<string, Element>();
+        container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
+
+        for (const [lineId, delta] of Object.entries(deltas)) {
+            // Prefer exact id match; fall back to any id that contains the line id
+            let el = elMap.get(lineId);
+            if (!el) {
+                for (const [svgId, svgEl] of elMap) {
+                    if (svgId.includes(lineId)) { el = svgEl; break; }
+                }
+            }
+            if (el) el.classList.add(`sld-delta-${delta.category}`);
+        }
+    }, [vlOverlay.svg, vlOverlay.tab, actionViewMode, n1FlowDeltas, actionFlowDeltas]);
 
     // Non-passive wheel zoom on overlay body
     useEffect(() => {
@@ -473,6 +514,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         key={vlOverlay.vlName}
                         vlOverlay={vlOverlay}
                         actionViewMode={actionViewMode}
+                        n1FlowDeltas={n1Diagram?.flow_deltas}
+                        actionFlowDeltas={actionDiagram?.flow_deltas}
                         onOverlayClose={onOverlayClose}
                         onOverlaySldTabChange={onOverlaySldTabChange}
                     />

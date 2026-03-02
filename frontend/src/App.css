@@ -138,6 +138,35 @@ circle.nad-highlight {
     stroke-opacity: 0.4 !important;
 }
 
+/* ===== SLD overlay delta flow visualization ===== */
+/* Applied to elements inside the Single Line Diagram overlay when in Impacts mode.
+   SLD elements are typically <g> groups whose id matches the equipment ID;
+   the stroke rules cascade into child path/line/polyline/rect elements. */
+
+.sld-delta-positive path,
+.sld-delta-positive line,
+.sld-delta-positive polyline,
+.sld-delta-positive rect {
+    stroke: #ff8c00 !important;
+    stroke-width: 2px !important;
+}
+
+.sld-delta-negative path,
+.sld-delta-negative line,
+.sld-delta-negative polyline,
+.sld-delta-negative rect {
+    stroke: #2196F3 !important;
+    stroke-width: 2px !important;
+}
+
+.sld-delta-grey path,
+.sld-delta-grey line,
+.sld-delta-grey polyline,
+.sld-delta-grey rect {
+    stroke: #999 !important;
+    stroke-opacity: 0.5 !important;
+}
+
 /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
 .voltage-sidebar {
     position: absolute;

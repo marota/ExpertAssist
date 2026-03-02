@@ -222,6 +222,23 @@
             stroke-opacity: 0.4 !important;
         }
 
+        /* ===== SLD overlay delta flow visualization ===== */
+        .sld-delta-positive path, .sld-delta-positive line,
+        .sld-delta-positive polyline, .sld-delta-positive rect {
+            stroke: #ff8c00 !important;
+            stroke-width: 2px !important;
+        }
+        .sld-delta-negative path, .sld-delta-negative line,
+        .sld-delta-negative polyline, .sld-delta-negative rect {
+            stroke: #2196F3 !important;
+            stroke-width: 2px !important;
+        }
+        .sld-delta-grey path, .sld-delta-grey line,
+        .sld-delta-grey polyline, .sld-delta-grey rect {
+            stroke: #999 !important;
+            stroke-opacity: 0.5 !important;
+        }
+
         /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
         .voltage-sidebar {
             position: absolute;
@@ -1468,6 +1485,39 @@
                 el.addEventListener('wheel', onWheel, { passive: false });
                 return () => el.removeEventListener('wheel', onWheel);
             }, [vlOverlay]);
+
+            // Apply / clear SLD delta flow colors whenever svg, tab, or mode changes.
+            // In Impacts mode lines are colored orange/blue/grey matching the NAD.
+            useEffect(() => {
+                const container = overlayBodyRef.current;
+                if (!container) return;
+
+                const SLD_CLASSES = ['sld-delta-positive', 'sld-delta-negative', 'sld-delta-grey'];
+                container.querySelectorAll(SLD_CLASSES.map(c => '.' + c).join(','))
+                    .forEach(el => el.classList.remove(...SLD_CLASSES));
+
+                if (!vlOverlay?.svg || actionViewMode !== 'delta') return;
+
+                const deltas =
+                    vlOverlay.tab === 'n-1' ? n1Diagram?.flow_deltas
+                    : vlOverlay.tab === 'action' ? actionDiagram?.flow_deltas
+                    : null;
+
+                if (!deltas) return;
+
+                const elMap = new Map();
+                container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
+
+                for (const [lineId, delta] of Object.entries(deltas)) {
+                    let el = elMap.get(lineId);
+                    if (!el) {
+                        for (const [svgId, svgEl] of elMap) {
+                            if (svgId.includes(lineId)) { el = svgEl; break; }
+                        }
+                    }
+                    if (el) el.classList.add(`sld-delta-${delta.category}`);
+                }
+            }, [vlOverlay?.svg, vlOverlay?.tab, actionViewMode, n1Diagram?.flow_deltas, actionDiagram?.flow_deltas]);
 
             // Mouse pan inside overlay body
             const startOverlayPan = (e) => {
