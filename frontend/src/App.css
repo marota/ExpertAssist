@@ -4,6 +4,9 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
+    /* CSS containment: tells the browser this subtree's layout/paint is
+       independent of the rest of the page, reducing work during viewBox changes */
+    contain: layout style paint;
 }
 
 .svg-container svg {
@@ -17,6 +20,22 @@
 .svg-container svg polyline,
 .svg-container svg rect {
     vector-effect: non-scaling-stroke;
+}
+
+/* During active pan/zoom interaction, disable non-scaling-stroke and
+   pointer-events on all SVG children. non-scaling-stroke forces the
+   browser to recalculate screen-space stroke widths for every element
+   on each viewBox change — disabling it during interaction eliminates
+   the main source of lag on large grids with thousands of elements.
+   pointer-events: none skips expensive hit-testing during drag/zoom. */
+.svg-container.svg-interacting svg path,
+.svg-container.svg-interacting svg line,
+.svg-container.svg-interacting svg polyline,
+.svg-container.svg-interacting svg rect {
+    vector-effect: initial !important;
+}
+.svg-container.svg-interacting svg * {
+    pointer-events: none !important;
 }
 
 /* ===== Highlight styles ===== */
@@ -84,6 +103,13 @@ circle.nad-highlight {
 .svg-container.text-hidden .nad-edge-infos,
 .svg-container.text-hidden .nad-text-edges {
     display: none !important;
+}
+
+/* Suppress expensive drop-shadow filters during active interaction.
+   The compositing cost of multiple drop-shadows on cloned highlight
+   elements is high — skip it while the viewBox is changing rapidly. */
+.svg-container.svg-interacting .nad-action-target {
+    filter: none !important;
 }
 
 /* ===== Delta flow visualization ===== */
