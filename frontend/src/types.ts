@@ -125,10 +125,20 @@ export interface AvailableAction {
 
 export type SldTab = 'n' | 'n-1' | 'action';
 
+// SLD metadata feeder node: maps SVG element IDs to network equipment IDs.
+// Comes from pypowsybl's GraphMetadata (feederNodes array).
+export interface SldFeederNode {
+    id: string;         // SVG element ID
+    equipmentId: string;
+    componentType?: string;
+    direction?: string; // 'TOP' | 'BOTTOM'
+}
+
 export interface VlOverlay {
     vlName: string;
     actionId: string | null;
     svg: string | null;
+    sldMetadata: string | null;  // raw JSON string from pypowsybl GraphMetadata
     loading: boolean;
     error: string | null;
     tab: SldTab;

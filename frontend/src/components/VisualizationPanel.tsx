@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, FlowDelta } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, FlowDelta, SldFeederNode } from '../types';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -50,21 +50,14 @@ const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1Fl
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
     const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
 
-    // Apply / clear delta flow colors on the SLD whenever svg, tab, or mode changes.
-    // In Impacts mode the lines are colored orange/blue/grey by flow delta category,
-    // mirroring the NAD coloring.  In Flows mode all delta classes are removed and
-    // original text values restored so the diagram shows its native voltage coloring.
+    // Apply / clear delta flow colors on the SLD whenever svg/metadata, tab, or mode changes.
     //
-    // pypowsybl SLD SVG structure:
-    //   <g class="sld-extern-cell">
-    //     <g id="..." class="sld-top-feeder / sld-bottom-feeder">
-    //       <g class="sld-wire"><polyline .../></g>
-    //       <g class="sld-feeder-info sld-active-power"><text class="sld-label">16</text></g>
-    //       <g class="sld-feeder-info sld-reactive-power"><text class="sld-label">-43</text></g>
-    //     </g>
-    //   </g>
-    // Element IDs use internal node IDs (not equipment IDs directly), but the
-    // equipment ID typically appears as a substring.
+    // pypowsybl SLD SVG structure (GraphMetadata):
+    //   feederNodes[].id         → SVG element ID of the feeder <g> (sld-top-feeder / sld-bottom-feeder)
+    //   feederNodes[].equipmentId → network equipment ID (matches flow_deltas keys)
+    //
+    // The cell ancestor (sld-extern-cell) wraps BOTH the feeder symbol AND the connecting
+    // wire (sld-wire), so we must apply the delta class one level up to color the full branch.
     useEffect(() => {
         const container = overlayBodyRef.current;
         if (!container) return;
@@ -90,61 +83,73 @@ const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1Fl
 
         if (!deltas) return;
 
-        // Build a quick lookup of all SVG elements that carry an id
+        // Build equipmentId → SVG element lookup from SLD metadata (feederNodes array).
+        // feederNode.id is the SVG element ID; feederNode.equipmentId is the network ID.
+        const equipIdToSvgId = new Map<string, string>();
+        if (vlOverlay.sldMetadata) {
+            try {
+                const meta = JSON.parse(vlOverlay.sldMetadata) as { feederNodes?: SldFeederNode[] };
+                for (const fn of meta.feederNodes ?? []) {
+                    if (fn.equipmentId && fn.id) {
+                        equipIdToSvgId.set(fn.equipmentId, fn.id);
+                    }
+                }
+            } catch {
+                // metadata parse failed — fall through to substring fallback
+            }
+        }
+
+        // Quick lookup of all elements by SVG id
         const elMap = new Map<string, Element>();
         container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
         for (const [lineId, delta] of Object.entries(deltas)) {
             const cls = `sld-delta-${delta.category}`;
 
-            // Find ALL elements whose id contains this equipment ID
-            const matchedEls: Element[] = [];
-            for (const [svgId, svgEl] of elMap) {
-                if (svgId === lineId || svgId.includes(lineId)) {
-                    matchedEls.push(svgEl);
+            // Primary: use metadata mapping to get the exact SVG element
+            let feederEl: Element | undefined;
+            const svgId = equipIdToSvgId.get(lineId);
+            if (svgId) {
+                feederEl = elMap.get(svgId);
+            }
+            // Fallback: substring search (no metadata or id not found)
+            if (!feederEl) {
+                for (const [eid, el] of elMap) {
+                    if (eid.includes(lineId)) { feederEl = el; break; }
                 }
             }
-            if (matchedEls.length === 0) continue;
+            if (!feederEl) continue;
 
-            // Walk up to feeder groups (sld-top-feeder / sld-bottom-feeder) so the
-            // CSS class cascades to all child wires, symbols, and arrows.
-            const feederGroups = new Set<Element>();
-            for (const el of matchedEls) {
-                let cur: Element | null = el;
-                while (cur && cur !== container) {
-                    if (cur.classList.contains('sld-top-feeder') ||
-                        cur.classList.contains('sld-bottom-feeder')) {
-                        feederGroups.add(cur);
-                        break;
-                    }
-                    cur = cur.parentElement;
+            // Walk up from the feeder element to the cell group (sld-extern-cell /
+            // sld-intern-cell) so the delta class covers the connecting wire too.
+            let cellEl: Element = feederEl;
+            let cur: Element | null = feederEl.parentElement;
+            while (cur && cur !== container) {
+                if (cur.classList.contains('sld-extern-cell') ||
+                    cur.classList.contains('sld-intern-cell') ||
+                    cur.classList.contains('sld-shunt-cell')) {
+                    cellEl = cur;
+                    break;
                 }
+                cur = cur.parentElement;
             }
+            cellEl.classList.add(cls);
 
-            // Apply class to feeder groups if found, otherwise to matched elements
-            const targets = feederGroups.size > 0
-                ? Array.from(feederGroups)
-                : matchedEls;
-            for (const t of targets) t.classList.add(cls);
-
-            // Replace active-power text labels with delta values
+            // Replace active-power text label with delta value
             const deltaStr = delta.delta >= 0 ? `+${delta.delta.toFixed(1)}` : delta.delta.toFixed(1);
-            for (const t of targets) {
-                // Prefer .sld-active-power labels; fall back to all .sld-label
-                let labels = t.querySelectorAll('.sld-active-power .sld-label');
-                if (labels.length === 0) labels = t.querySelectorAll('.sld-label');
-                labels.forEach(label => {
-                    const text = (label.textContent || '').trim();
-                    if (/^-?\d+(\.\d+)?$/.test(text)) {
-                        if (!label.hasAttribute('data-original-text')) {
-                            label.setAttribute('data-original-text', label.textContent || '');
-                        }
-                        label.textContent = `\u0394 ${deltaStr}`;
+            let labels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+            if (labels.length === 0) labels = cellEl.querySelectorAll('.sld-label');
+            labels.forEach(label => {
+                const text = (label.textContent || '').trim();
+                if (/^-?\d+(\.\d+)?$/.test(text)) {
+                    if (!label.hasAttribute('data-original-text')) {
+                        label.setAttribute('data-original-text', label.textContent || '');
                     }
-                });
-            }
+                    label.textContent = `\u0394 ${deltaStr}`;
+                }
+            });
         }
-    }, [vlOverlay.svg, vlOverlay.tab, actionViewMode, n1FlowDeltas, actionFlowDeltas]);
+    }, [vlOverlay.svg, vlOverlay.sldMetadata, vlOverlay.tab, actionViewMode, n1FlowDeltas, actionFlowDeltas]);
 
     // Non-passive wheel zoom on overlay body
     useEffect(() => {

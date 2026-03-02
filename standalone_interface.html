@@ -1436,7 +1436,7 @@
                     // Flows mode (action or overflow fallback): show action state
                     initialTab = 'action';
                 }
-                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: initialTab });
+                setVlOverlay({ vlName, actionId, svg: null, sldMetadata: null, loading: true, error: null, tab: initialTab });
                 fetchSldVariant(vlName, actionId, initialTab);
             };
 
@@ -1458,7 +1458,7 @@
                     const res = await axios.post(API_BASE + endpoint, payload);
                     setVlOverlay(prev =>
                         prev && prev.vlName === vlName && prev.actionId === actionId && prev.tab === sldTab
-                            ? { ...prev, svg: res.data.svg, loading: false }
+                            ? { ...prev, svg: res.data.svg, sldMetadata: res.data.sld_metadata ?? null, loading: false }
                             : prev
                     );
                 } catch (err) {
@@ -1492,9 +1492,10 @@
                 return () => el.removeEventListener('wheel', onWheel);
             }, [vlOverlay]);
 
-            // Apply / clear SLD delta flow colors whenever svg, tab, or mode changes.
-            // In Impacts mode lines are colored orange/blue/grey matching the NAD.
-            // Walks up to feeder groups so entire branches are colored, not just fragments.
+            // Apply / clear SLD delta flow colors whenever svg/metadata, tab, or mode changes.
+            // Uses pypowsybl SLD metadata (feederNodes[].equipmentId → feederNodes[].id) to find
+            // the exact SVG element, then walks up to sld-extern-cell to color the full branch
+            // including its connecting wire.
             useEffect(() => {
                 const container = overlayBodyRef.current;
                 if (!container) return;
@@ -1518,57 +1519,64 @@
 
                 if (!deltas) return;
 
+                // Build equipmentId → svgId map from SLD metadata feederNodes
+                const equipIdToSvgId = new Map();
+                if (vlOverlay.sldMetadata) {
+                    try {
+                        const meta = JSON.parse(vlOverlay.sldMetadata);
+                        for (const fn of meta.feederNodes ?? []) {
+                            if (fn.equipmentId && fn.id) equipIdToSvgId.set(fn.equipmentId, fn.id);
+                        }
+                    } catch { /* ignore parse errors */ }
+                }
+
                 const elMap = new Map();
                 container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
                 for (const [lineId, delta] of Object.entries(deltas)) {
                     const cls = `sld-delta-${delta.category}`;
 
-                    // Find ALL elements whose id contains this equipment ID
-                    const matchedEls = [];
-                    for (const [svgId, svgEl] of elMap) {
-                        if (svgId === lineId || svgId.includes(lineId)) {
-                            matchedEls.push(svgEl);
+                    // Primary: metadata lookup; fallback: substring search
+                    let feederEl = null;
+                    const svgId = equipIdToSvgId.get(lineId);
+                    if (svgId) feederEl = elMap.get(svgId);
+                    if (!feederEl) {
+                        for (const [eid, el] of elMap) {
+                            if (eid.includes(lineId)) { feederEl = el; break; }
                         }
                     }
-                    if (matchedEls.length === 0) continue;
+                    if (!feederEl) continue;
 
-                    // Walk up to feeder groups so CSS cascades to full branch
-                    const feederGroups = new Set();
-                    for (const el of matchedEls) {
-                        let cur = el;
-                        while (cur && cur !== container) {
-                            if (cur.classList.contains('sld-top-feeder') ||
-                                cur.classList.contains('sld-bottom-feeder')) {
-                                feederGroups.add(cur);
-                                break;
-                            }
-                            cur = cur.parentElement;
+                    // Walk up to the cell group (sld-extern-cell / sld-intern-cell) which
+                    // contains both the feeder symbol AND the connecting wire.
+                    let cellEl = feederEl;
+                    let cur = feederEl.parentElement;
+                    while (cur && cur !== container) {
+                        if (cur.classList.contains('sld-extern-cell') ||
+                            cur.classList.contains('sld-intern-cell') ||
+                            cur.classList.contains('sld-shunt-cell')) {
+                            cellEl = cur;
+                            break;
                         }
+                        cur = cur.parentElement;
                     }
+                    cellEl.classList.add(cls);
 
-                    const targets = feederGroups.size > 0
-                        ? Array.from(feederGroups)
-                        : matchedEls;
-                    for (const t of targets) t.classList.add(cls);
-
-                    // Replace active-power text labels with delta values
+                    // Replace active-power label with delta value
                     const deltaStr = delta.delta >= 0 ? `+${delta.delta.toFixed(1)}` : delta.delta.toFixed(1);
-                    for (const t of targets) {
-                        let labels = t.querySelectorAll('.sld-active-power .sld-label');
-                        if (labels.length === 0) labels = t.querySelectorAll('.sld-label');
-                        labels.forEach(label => {
-                            const text = (label.textContent || '').trim();
-                            if (/^-?\d+(\.\d+)?$/.test(text)) {
-                                if (!label.hasAttribute('data-original-text')) {
-                                    label.setAttribute('data-original-text', label.textContent || '');
-                                }
-                                label.textContent = `\u0394 ${deltaStr}`;
+                    let labels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+                    if (labels.length === 0) labels = cellEl.querySelectorAll('.sld-label');
+                    labels.forEach(label => {
+                        const text = (label.textContent || '').trim();
+                        if (/^-?\d+(\.\d+)?$/.test(text)) {
+                            if (!label.hasAttribute('data-original-text')) {
+                                label.setAttribute('data-original-text', label.textContent || '');
                             }
-                        });
-                    }
+                            label.textContent = `\u0394 ${deltaStr}`;
+                        }
+                    });
                 }
-            }, [vlOverlay?.svg, vlOverlay?.tab, actionViewMode, n1Diagram?.flow_deltas, actionDiagram?.flow_deltas]);
+            }, [vlOverlay?.svg, vlOverlay?.sldMetadata, vlOverlay?.tab, actionViewMode, n1Diagram?.flow_deltas, actionDiagram?.flow_deltas]);
 
             // Mouse pan inside overlay body
             const startOverlayPan = (e) => {

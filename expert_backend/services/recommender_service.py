@@ -513,14 +513,11 @@ class RecommenderService:
         network = nm.network
 
         sld = network.get_single_line_diagram(voltage_level_id)
-        try:
-            from pypowsybl_jupyter.util import _get_svg_string
-            svg = _get_svg_string(sld)
-        except Exception:
-            svg = str(sld)
+        svg, sld_metadata = self._extract_sld_svg_and_metadata(sld)
 
         return {
             "svg": svg,
+            "sld_metadata": sld_metadata,
             "action_id": action_id,
             "voltage_level_id": voltage_level_id,
         }
@@ -531,16 +528,13 @@ class RecommenderService:
         n = self._load_network()
         params = create_olf_rte_parameter()
         pp.loadflow.run_ac(n, params)
-        
+
         sld = n.get_single_line_diagram(voltage_level_id)
-        try:
-            from pypowsybl_jupyter.util import _get_svg_string
-            svg = _get_svg_string(sld)
-        except Exception:
-            svg = str(sld)
+        svg, sld_metadata = self._extract_sld_svg_and_metadata(sld)
 
         return {
             "svg": svg,
+            "sld_metadata": sld_metadata,
             "voltage_level_id": voltage_level_id,
         }
 
@@ -553,22 +547,39 @@ class RecommenderService:
                 n.disconnect(disconnected_element)
             except Exception as e:
                 print(f"Failed to disconnect element {disconnected_element} for SLD: {e}")
-        
+
         params = create_olf_rte_parameter()
         pp.loadflow.run_ac(n, params)
-        
+
         sld = n.get_single_line_diagram(voltage_level_id)
-        try:
-            from pypowsybl_jupyter.util import _get_svg_string
-            svg = _get_svg_string(sld)
-        except Exception:
-            svg = str(sld)
+        svg, sld_metadata = self._extract_sld_svg_and_metadata(sld)
 
         return {
             "svg": svg,
+            "sld_metadata": sld_metadata,
             "voltage_level_id": voltage_level_id,
             "disconnected_element": disconnected_element
         }
+
+    @staticmethod
+    def _extract_sld_svg_and_metadata(sld) -> tuple:
+        """Extract SVG string and metadata JSON from a pypowsybl SLD diagram object.
+
+        Returns (svg_str, metadata_str_or_None).
+        The metadata JSON contains 'feederNodes' with {id, equipmentId} entries
+        that map SVG element IDs back to network equipment IDs.
+        """
+        try:
+            from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
+            svg = _get_svg_string(sld)
+            metadata = _get_svg_metadata(sld)
+        except Exception:
+            try:
+                svg = sld._repr_svg_()
+            except Exception:
+                svg = str(sld)
+            metadata = getattr(sld, '_metadata', None)
+        return svg, metadata
 
     def _get_lines_we_care_about(self):
         """Return the set of monitored line IDs, or None if all lines are monitored."""

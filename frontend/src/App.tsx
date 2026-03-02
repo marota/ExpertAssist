@@ -428,19 +428,23 @@ function App() {
     setVlOverlay(prev => prev ? { ...prev, loading: true, error: null, tab: sldTab } : null);
     try {
       let svgData: string;
+      let metaData: string | null = null;
       if (sldTab === 'n') {
         const res = await api.getNSld(vlName);
         svgData = res.svg;
+        metaData = res.sld_metadata ?? null;
       } else if (sldTab === 'n-1') {
         const res = await api.getN1Sld(selectedBranch, vlName);
         svgData = res.svg;
+        metaData = res.sld_metadata ?? null;
       } else {
         const res = await api.getActionVariantSld(actionId!, vlName);
         svgData = res.svg;
+        metaData = res.sld_metadata ?? null;
       }
       setVlOverlay(prev =>
         prev && prev.vlName === vlName && prev.tab === sldTab
-          ? { ...prev, svg: svgData, loading: false }
+          ? { ...prev, svg: svgData, sldMetadata: metaData, loading: false }
           : prev
       );
     } catch (err: unknown) {
@@ -466,7 +470,7 @@ function App() {
       // Flows mode (action or overflow fallback): show action state
       initialTab = 'action';
     }
-    setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: initialTab });
+    setVlOverlay({ vlName, actionId, svg: null, sldMetadata: null, loading: true, error: null, tab: initialTab });
     fetchSldVariant(vlName, actionId, initialTab);
   }, [activeTab, actionViewMode, fetchSldVariant]);
 
