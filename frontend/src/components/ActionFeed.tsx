@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail, NodeMeta, EdgeMeta, AnalysisResult } from '../types';
+import type { ActionDetail, NodeMeta, EdgeMeta, AnalysisResult, AvailableAction } from '../types';
 import { api } from '../api';
 import { getActionTargetVoltageLevel, getActionTargetLines } from '../utils/svgUtils';
 
@@ -48,7 +48,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [availableActions, setAvailableActions] = useState<{ id: string; description: string }[]>([]);
+    const [availableActions, setAvailableActions] = useState<AvailableAction[]>([]);
     const [loadingActions, setLoadingActions] = useState(false);
     const [simulating, setSimulating] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -93,7 +93,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
             .filter(a => !alreadyShown.has(a.id))
-            .filter((a: any) => {
+            .filter(a => {
                 const t = a.type || 'unknown';
                 if ((t.includes('disco') || t.includes('open_line') || t.includes('open_load')) && !typeFilters.disco) return false;
                 if ((t.includes('reco') || t.includes('close_line') || t.includes('close_load')) && !typeFilters.reco) return false;

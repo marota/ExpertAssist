@@ -105,3 +105,20 @@ export interface MetadataIndex {
 }
 
 export type TabId = 'n' | 'n-1' | 'action' | 'overflow';
+
+export interface SettingsBackup {
+    minLineReconnections: number;
+    minCloseCoupling: number;
+    minOpenCoupling: number;
+    minLineDisconnections: number;
+    nPrioritizedActions: number;
+    linesMonitoringPath: string;
+    monitoringFactor: number;
+    preExistingOverloadThreshold: number;
+}
+
+export interface AvailableAction {
+    id: string;
+    description: string;
+    type?: string;
+}
