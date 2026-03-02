@@ -69,7 +69,7 @@ def update_config(config: ConfigRequest):
         from expert_op4grid_recommender import config as recommender_config
         total_lines = len(network_service.get_disconnectable_elements())
         if getattr(recommender_config, 'IGNORE_LINES_MONITORING', True):
-            monitored_lines = total_lines
+            monitored_lines = len(network_service.get_monitored_elements())
         else:
             monitored_lines = getattr(recommender_config, 'MONITORED_LINES_COUNT', total_lines)
             

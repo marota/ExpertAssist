@@ -40,6 +40,26 @@ class NetworkService:
             
         return sorted(elements)
 
+    def get_monitored_elements(self):
+        """Return the list of element IDs that have at least one permanent operational limit."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        limits = self.network.get_operational_limits()
+        if limits is None or limits.empty:
+            return []
+
+        limits = limits.reset_index()
+        # Filter for limits of type 'CURRENT' with acceptable_duration == -1 (permanent)
+        # Note: some networks might use 'THERMAL' or other types, but 'CURRENT' is standard for ampere limits.
+        # Expert Assist uses 'CURRENT' (see recommender_service.py:601)
+        permanent_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
+        if permanent_limits.empty:
+            return []
+            
+        ids = sorted(permanent_limits['element_id'].unique().tolist())
+        return ids
+
     def get_voltage_levels(self):
         if not self.network:
             raise ValueError("Network not loaded")

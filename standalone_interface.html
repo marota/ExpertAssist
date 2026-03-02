@@ -2526,7 +2526,7 @@
 
                                 {showMonitoringWarning && totalLinesCount > 0 && (
                                     <div style={{ marginBottom: '10px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '4px', color: '#856404', fontSize: '0.85rem' }}>
-                                        ⚠️ {monitoredLinesCount} out of {totalLinesCount} lines monitored. Monitoring factor applied: {Math.round(monitoringFactor * 100)}%. {Math.round(preExistingOverloadThreshold * 100)}% loading increase threshold for considering worsened overload in N.
+                                        ⚠️ {monitoredLinesCount} out of {totalLinesCount} lines monitored ({totalLinesCount - monitoredLinesCount} without permanent limits). Monitoring factor applied: {Math.round(monitoringFactor * 100)}%. {Math.round(preExistingOverloadThreshold * 100)}% loading increase threshold for considering worsened overload in N.
                                         <button onClick={() => { handleOpenSettings(); setSettingsTab('configurations'); }} style={{ background: 'none', border: 'none', color: '#0056b3', textDecoration: 'underline', cursor: 'pointer', padding: '0 0 0 5px' }}>Change in settings</button>
                                         <button onClick={() => setShowMonitoringWarning(false)} style={{ float: 'right', background: 'none', border: 'none', fontSize: '16px', lineHeight: 1, color: '#856404', cursor: 'pointer' }} title="Dismiss">&times;</button>
                                     </div>
