@@ -994,11 +994,14 @@
                         monitoringFactor,
                         preExistingOverloadThreshold
                     });
-                    setInfoMessage('Settings applied successfully. Reloading network state...');
+                    setInfoMessage('Settings applied successfully. Please reload study or run analysis to see effects.');
                     setIsSettingsOpen(false);
 
-                    // Re-fetch configuration and overloads to reflect limits change
-                    handleLoadConfig();
+                    // Clear previous results to ensure consistency with new settings
+                    setResult(null);
+                    setPendingAnalysisResult(null);
+                    setN1Diagram(null);
+                    setActionDiagram(null);
                 } catch (err) {
                     setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
                 }
