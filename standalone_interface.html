@@ -964,6 +964,11 @@
             };
 
             const handleApplySettings = async () => {
+                if (result || n1Diagram || actionDiagram) {
+                    if (!window.confirm("Applying new settings will clear current analysis results. Do you want to continue?")) {
+                        return;
+                    }
+                }
                 try {
                     const configRes = await axios.post(API_BASE + '/api/config', {
                         network_path: networkPath,
@@ -1091,6 +1096,11 @@
             };
 
             const handleLoadConfig = async () => {
+                if (result || n1Diagram || actionDiagram) {
+                    if (!window.confirm("Loading a new study will clear current analysis results. Do you want to continue?")) {
+                        return;
+                    }
+                }
                 setConfigLoading(true); setError(''); setInfoMessage('');
                 setNDiagram(null); setN1Diagram(null); setResult(null);
                 setSelectedActionId(null); setActionDiagram(null);
