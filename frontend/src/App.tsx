@@ -9,7 +9,7 @@ import {
   processSvg, buildMetadataIndex, applyOverloadedHighlights,
   applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight
 } from './utils/svgUtils';
-import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId } from './types';
+import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup } from './types';
 
 function App() {
   // ===== Configuration State =====
@@ -36,7 +36,7 @@ function App() {
   const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState<number>(0.02);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
-  const [settingsBackup, setSettingsBackup] = useState<any>(null);
+  const [settingsBackup, setSettingsBackup] = useState<SettingsBackup | null>(null);
 
   const handleOpenSettings = useCallback(() => {
     setSettingsBackup({
@@ -569,7 +569,7 @@ function App() {
         }
       }
     }
-  }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab]);
+  }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab, selectedBranch]);
 
   // ===== Voltage Range Filter =====
   useEffect(() => {
@@ -948,7 +948,7 @@ function App() {
             <OverloadPanel
               nOverloads={nDiagram?.lines_overloaded || []}
               n1Overloads={n1Diagram?.lines_overloaded || []}
-              onAssetClick={handleAssetClick as any}
+              onAssetClick={handleAssetClick as (actionId: string, assetName: string, tab?: 'n' | 'n-1') => void}
             />
           </div>
           <div style={{ flex: 1, overflowY: 'auto' }}>
