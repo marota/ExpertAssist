@@ -122,3 +122,14 @@ export interface AvailableAction {
     description: string;
     type?: string;
 }
+
+export type SldTab = 'n' | 'n-1' | 'action';
+
+export interface VlOverlay {
+    vlName: string;
+    actionId: string | null;
+    svg: string | null;
+    loading: boolean;
+    error: string | null;
+    tab: SldTab;
+}

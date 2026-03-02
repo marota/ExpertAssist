@@ -9,7 +9,7 @@ import {
   processSvg, buildMetadataIndex, applyOverloadedHighlights,
   applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight
 } from './utils/svgUtils';
-import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup } from './types';
+import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup, VlOverlay, SldTab } from './types';
 
 function App() {
   // ===== Configuration State =====
@@ -419,6 +419,64 @@ function App() {
 
   const handleViewModeChange = useCallback((mode: 'network' | 'delta') => {
     setActionViewMode(mode);
+  }, []);
+
+  // ===== SLD Overlay =====
+  const [vlOverlay, setVlOverlay] = useState<VlOverlay | null>(null);
+
+  const fetchSldVariant = useCallback(async (vlName: string, actionId: string | null, sldTab: SldTab) => {
+    setVlOverlay(prev => prev ? { ...prev, loading: true, error: null, tab: sldTab } : null);
+    try {
+      let svgData: string;
+      if (sldTab === 'n') {
+        const res = await api.getNSld(vlName);
+        svgData = res.svg;
+      } else if (sldTab === 'n-1') {
+        const res = await api.getN1Sld(selectedBranch, vlName);
+        svgData = res.svg;
+      } else {
+        const res = await api.getActionVariantSld(actionId!, vlName);
+        svgData = res.svg;
+      }
+      setVlOverlay(prev =>
+        prev && prev.vlName === vlName && prev.tab === sldTab
+          ? { ...prev, svg: svgData, loading: false }
+          : prev
+      );
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      setVlOverlay(prev => prev && prev.tab === sldTab
+        ? { ...prev, loading: false, error: e.response?.data?.detail || 'Failed to load SLD' }
+        : prev
+      );
+    }
+  }, [selectedBranch]);
+
+  const handleVlDoubleClick = useCallback((actionId: string, vlName: string) => {
+    // Determine initial SLD tab based on current active main tab and Flow/Impact mode
+    let initialTab: SldTab;
+    if (activeTab === 'n') {
+      initialTab = 'n';
+    } else if (activeTab === 'n-1') {
+      initialTab = 'n-1';
+    } else if (activeTab === 'action' && actionViewMode === 'delta') {
+      // Impacts mode: show N-1 as the reference state for comparison
+      initialTab = 'n-1';
+    } else {
+      // Flows mode (action or overflow fallback): show action state
+      initialTab = 'action';
+    }
+    setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: initialTab });
+    fetchSldVariant(vlName, actionId, initialTab);
+  }, [activeTab, actionViewMode, fetchSldVariant]);
+
+  const handleOverlaySldTabChange = useCallback((sldTab: SldTab) => {
+    if (!vlOverlay) return;
+    fetchSldVariant(vlOverlay.vlName, vlOverlay.actionId, sldTab);
+  }, [vlOverlay, fetchSldVariant]);
+
+  const handleOverlayClose = useCallback(() => {
+    setVlOverlay(null);
   }, []);
 
   // ===== Asset Click (from action card badges / rho line names) =====
@@ -972,6 +1030,7 @@ function App() {
               onDisplayPrioritizedActions={handleDisplayPrioritizedActions}
               analysisLoading={analysisLoading}
               monitoringFactor={monitoringFactor}
+              onVlDoubleClick={handleVlDoubleClick}
             />
           </div>
         </div>
@@ -1003,6 +1062,9 @@ function App() {
             onZoomOut={handleManualZoomOut}
             hasBranches={branches.length > 0}
             selectedBranch={selectedBranch}
+            vlOverlay={vlOverlay}
+            onOverlayClose={handleOverlayClose}
+            onOverlaySldTabChange={handleOverlaySldTabChange}
           />
         </div>
       </div>

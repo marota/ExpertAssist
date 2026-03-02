@@ -1,5 +1,5 @@
-import React, { type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId } from '../types';
+import React, { useState, useEffect, useRef, type RefObject } from 'react';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab } from '../types';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -28,7 +28,144 @@ interface VisualizationPanelProps {
     onZoomOut: () => void;
     hasBranches: boolean;
     selectedBranch: string;
+    vlOverlay: VlOverlay | null;
+    onOverlayClose: () => void;
+    onOverlaySldTabChange: (tab: SldTab) => void;
 }
+
+// ===== SLD Overlay sub-component =====
+// Extracted to own component so React resets its local state (position, transform)
+// automatically via key={vlOverlay.vlName} when a new VL is selected.
+interface SldOverlayProps {
+    vlOverlay: VlOverlay;
+    actionViewMode: 'network' | 'delta';
+    onOverlayClose: () => void;
+    onOverlaySldTabChange: (tab: SldTab) => void;
+}
+
+const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, onOverlayClose, onOverlaySldTabChange }) => {
+    const overlayBodyRef = useRef<HTMLDivElement>(null);
+    const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
+    const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
+
+    // Non-passive wheel zoom on overlay body
+    useEffect(() => {
+        const el = overlayBodyRef.current;
+        if (!el) return;
+        const onWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const rect = el.getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            setOverlayTransform(prev => {
+                const s = Math.max(0.1, Math.min(10, prev.scale * factor));
+                return { scale: s, tx: cx - (cx - prev.tx) * (s / prev.scale), ty: cy - (cy - prev.ty) * (s / prev.scale) };
+            });
+        };
+        el.addEventListener('wheel', onWheel, { passive: false });
+        return () => el.removeEventListener('wheel', onWheel);
+    }, []);
+
+    const startOverlayDrag = (e: React.MouseEvent) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const x0 = e.clientX, y0 = e.clientY;
+        const px0 = overlayPos.x, py0 = overlayPos.y;
+        const onMove = (ev: MouseEvent) => setOverlayPos({ x: px0 + ev.clientX - x0, y: py0 + ev.clientY - y0 });
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    };
+
+    const startOverlayPan = (e: React.MouseEvent) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const x0 = e.clientX, y0 = e.clientY;
+        const tx0 = overlayTransform.tx, ty0 = overlayTransform.ty;
+        const onMove = (ev: MouseEvent) => setOverlayTransform(prev => ({ ...prev, tx: tx0 + ev.clientX - x0, ty: ty0 + ev.clientY - y0 }));
+        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    };
+
+    return (
+        <div style={{
+            position: 'absolute', top: overlayPos.y + 'px', left: overlayPos.x + 'px',
+            width: '440px', height: '420px', minWidth: '220px', minHeight: '150px',
+            background: 'white', border: '1px solid #ccc', borderRadius: '8px',
+            boxShadow: '0 4px 24px rgba(0,0,0,0.22)', zIndex: 45,
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            resize: 'both', boxSizing: 'border-box',
+        }}>
+            {/* Header — drag handle */}
+            <div
+                onMouseDown={startOverlayDrag}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0, cursor: 'move', userSelect: 'none' }}
+            >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#065f46' }}>{vlOverlay.vlName}</span>
+                        {/* Mode indicator — shows which Flow vs Impact mode was active when overlay opened */}
+                        <span style={{
+                            fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '10px',
+                            background: actionViewMode === 'delta' ? '#dbeafe' : '#f3f4f6',
+                            color: actionViewMode === 'delta' ? '#1d4ed8' : '#374151',
+                        }}>
+                            {actionViewMode === 'delta' ? 'Impacts' : 'Flows'}
+                        </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                        {(['n', 'n-1', 'action'] as SldTab[]).map(tabMode => (
+                            <button
+                                key={tabMode}
+                                onMouseDown={e => e.stopPropagation()}
+                                onClick={(e) => { e.stopPropagation(); onOverlaySldTabChange(tabMode); }}
+                                style={{
+                                    background: vlOverlay.tab === tabMode ? '#059669' : '#e5e7eb',
+                                    color: vlOverlay.tab === tabMode ? 'white' : '#374151',
+                                    border: 'none', borderRadius: '4px', padding: '2px 8px',
+                                    fontSize: '11px', fontWeight: vlOverlay.tab === tabMode ? 'bold' : 'normal',
+                                    cursor: vlOverlay.loading ? 'wait' : 'pointer',
+                                }}
+                            >
+                                {tabMode.toUpperCase()}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                <button
+                    onMouseDown={e => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); onOverlayClose(); }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px', color: '#666', lineHeight: 1, padding: '0 2px' }}
+                    title="Close"
+                >✕</button>
+            </div>
+            {/* Body — pan/zoom canvas */}
+            <div
+                ref={overlayBodyRef}
+                style={{ flex: 1, overflow: 'hidden', minHeight: 0, cursor: 'grab', userSelect: 'none' }}
+                onMouseDown={startOverlayPan}
+            >
+                {vlOverlay.loading && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontSize: '13px' }}>
+                        Generating diagram…
+                    </div>
+                )}
+                {vlOverlay.error && (
+                    <div style={{ padding: '12px', color: '#dc3545', fontSize: '12px' }}>{vlOverlay.error}</div>
+                )}
+                {vlOverlay.svg && (
+                    <div style={{
+                        transformOrigin: '0 0',
+                        transform: `translate(${overlayTransform.tx}px,${overlayTransform.ty}px) scale(${overlayTransform.scale})`,
+                        padding: '4px',
+                    }} dangerouslySetInnerHTML={{ __html: vlOverlay.svg }} />
+                )}
+            </div>
+        </div>
+    );
+};
 
 const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     activeTab,
@@ -57,6 +194,9 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onZoomOut,
     hasBranches,
     selectedBranch,
+    vlOverlay,
+    onOverlayClose,
+    onOverlaySldTabChange,
 }) => {
     const showViewModeToggle = activeTab !== 'overflow' && (
         (activeTab === 'n' && !!nDiagram?.svg) ||
@@ -324,6 +464,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         </div>
                     );
                 })()}
+
+                {/* SLD Overlay — floating panel for voltage-level Single Line Diagram.
+                    key={vlOverlay.vlName} ensures position/zoom resets automatically
+                    when a different VL is selected. */}
+                {vlOverlay && (
+                    <SldOverlay
+                        key={vlOverlay.vlName}
+                        vlOverlay={vlOverlay}
+                        actionViewMode={actionViewMode}
+                        onOverlayClose={onOverlayClose}
+                        onOverlaySldTabChange={onOverlaySldTabChange}
+                    />
+                )}
 
                 {/* Bottom-left overlay: Zoom + Inspect */}
                 {activeTab !== 'overflow' && (

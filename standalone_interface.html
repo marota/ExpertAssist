@@ -1400,9 +1400,21 @@
             const handleVlDoubleClick = async (actionId, vlName) => {
                 setOverlayTransform({ scale: 1, tx: 0, ty: 0 });
                 setOverlayPos({ x: 16, y: 16 });
-                // Default to 'action' state because they clicked from an action diagram
-                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: 'action' });
-                fetchSldVariant(vlName, actionId, 'action');
+                // Determine initial SLD tab based on active main tab and Flow/Impact mode
+                let initialTab;
+                if (activeTab === 'n') {
+                    initialTab = 'n';
+                } else if (activeTab === 'n-1') {
+                    initialTab = 'n-1';
+                } else if (activeTab === 'action' && actionViewMode === 'delta') {
+                    // Impacts mode: show N-1 as the reference state for comparison
+                    initialTab = 'n-1';
+                } else {
+                    // Flows mode (action or overflow fallback): show action state
+                    initialTab = 'action';
+                }
+                setVlOverlay({ vlName, actionId, svg: null, loading: true, error: null, tab: initialTab });
+                fetchSldVariant(vlName, actionId, initialTab);
             };
 
             const fetchSldVariant = async (vlName, actionId, sldTab) => {
@@ -2156,9 +2168,18 @@
                                 {/* Header — drag handle */}
                                 <div onMouseDown={startOverlayDrag} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: '#f0faf4', borderBottom: '1px solid #d1fae5', flexShrink: 0, cursor: 'move', userSelect: 'none' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#065f46' }}>
-                                            {vlOverlay.vlName}
-                                        </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '13px', fontWeight: 600, color: '#065f46' }}>
+                                                {vlOverlay.vlName}
+                                            </span>
+                                            <span style={{
+                                                fontSize: '10px', fontWeight: 700, padding: '1px 6px', borderRadius: '10px',
+                                                background: actionViewMode === 'delta' ? '#dbeafe' : '#f3f4f6',
+                                                color: actionViewMode === 'delta' ? '#1d4ed8' : '#374151',
+                                            }}>
+                                                {actionViewMode === 'delta' ? 'Impacts' : 'Flows'}
+                                            </span>
+                                        </div>
                                         <div style={{ display: 'flex', gap: '4px' }}>
                                             {['n', 'n-1', 'action'].map(tabMode => (
                                                 <button
