@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, FlowDelta, SldFeederNode } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, FlowDelta, AssetDelta, SldFeederNode } from '../types';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -41,11 +41,21 @@ interface SldOverlayProps {
     actionViewMode: 'network' | 'delta';
     n1FlowDeltas: Record<string, FlowDelta> | null | undefined;
     actionFlowDeltas: Record<string, FlowDelta> | null | undefined;
+    n1ReactiveFlowDeltas: Record<string, FlowDelta> | null | undefined;
+    actionReactiveFlowDeltas: Record<string, FlowDelta> | null | undefined;
+    n1AssetDeltas: Record<string, AssetDelta> | null | undefined;
+    actionAssetDeltas: Record<string, AssetDelta> | null | undefined;
     onOverlayClose: () => void;
     onOverlaySldTabChange: (tab: SldTab) => void;
 }
 
-const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1FlowDeltas, actionFlowDeltas, onOverlayClose, onOverlaySldTabChange }) => {
+const SldOverlay: React.FC<SldOverlayProps> = ({
+    vlOverlay, actionViewMode,
+    n1FlowDeltas, actionFlowDeltas,
+    n1ReactiveFlowDeltas, actionReactiveFlowDeltas,
+    n1AssetDeltas, actionAssetDeltas,
+    onOverlayClose, onOverlaySldTabChange,
+}) => {
     const overlayBodyRef = useRef<HTMLDivElement>(null);
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
     const [overlayTransform, setOverlayTransform] = useState({ scale: 1, tx: 0, ty: 0 });
@@ -76,15 +86,15 @@ const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1Fl
         if (!vlOverlay.svg || actionViewMode !== 'delta') return;
 
         // Choose deltas based on the SLD tab being shown
-        const deltas: Record<string, FlowDelta> | null | undefined =
-            vlOverlay.tab === 'n-1' ? n1FlowDeltas
-            : vlOverlay.tab === 'action' ? actionFlowDeltas
-            : null;
+        const isN1 = vlOverlay.tab === 'n-1';
+        const isAction = vlOverlay.tab === 'action';
+        const flowDeltas = isN1 ? n1FlowDeltas : isAction ? actionFlowDeltas : null;
+        const reactiveDeltas = isN1 ? n1ReactiveFlowDeltas : isAction ? actionReactiveFlowDeltas : null;
+        const assetDeltas = isN1 ? n1AssetDeltas : isAction ? actionAssetDeltas : null;
 
-        if (!deltas) return;
+        if (!flowDeltas && !assetDeltas) return;
 
         // Build equipmentId → SVG element lookup from SLD metadata (feederNodes array).
-        // feederNode.id is the SVG element ID; feederNode.equipmentId is the network ID.
         const equipIdToSvgId = new Map<string, string>();
         if (vlOverlay.sldMetadata) {
             try {
@@ -103,25 +113,26 @@ const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1Fl
         const elMap = new Map<string, Element>();
         container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
-        for (const [lineId, delta] of Object.entries(deltas)) {
-            const cls = `sld-delta-${delta.category}`;
-
-            // Primary: use metadata mapping to get the exact SVG element
-            let feederEl: Element | undefined;
-            const svgId = equipIdToSvgId.get(lineId);
-            if (svgId) {
-                feederEl = elMap.get(svgId);
+        const applyTextDelta = (label: Element, val: string) => {
+            if (!label.hasAttribute('data-original-text')) {
+                label.setAttribute('data-original-text', label.textContent || '');
             }
-            // Fallback: substring search (no metadata or id not found)
+            label.textContent = `\u0394 ${val}`;
+        };
+
+        const fmtDelta = (v: number) => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
+
+        /** Find feeder SVG element for a given equipment id, walk up to cell ancestor. */
+        const findCellEl = (equipId: string): Element | null => {
+            let feederEl: Element | undefined;
+            const svgId = equipIdToSvgId.get(equipId);
+            if (svgId) feederEl = elMap.get(svgId);
             if (!feederEl) {
                 for (const [eid, el] of elMap) {
-                    if (eid.includes(lineId)) { feederEl = el; break; }
+                    if (eid.includes(equipId)) { feederEl = el; break; }
                 }
             }
-            if (!feederEl) continue;
-
-            // Walk up from the feeder element to the cell group (sld-extern-cell /
-            // sld-intern-cell) so the delta class covers the connecting wire too.
+            if (!feederEl) return null;
             let cellEl: Element = feederEl;
             let cur: Element | null = feederEl.parentElement;
             while (cur && cur !== container) {
@@ -133,23 +144,90 @@ const SldOverlay: React.FC<SldOverlayProps> = ({ vlOverlay, actionViewMode, n1Fl
                 }
                 cur = cur.parentElement;
             }
-            cellEl.classList.add(cls);
+            return cellEl;
+        };
 
-            // Replace active-power text label with delta value
-            const deltaStr = delta.delta >= 0 ? `+${delta.delta.toFixed(1)}` : delta.delta.toFixed(1);
-            let labels = cellEl.querySelectorAll('.sld-active-power .sld-label');
-            if (labels.length === 0) labels = cellEl.querySelectorAll('.sld-label');
-            labels.forEach(label => {
-                const text = (label.textContent || '').trim();
-                if (/^-?\d+(\.\d+)?$/.test(text)) {
-                    if (!label.hasAttribute('data-original-text')) {
-                        label.setAttribute('data-original-text', label.textContent || '');
-                    }
-                    label.textContent = `\u0394 ${deltaStr}`;
+        /** Replace the first numeric label in a query result with a delta string. */
+        const replaceFirstNumericLabel = (labels: NodeListOf<Element>, val: string) => {
+            for (const label of Array.from(labels)) {
+                if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                    applyTextDelta(label, val);
+                    return;
                 }
-            });
+            }
+        };
+
+        // --- Branch (line/transformer) deltas ---
+        for (const [equipId, delta] of Object.entries(flowDeltas ?? {})) {
+            const cellEl = findCellEl(equipId);
+            if (!cellEl) continue;
+
+            cellEl.classList.add(`sld-delta-${delta.category}`);
+
+            // Active power label (P)
+            const pStr = fmtDelta(delta.delta);
+            let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+            if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+            replaceFirstNumericLabel(pLabels, pStr);
+
+            // Reactive power label (Q)
+            const qDelta = reactiveDeltas?.[equipId];
+            if (qDelta !== undefined) {
+                const qStr = fmtDelta(qDelta.delta);
+                let qLabels = cellEl.querySelectorAll('.sld-reactive-power .sld-label');
+                if (qLabels.length > 0) {
+                    replaceFirstNumericLabel(qLabels, qStr);
+                } else {
+                    // Fallback: replace the second distinct numeric label in the cell
+                    const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
+                    let replaced = 0;
+                    for (const label of allLabels) {
+                        if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                            if (replaced === 0) { replaced++; continue; } // skip the P label
+                            applyTextDelta(label, qStr);
+                            break;
+                        }
+                    }
+                }
+            }
         }
-    }, [vlOverlay.svg, vlOverlay.sldMetadata, vlOverlay.tab, actionViewMode, n1FlowDeltas, actionFlowDeltas]);
+
+        // --- Asset (load/generator) deltas ---
+        for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
+            // Skip if already handled by flow_deltas
+            if (flowDeltas && equipId in flowDeltas) continue;
+
+            const cellEl = findCellEl(equipId);
+            if (!cellEl) continue;
+
+            cellEl.classList.add(`sld-delta-${assetDelta.category}`);
+
+            const pStr = fmtDelta(assetDelta.delta_p);
+            const qStr = fmtDelta(assetDelta.delta_q);
+
+            let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+            if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+            replaceFirstNumericLabel(pLabels, pStr);
+
+            let qLabels = cellEl.querySelectorAll('.sld-reactive-power .sld-label');
+            if (qLabels.length > 0) {
+                replaceFirstNumericLabel(qLabels, qStr);
+            } else {
+                const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
+                let replaced = 0;
+                for (const label of allLabels) {
+                    if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                        if (replaced === 0) { replaced++; continue; }
+                        applyTextDelta(label, qStr);
+                        break;
+                    }
+                }
+            }
+        }
+    }, [vlOverlay.svg, vlOverlay.sldMetadata, vlOverlay.tab, actionViewMode,
+        n1FlowDeltas, actionFlowDeltas,
+        n1ReactiveFlowDeltas, actionReactiveFlowDeltas,
+        n1AssetDeltas, actionAssetDeltas]);
 
     // Non-passive wheel zoom on overlay body
     useEffect(() => {
@@ -578,6 +656,10 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         actionViewMode={actionViewMode}
                         n1FlowDeltas={n1Diagram?.flow_deltas}
                         actionFlowDeltas={actionDiagram?.flow_deltas}
+                        n1ReactiveFlowDeltas={n1Diagram?.reactive_flow_deltas}
+                        actionReactiveFlowDeltas={actionDiagram?.reactive_flow_deltas}
+                        n1AssetDeltas={n1Diagram?.asset_deltas}
+                        actionAssetDeltas={actionDiagram?.asset_deltas}
                         onOverlayClose={onOverlayClose}
                         onOverlaySldTabChange={onOverlaySldTabChange}
                     />

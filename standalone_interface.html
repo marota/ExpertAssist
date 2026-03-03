@@ -1512,12 +1512,13 @@
 
                 if (!vlOverlay?.svg || actionViewMode !== 'delta') return;
 
-                const deltas =
-                    vlOverlay.tab === 'n-1' ? n1Diagram?.flow_deltas
-                    : vlOverlay.tab === 'action' ? actionDiagram?.flow_deltas
-                    : null;
+                const isN1 = vlOverlay.tab === 'n-1';
+                const isAction = vlOverlay.tab === 'action';
+                const flowDeltas = isN1 ? n1Diagram?.flow_deltas : isAction ? actionDiagram?.flow_deltas : null;
+                const reactiveDeltas = isN1 ? n1Diagram?.reactive_flow_deltas : isAction ? actionDiagram?.reactive_flow_deltas : null;
+                const assetDeltas = isN1 ? n1Diagram?.asset_deltas : isAction ? actionDiagram?.asset_deltas : null;
 
-                if (!deltas) return;
+                if (!flowDeltas && !assetDeltas) return;
 
                 // Build equipmentId → svgId map from SLD metadata feederNodes
                 const equipIdToSvgId = new Map();
@@ -1533,22 +1534,34 @@
                 const elMap = new Map();
                 container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
-                for (const [lineId, delta] of Object.entries(deltas)) {
-                    const cls = `sld-delta-${delta.category}`;
+                const fmtDelta = v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
 
-                    // Primary: metadata lookup; fallback: substring search
+                const applyTextDelta = (label, val) => {
+                    if (!label.hasAttribute('data-original-text')) {
+                        label.setAttribute('data-original-text', label.textContent || '');
+                    }
+                    label.textContent = `\u0394 ${val}`;
+                };
+
+                const replaceFirstNumericLabel = (labels, val) => {
+                    for (const label of Array.from(labels)) {
+                        if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                            applyTextDelta(label, val);
+                            return;
+                        }
+                    }
+                };
+
+                const findCellEl = (equipId) => {
                     let feederEl = null;
-                    const svgId = equipIdToSvgId.get(lineId);
+                    const svgId = equipIdToSvgId.get(equipId);
                     if (svgId) feederEl = elMap.get(svgId);
                     if (!feederEl) {
                         for (const [eid, el] of elMap) {
-                            if (eid.includes(lineId)) { feederEl = el; break; }
+                            if (eid.includes(equipId)) { feederEl = el; break; }
                         }
                     }
-                    if (!feederEl) continue;
-
-                    // Walk up to the cell group (sld-extern-cell / sld-intern-cell) which
-                    // contains both the feeder symbol AND the connecting wire.
+                    if (!feederEl) return null;
                     let cellEl = feederEl;
                     let cur = feederEl.parentElement;
                     while (cur && cur !== container) {
@@ -1560,23 +1573,79 @@
                         }
                         cur = cur.parentElement;
                     }
-                    cellEl.classList.add(cls);
+                    return cellEl;
+                };
 
-                    // Replace active-power label with delta value
-                    const deltaStr = delta.delta >= 0 ? `+${delta.delta.toFixed(1)}` : delta.delta.toFixed(1);
-                    let labels = cellEl.querySelectorAll('.sld-active-power .sld-label');
-                    if (labels.length === 0) labels = cellEl.querySelectorAll('.sld-label');
-                    labels.forEach(label => {
-                        const text = (label.textContent || '').trim();
-                        if (/^-?\d+(\.\d+)?$/.test(text)) {
-                            if (!label.hasAttribute('data-original-text')) {
-                                label.setAttribute('data-original-text', label.textContent || '');
+                // --- Branch (line/transformer) deltas ---
+                for (const [equipId, delta] of Object.entries(flowDeltas ?? {})) {
+                    const cellEl = findCellEl(equipId);
+                    if (!cellEl) continue;
+
+                    cellEl.classList.add(`sld-delta-${delta.category}`);
+
+                    // Active power label (P)
+                    const pStr = fmtDelta(delta.delta);
+                    let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+                    if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+                    replaceFirstNumericLabel(pLabels, pStr);
+
+                    // Reactive power label (Q)
+                    const qDelta = reactiveDeltas?.[equipId];
+                    if (qDelta !== undefined) {
+                        const qStr = fmtDelta(qDelta.delta);
+                        let qLabels = cellEl.querySelectorAll('.sld-reactive-power .sld-label');
+                        if (qLabels.length > 0) {
+                            replaceFirstNumericLabel(qLabels, qStr);
+                        } else {
+                            // Fallback: replace the second distinct numeric label
+                            const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
+                            let replaced = 0;
+                            for (const label of allLabels) {
+                                if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                                    if (replaced === 0) { replaced++; continue; }
+                                    applyTextDelta(label, qStr);
+                                    break;
+                                }
                             }
-                            label.textContent = `\u0394 ${deltaStr}`;
                         }
-                    });
+                    }
                 }
-            }, [vlOverlay?.svg, vlOverlay?.sldMetadata, vlOverlay?.tab, actionViewMode, n1Diagram?.flow_deltas, actionDiagram?.flow_deltas]);
+
+                // --- Asset (load/generator) deltas ---
+                for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
+                    if (flowDeltas && equipId in flowDeltas) continue;
+
+                    const cellEl = findCellEl(equipId);
+                    if (!cellEl) continue;
+
+                    cellEl.classList.add(`sld-delta-${assetDelta.category}`);
+
+                    const pStr = fmtDelta(assetDelta.delta_p);
+                    const qStr = fmtDelta(assetDelta.delta_q);
+
+                    let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+                    if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+                    replaceFirstNumericLabel(pLabels, pStr);
+
+                    let qLabels = cellEl.querySelectorAll('.sld-reactive-power .sld-label');
+                    if (qLabels.length > 0) {
+                        replaceFirstNumericLabel(qLabels, qStr);
+                    } else {
+                        const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
+                        let replaced = 0;
+                        for (const label of allLabels) {
+                            if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
+                                if (replaced === 0) { replaced++; continue; }
+                                applyTextDelta(label, qStr);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }, [vlOverlay?.svg, vlOverlay?.sldMetadata, vlOverlay?.tab, actionViewMode,
+                n1Diagram?.flow_deltas, actionDiagram?.flow_deltas,
+                n1Diagram?.reactive_flow_deltas, actionDiagram?.reactive_flow_deltas,
+                n1Diagram?.asset_deltas, actionDiagram?.asset_deltas]);
 
             // Mouse pan inside overlay body
             const startOverlayPan = (e) => {
