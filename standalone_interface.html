@@ -1597,16 +1597,9 @@
                         if (qLabels.length > 0) {
                             replaceFirstNumericLabel(qLabels, qStr);
                         } else {
-                            // Fallback: replace the second distinct numeric label
-                            const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
-                            let replaced = 0;
-                            for (const label of allLabels) {
-                                if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
-                                    if (replaced === 0) { replaced++; continue; }
-                                    applyTextDelta(label, qStr);
-                                    break;
-                                }
-                            }
+                            // Fallback: P label already replaced (no longer numeric),
+                            // so first remaining numeric IS the Q label.
+                            replaceFirstNumericLabel(cellEl.querySelectorAll('.sld-label'), qStr);
                         }
                     }
                 }
@@ -1631,15 +1624,7 @@
                     if (qLabels.length > 0) {
                         replaceFirstNumericLabel(qLabels, qStr);
                     } else {
-                        const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
-                        let replaced = 0;
-                        for (const label of allLabels) {
-                            if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
-                                if (replaced === 0) { replaced++; continue; }
-                                applyTextDelta(label, qStr);
-                                break;
-                            }
-                        }
+                        replaceFirstNumericLabel(cellEl.querySelectorAll('.sld-label'), qStr);
                     }
                 }
             }, [vlOverlay?.svg, vlOverlay?.sldMetadata, vlOverlay?.tab, actionViewMode,

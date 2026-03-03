@@ -708,41 +708,68 @@ class RecommenderService:
 
         return flows
 
-    def _compute_branch_deltas(self, after_vals1, after_vals2, before_vals1, before_vals2):
-        """Compute per-branch delta for a single quantity (P or Q).
+    @staticmethod
+    def _branch_delta(a1, a2, b1, b2):
+        """Compute the delta for a single branch between after (a) and before (b) states.
 
-        Uses the entering-terminal alignment logic: the delta is computed
-        at the terminal where the *active power* enters (largest P value).
-        For reactive power the same terminal choice is used so that
-        the arrow direction stays consistent with the active-power arrow.
+        pypowsybl sign convention: positive value at a terminal means power
+        *enters* the branch from that side.  On a given branch exactly one
+        terminal is positive (entering) and the other negative (leaving),
+        with a small difference due to losses.
 
-        Returns raw {line_id: delta_value} dict (no threshold/category yet).
+        Algorithm:
+        1.  Pick a **reference direction** — the entering terminal of whichever
+            state has the larger absolute flow (so the direction is well-defined
+            even when one state is near-zero).  If magnitudes are equal, prefer
+            the 'after' state.
+        2.  Read the **magnitude** at the reference terminal in both states.
+            Magnitude is always the absolute value of the flow at that terminal.
+            If the sign at the reference terminal flipped between states, the
+            flow reversed — magnitude in the reversed state is taken as negative
+            (it now opposes the reference direction).
+        3.  delta = after_magnitude − before_magnitude.
+            positive → flow increased in the reference direction.
+            negative → flow decreased.
         """
-        all_ids = set(after_vals1.keys()) | set(before_vals1.keys())
-        deltas = {}
-        for lid in all_ids:
-            a1 = after_vals1.get(lid, 0.0)
-            a2 = after_vals2.get(lid, 0.0)
-            b1 = before_vals1.get(lid, 0.0)
-            b2 = before_vals2.get(lid, 0.0)
+        # Magnitudes: use the entering terminal (the positive one)
+        after_mag = max(abs(a1), abs(a2))
+        before_mag = max(abs(b1), abs(b2))
 
-            if a1 >= a2:
-                after_idx, after_val = 1, a1
+        # Choose reference direction from the stronger state
+        if before_mag > after_mag:
+            # Reference = before entering terminal
+            ref_terminal_val_before = b1 if abs(b1) >= abs(b2) else b2
+            # Same terminal in after state
+            ref_terminal_val_after = a1 if abs(b1) >= abs(b2) else a2
+        else:
+            # Reference = after entering terminal
+            ref_terminal_val_after = a1 if abs(a1) >= abs(a2) else a2
+            # Same terminal in before state
+            ref_terminal_val_before = b1 if abs(a1) >= abs(a2) else b2
+
+        # Magnitude at the reference terminal, accounting for direction reversal.
+        # If the sign matches the reference direction → positive magnitude.
+        # If the sign opposes it → the flow reversed, magnitude counts as negative.
+        def signed_mag(val, ref_val):
+            mag = abs(val)
+            # Same sign as the reference direction → flow in same direction
+            if (val >= 0) == (ref_val >= 0):
+                return mag
             else:
-                after_idx, after_val = 2, a2
+                return -mag
 
-            if b1 >= b2:
-                before_idx, before_val = 1, b1
-            else:
-                before_idx, before_val = 2, b2
+        # ref_terminal_val_after defines the positive direction for after state
+        # ref_terminal_val_before defines the positive direction for before state
+        # But we need a single reference.  Use the reference state's terminal.
+        if before_mag > after_mag:
+            ref_sign = ref_terminal_val_before
+        else:
+            ref_sign = ref_terminal_val_after
 
-            if after_idx != before_idx and before_val > after_val:
-                delta = (a1 - b1) if before_idx == 1 else (a2 - b2)
-            else:
-                delta = (a1 - b1) if after_idx == 1 else (a2 - b2)
+        a_signed = signed_mag(ref_terminal_val_after, ref_sign)
+        b_signed = signed_mag(ref_terminal_val_before, ref_sign)
 
-            deltas[lid] = delta
-        return deltas
+        return a_signed - b_signed
 
     @staticmethod
     def _apply_threshold(deltas):
@@ -774,47 +801,26 @@ class RecommenderService:
             flow_deltas:          {line_id: {delta, category}}   (active power P)
             reactive_flow_deltas: {line_id: {delta, category}}   (reactive power Q)
         """
-        # Active power deltas — terminal alignment based on P
-        p_raw = self._compute_branch_deltas(
-            after_flows["p1"], after_flows["p2"],
-            before_flows["p1"], before_flows["p2"],
-        )
-
-        # Reactive power deltas — use the *same* terminal choice as P
-        # so that the arrow direction is consistent with the active-power arrow.
-        # We reuse the P-based entering-terminal logic by passing Q values
-        # through the same alignment but driven by P terminal choice.
-        aq1, aq2 = after_flows["q1"], after_flows["q2"]
-        bq1, bq2 = before_flows["q1"], before_flows["q2"]
         ap1, ap2 = after_flows["p1"], after_flows["p2"]
         bp1, bp2 = before_flows["p1"], before_flows["p2"]
+        aq1, aq2 = after_flows["q1"], after_flows["q2"]
+        bq1, bq2 = before_flows["q1"], before_flows["q2"]
 
-        all_ids = set(aq1.keys()) | set(bq1.keys())
+        all_ids = set(ap1.keys()) | set(bp1.keys())
+        p_raw = {}
         q_raw = {}
+
         for lid in all_ids:
-            # Determine entering terminal from P (same logic as _compute_branch_deltas)
-            cur_ap1 = ap1.get(lid, 0.0)
-            cur_ap2 = ap2.get(lid, 0.0)
-            cur_bp1 = bp1.get(lid, 0.0)
-            cur_bp2 = bp2.get(lid, 0.0)
-
-            if cur_ap1 >= cur_ap2:
-                after_idx, after_val = 1, cur_ap1
-            else:
-                after_idx, after_val = 2, cur_ap2
-            if cur_bp1 >= cur_bp2:
-                before_idx, before_val = 1, cur_bp1
-            else:
-                before_idx, before_val = 2, cur_bp2
-
-            if after_idx != before_idx and before_val > after_val:
-                use_idx = before_idx
-            else:
-                use_idx = after_idx
-
-            a_q = aq1.get(lid, 0.0) if use_idx == 1 else aq2.get(lid, 0.0)
-            b_q = bq1.get(lid, 0.0) if use_idx == 1 else bq2.get(lid, 0.0)
-            q_raw[lid] = a_q - b_q
+            # Active power delta
+            p_raw[lid] = self._branch_delta(
+                ap1.get(lid, 0.0), ap2.get(lid, 0.0),
+                bp1.get(lid, 0.0), bp2.get(lid, 0.0),
+            )
+            # Reactive power delta (independent direction from P)
+            q_raw[lid] = self._branch_delta(
+                aq1.get(lid, 0.0), aq2.get(lid, 0.0),
+                bq1.get(lid, 0.0), bq2.get(lid, 0.0),
+            )
 
         return {
             "flow_deltas": self._apply_threshold(p_raw),

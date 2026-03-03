@@ -13,6 +13,49 @@ def _make_flows(p1, p2, q1=None, q2=None):
     return {"p1": p1, "p2": p2, "q1": q1, "q2": q2}
 
 
+class TestBranchDelta:
+    """Tests for the low-level _branch_delta static method."""
+
+    def test_same_direction_increase(self):
+        """Flow enters at terminal 1 in both states, magnitude increases."""
+        # before: 100 enters at t1, ~100 leaves at t2
+        # after:  150 enters at t1, ~150 leaves at t2
+        delta = RecommenderService._branch_delta(150, -148, 100, -98)
+        assert delta == pytest.approx(50.0)
+
+    def test_same_direction_decrease(self):
+        """Flow enters at terminal 1 in both states, magnitude decreases."""
+        delta = RecommenderService._branch_delta(50, -48, 100, -98)
+        assert delta == pytest.approx(-50.0)
+
+    def test_same_direction_entering_t2(self):
+        """Flow enters at terminal 2 in both states."""
+        # before: -50 at t1 (leaving), 55 at t2 (entering) → mag 55
+        # after:  -80 at t1 (leaving), 85 at t2 (entering) → mag 85
+        delta = RecommenderService._branch_delta(-80, 85, -50, 55)
+        assert delta == pytest.approx(30.0)
+
+    def test_direction_reversal(self):
+        """Flow reverses direction between states."""
+        # before: 100 at t1 (entering), -98 at t2 → mag 100
+        # after:  -80 at t1 (leaving), 85 at t2 (entering) → mag 85
+        # Reference = before (stronger, mag 100) at t1 positive.
+        # In after: t1 = -80, sign flipped → after signed_mag = -80
+        # delta = -80 - 100 = -180
+        delta = RecommenderService._branch_delta(-80, 85, 100, -98)
+        assert delta == pytest.approx(-180.0)
+
+    def test_identical_zero_delta(self):
+        """Identical flows → zero delta."""
+        delta = RecommenderService._branch_delta(100, -98, 100, -98)
+        assert delta == pytest.approx(0.0)
+
+    def test_both_zero(self):
+        """Both states zero flow."""
+        delta = RecommenderService._branch_delta(0, 0, 0, 0)
+        assert delta == pytest.approx(0.0)
+
+
 class TestComputeDeltas:
     """Tests for flow delta computation between two network states."""
 
@@ -23,27 +66,24 @@ class TestComputeDeltas:
         """When before and after flows are identical, all deltas should be zero."""
         flows = _make_flows(
             p1={"LINE_A": 100.0, "LINE_B": 200.0},
-            p2={"LINE_A": -95.0, "LINE_B": -190.0},
+            p2={"LINE_A": -98.0, "LINE_B": -195.0},
         )
         result = self.service._compute_deltas(flows, flows)
         for line_id, info in result["flow_deltas"].items():
             assert info["delta"] == 0.0
-            # When all deltas are 0, threshold = 0*0.05 = 0, and abs(0) < 0 is False,
-            # so 0 is categorized as "negative" (since 0 > 0 is also False).
-            assert info["category"] in ("grey", "negative")
 
     def test_positive_delta(self):
         """Increased flow should be categorized as positive."""
-        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0})
-        after = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0})
+        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0})
+        after = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["LINE_A"]["delta"] == 100.0
         assert result["LINE_A"]["category"] == "positive"
 
     def test_negative_delta(self):
         """Decreased flow should be categorized as negative."""
-        before = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0})
-        after = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0})
+        before = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0})
+        after = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["LINE_A"]["delta"] == -100.0
         assert result["LINE_A"]["category"] == "negative"
@@ -52,17 +92,14 @@ class TestComputeDeltas:
         """Deltas below 5% of max are categorized as grey."""
         before = _make_flows(
             p1={"LINE_A": 100.0, "LINE_B": 100.0},
-            p2={"LINE_A": -95.0, "LINE_B": -95.0},
+            p2={"LINE_A": -98.0, "LINE_B": -98.0},
         )
-        # LINE_A has large delta, LINE_B has tiny delta
         after = _make_flows(
             p1={"LINE_A": 200.0, "LINE_B": 101.0},
-            p2={"LINE_A": -195.0, "LINE_B": -96.0},
+            p2={"LINE_A": -198.0, "LINE_B": -99.0},
         )
         result = self.service._compute_deltas(after, before)["flow_deltas"]
-        # LINE_A: delta=100.0, threshold = 100*0.05 = 5.0
         assert result["LINE_A"]["category"] == "positive"
-        # LINE_B: delta=1.0 < 5.0 threshold
         assert result["LINE_B"]["category"] == "grey"
 
     def test_empty_flows(self):
@@ -90,50 +127,31 @@ class TestComputeDeltas:
 
     def test_delta_rounding(self):
         """Deltas should be rounded to 1 decimal place."""
-        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0})
-        after = _make_flows(p1={"LINE_A": 133.333}, p2={"LINE_A": -130.0})
+        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0})
+        after = _make_flows(p1={"LINE_A": 133.333}, p2={"LINE_A": -131.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
-        # delta = 133.333 - 100.0 = 33.333 -> rounded to 33.3
         assert result["LINE_A"]["delta"] == 33.3
 
     def test_multiple_lines(self):
         """Test with multiple lines having varying deltas."""
         before = _make_flows(
             p1={"L1": 100.0, "L2": 200.0, "L3": 50.0},
-            p2={"L1": -95.0, "L2": -195.0, "L3": -48.0},
+            p2={"L1": -98.0, "L2": -198.0, "L3": -48.0},
         )
         after = _make_flows(
             p1={"L1": 150.0, "L2": 180.0, "L3": 51.0},
-            p2={"L1": -145.0, "L2": -175.0, "L3": -49.0},
+            p2={"L1": -148.0, "L2": -178.0, "L3": -49.0},
         )
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert len(result) == 3
-        # L1 has biggest positive delta (50), L2 has negative delta (-20)
         assert result["L1"]["category"] == "positive"
         assert result["L2"]["category"] == "negative"
-        # L3 has delta=1.0, threshold = 50*0.05 = 2.5 → grey
         assert result["L3"]["category"] == "grey"
-
-    def test_flow_direction_uses_p2_when_p2_larger(self):
-        """When p2 is the entering terminal (p2 > p1), delta uses p2."""
-        before = _make_flows(
-            p1={"LINE_A": -50.0},
-            p2={"LINE_A": 55.0},
-        )
-        after = _make_flows(
-            p1={"LINE_A": -80.0},
-            p2={"LINE_A": 85.0},
-        )
-        result = self.service._compute_deltas(after, before)["flow_deltas"]
-        # after: p2 > p1, so after_idx=2, after_val=85
-        # before: p2 > p1, so before_idx=2, before_val=55
-        # Same direction → delta = 85 - 55 = 30
-        assert result["LINE_A"]["delta"] == 30.0
 
     def test_single_line_always_has_category(self):
         """With a single line, even significant deltas have a valid category."""
-        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0})
-        after = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0})
+        before = _make_flows(p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0})
+        after = _make_flows(p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["LINE_A"]["category"] in ("positive", "negative", "grey")
 
@@ -142,40 +160,40 @@ class TestComputeDeltas:
     def test_reactive_deltas_returned(self):
         """_compute_deltas should return reactive_flow_deltas alongside flow_deltas."""
         before = _make_flows(
-            p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0},
+            p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0},
             q1={"LINE_A": 10.0}, q2={"LINE_A": -8.0},
         )
         after = _make_flows(
-            p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0},
+            p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0},
             q1={"LINE_A": 30.0}, q2={"LINE_A": -28.0},
         )
         result = self.service._compute_deltas(after, before)
         assert "reactive_flow_deltas" in result
         assert "LINE_A" in result["reactive_flow_deltas"]
 
-    def test_reactive_delta_uses_p_terminal_alignment(self):
-        """Q delta should use the same entering terminal as P (determined by P values)."""
+    def test_reactive_delta_magnitude_based(self):
+        """Q delta uses absolute magnitude logic."""
         before = _make_flows(
-            p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0},
+            p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0},
             q1={"LINE_A": 10.0}, q2={"LINE_A": -8.0},
         )
         after = _make_flows(
-            p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0},
+            p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0},
             q1={"LINE_A": 30.0}, q2={"LINE_A": -28.0},
         )
         result = self.service._compute_deltas(after, before)
-        # P entering terminal is p1 (100 > -95 and 200 > -195), same direction
-        # So Q delta uses q1: 30 - 10 = 20
+        # Q entering at t1 in both states (10 > |-8|, 30 > |-28|)
+        # delta = 30 - 10 = 20
         assert result["reactive_flow_deltas"]["LINE_A"]["delta"] == 20.0
 
     def test_reactive_zero_when_q_unchanged(self):
         """When Q values don't change, reactive delta should be zero."""
         before = _make_flows(
-            p1={"LINE_A": 100.0}, p2={"LINE_A": -95.0},
+            p1={"LINE_A": 100.0}, p2={"LINE_A": -98.0},
             q1={"LINE_A": 10.0}, q2={"LINE_A": -8.0},
         )
         after = _make_flows(
-            p1={"LINE_A": 200.0}, p2={"LINE_A": -195.0},
+            p1={"LINE_A": 200.0}, p2={"LINE_A": -198.0},
             q1={"LINE_A": 10.0}, q2={"LINE_A": -8.0},
         )
         result = self.service._compute_deltas(after, before)
@@ -208,7 +226,6 @@ class TestComputeAssetDeltas:
         before = {"GEN_A": {"p": 100.0, "q": 20.0}}
         after = {"GEN_A": {"p": 100.0, "q": 50.0}}
         result = self.service._compute_asset_deltas(after, before)
-        # P unchanged → grey (below threshold since max_abs_p = 0)
         assert result["GEN_A"]["delta_q"] == 30.0
         assert result["GEN_A"]["category"] in ("grey", "negative")
 

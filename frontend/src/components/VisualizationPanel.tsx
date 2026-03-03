@@ -178,16 +178,9 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                 if (qLabels.length > 0) {
                     replaceFirstNumericLabel(qLabels, qStr);
                 } else {
-                    // Fallback: replace the second distinct numeric label in the cell
-                    const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
-                    let replaced = 0;
-                    for (const label of allLabels) {
-                        if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
-                            if (replaced === 0) { replaced++; continue; } // skip the P label
-                            applyTextDelta(label, qStr);
-                            break;
-                        }
-                    }
+                    // Fallback: the P label has already been replaced (no longer
+                    // numeric), so the first remaining numeric label IS the Q label.
+                    replaceFirstNumericLabel(cellEl.querySelectorAll('.sld-label'), qStr);
                 }
             }
         }
@@ -209,19 +202,12 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
             replaceFirstNumericLabel(pLabels, pStr);
 
+            // Q label: after P replacement, first remaining numeric IS the Q
             let qLabels = cellEl.querySelectorAll('.sld-reactive-power .sld-label');
             if (qLabels.length > 0) {
                 replaceFirstNumericLabel(qLabels, qStr);
             } else {
-                const allLabels = Array.from(cellEl.querySelectorAll('.sld-label'));
-                let replaced = 0;
-                for (const label of allLabels) {
-                    if (/^-?\d+(\.\d+)?$/.test((label.textContent || '').trim())) {
-                        if (replaced === 0) { replaced++; continue; }
-                        applyTextDelta(label, qStr);
-                        break;
-                    }
-                }
+                replaceFirstNumericLabel(cellEl.querySelectorAll('.sld-label'), qStr);
             }
         }
     }, [vlOverlay.svg, vlOverlay.sldMetadata, vlOverlay.tab, actionViewMode,
