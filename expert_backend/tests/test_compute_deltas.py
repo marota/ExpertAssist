@@ -1,4 +1,4 @@
-"""Tests for RecommenderService._compute_deltas flow delta computation."""
+"""Tests for RecommenderService._direction_aware_delta and _compute_deltas."""
 
 import pytest
 from expert_backend.services.recommender_service import RecommenderService
@@ -17,32 +17,78 @@ def _make_flows(p1, p2, q1=None, q2=None, vl1=None, vl2=None):
     return {"p1": p1, "p2": p2, "q1": q1, "q2": q2, "vl1": vl1, "vl2": vl2}
 
 
-class TestPickReferenceTerminal:
-    """Tests for _pick_reference_terminal."""
+class TestDirectionAwareDelta:
+    """Tests for _direction_aware_delta static method.
 
-    def test_after_stronger_t1(self):
-        """After state stronger, entering at terminal 1."""
-        assert RecommenderService._pick_reference_terminal(150, -148, 100, -98) is True
+    Convention: positive value = power enters at that terminal.
+    The entering terminal has the larger absolute value.
+    """
 
-    def test_after_stronger_t2(self):
-        """After state stronger, entering at terminal 2."""
-        assert RecommenderService._pick_reference_terminal(-80, 85, -50, 55) is False
+    def test_same_direction_increased(self):
+        """After stronger, same direction → positive delta, no flip."""
+        # before: 100 enters t1; after: 200 enters t1
+        delta, flip = RecommenderService._direction_aware_delta(200, -198, 100, -98)
+        assert delta == pytest.approx(100.0)
+        assert flip is False
 
-    def test_before_stronger_t1(self):
-        """Before state stronger, entering at terminal 1."""
-        assert RecommenderService._pick_reference_terminal(50, -48, 100, -98) is True
+    def test_same_direction_decreased(self):
+        """After weaker, same direction → negative delta, no flip."""
+        # before: 200 enters t1; after: 100 enters t1
+        delta, flip = RecommenderService._direction_aware_delta(100, -98, 200, -198)
+        assert delta == pytest.approx(-100.0)
+        assert flip is False
 
-    def test_before_stronger_t2(self):
-        """Before state stronger, entering at terminal 2."""
-        assert RecommenderService._pick_reference_terminal(-30, 35, -80, 85) is False
+    def test_same_direction_entering_t2(self):
+        """Both states enter at t2 → positive delta when after is stronger."""
+        # before: 55 enters t2; after: 85 enters t2
+        delta, flip = RecommenderService._direction_aware_delta(-80, 85, -50, 55)
+        assert delta == pytest.approx(30.0)
+        assert flip is False
 
-    def test_equal_magnitude_prefers_after(self):
-        """Equal magnitude → prefer after state."""
-        assert RecommenderService._pick_reference_terminal(100, -98, 100, -98) is True
+    def test_direction_reversal_before_stronger(self):
+        """Direction reverses, before is stronger → negative delta, flip=True."""
+        # before: 100 enters t1 (mag=100); after: 85 enters t2 (mag=85)
+        # ref = before (stronger, enters t1)
+        # a_signed = -85 (opposite to ref dir), b_signed = +100
+        # delta = -85 - 100 = -185
+        delta, flip = RecommenderService._direction_aware_delta(-80, 85, 100, -98)
+        assert delta == pytest.approx(-185.0)
+        assert flip is True
+
+    def test_direction_reversal_after_stronger(self):
+        """Direction reverses, after is stronger → no flip."""
+        # before: 50 enters t1; after: 80 enters t2 (reversed, stronger)
+        # ref = after (stronger, enters t2)
+        # a_signed = +85, b_signed = -50 (opposite to ref dir)
+        # delta = 85 - (-50) = 135
+        delta, flip = RecommenderService._direction_aware_delta(-80, 85, 50, -48)
+        assert delta == pytest.approx(135.0)
+        assert flip is False
+
+    def test_equal_magnitude_no_flip(self):
+        """Equal magnitude, same direction → zero delta, no flip."""
+        delta, flip = RecommenderService._direction_aware_delta(100, -98, 100, -98)
+        assert delta == pytest.approx(0.0)
+        assert flip is False
 
     def test_both_zero(self):
-        """Both states zero → terminal 1 (abs(0) >= abs(0))."""
-        assert RecommenderService._pick_reference_terminal(0, 0, 0, 0) is True
+        """Both states zero → zero delta, no flip."""
+        delta, flip = RecommenderService._direction_aware_delta(0, 0, 0, 0)
+        assert delta == pytest.approx(0.0)
+        assert flip is False
+
+    def test_one_state_zero(self):
+        """One state is zero (line absent) → delta = magnitude of the other."""
+        # after has flow, before is zero
+        delta, flip = RecommenderService._direction_aware_delta(50, -48, 0, 0)
+        assert delta == pytest.approx(50.0)
+        assert flip is False
+
+    def test_one_state_zero_reversed(self):
+        """Before has flow, after is zero → negative delta."""
+        delta, flip = RecommenderService._direction_aware_delta(0, 0, 50, -48)
+        assert delta == pytest.approx(-50.0)
+        assert flip is False
 
 
 class TestComputeDeltas:
@@ -60,8 +106,7 @@ class TestComputeDeltas:
         result = self.service._compute_deltas(flows, flows)
         for info in result["flow_deltas"].values():
             assert info["delta"] == 0.0
-            assert info["delta_t1"] == 0.0
-            assert info["delta_t2"] == 0.0
+            assert info["flip_arrow"] is False
 
     def test_positive_delta_same_direction(self):
         """Increased flow (same direction) → positive delta, no arrow flip."""
@@ -69,10 +114,7 @@ class TestComputeDeltas:
         after = _make_flows(p1={"L": 200.0}, p2={"L": -198.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["L"]["delta"] == 100.0
-        assert result["L"]["delta_t1"] == 100.0
-        assert result["L"]["delta_t2"] == -100.0
         assert result["L"]["category"] == "positive"
-        # Same direction → no flip
         assert result["L"]["flip_arrow"] is False
 
     def test_negative_delta_same_direction(self):
@@ -81,10 +123,7 @@ class TestComputeDeltas:
         after = _make_flows(p1={"L": 100.0}, p2={"L": -98.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["L"]["delta"] == -100.0
-        assert result["L"]["delta_t1"] == -100.0
-        assert result["L"]["delta_t2"] == 100.0
         assert result["L"]["category"] == "negative"
-        # Same direction, before is stronger BUT direction didn't reverse → no flip
         assert result["L"]["flip_arrow"] is False
 
     def test_direction_reversal(self):
@@ -93,21 +132,11 @@ class TestComputeDeltas:
         before = _make_flows(p1={"L": 100.0}, p2={"L": -98.0})
         after = _make_flows(p1={"L": -80.0}, p2={"L": 85.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
-        # Reference = before (stronger, t1). delta = -80 - 100 = -180
-        assert result["L"]["delta"] == -180.0
-        assert result["L"]["delta_t1"] == -180.0
-        assert result["L"]["delta_t2"] == 183.0  # 85 - (-98)
-        # Before is stronger AND direction reversed → flip_arrow = True
+        # Reference = before (stronger, t1). delta = -85 - 100 = -185
+        # a_mag = 85, b_mag = 100; ref = before (enters t1)
+        # a_signed = -85 (enters t2, opposite ref), b_signed = +100
+        assert result["L"]["delta"] == -185.0
         assert result["L"]["flip_arrow"] is True
-
-    def test_direction_reversal_after_stronger_no_flip(self):
-        """When after is stronger and direction reversed, no flip needed
-        (SVG shows the stronger state's direction already)."""
-        before = _make_flows(p1={"L": 50.0}, p2={"L": -48.0})
-        after = _make_flows(p1={"L": -100.0}, p2={"L": 105.0})
-        result = self.service._compute_deltas(after, before)["flow_deltas"]
-        # After is stronger → reference is after → SVG already correct
-        assert result["L"]["flip_arrow"] is False
 
     def test_small_delta_below_threshold_is_grey(self):
         """Deltas below 5% of max are categorized as grey."""
@@ -148,50 +177,20 @@ class TestComputeDeltas:
         result = self.service._compute_deltas(after, before)["flow_deltas"]
         assert result["L"]["delta"] == 33.3
 
-    def test_vl_mapping_present(self):
-        """VL IDs should be included in the delta output."""
-        before = _make_flows(
-            p1={"L": 100.0}, p2={"L": -98.0},
-            vl1={"L": "COUCHP6"}, vl2={"L": "PYMONP3"},
-        )
-        after = _make_flows(
-            p1={"L": 200.0}, p2={"L": -198.0},
-            vl1={"L": "COUCHP6"}, vl2={"L": "PYMONP3"},
-        )
+    def test_output_has_flip_arrow(self):
+        """Output should include flip_arrow boolean."""
+        before = _make_flows(p1={"L": 100.0}, p2={"L": -98.0})
+        after = _make_flows(p1={"L": 200.0}, p2={"L": -198.0})
         result = self.service._compute_deltas(after, before)["flow_deltas"]
-        assert result["L"]["vl1"] == "COUCHP6"
-        assert result["L"]["vl2"] == "PYMONP3"
-
-    def test_terminal_deltas_differ(self):
-        """delta_t1 and delta_t2 should be different (opposite sign, different magnitude due to losses)."""
-        before = _make_flows(
-            p1={"L": 100.0}, p2={"L": -95.0},  # 5 MW losses
-            q1={"L": 10.0}, q2={"L": -3.0},     # 7 MVar reactive losses
-        )
-        after = _make_flows(
-            p1={"L": 150.0}, p2={"L": -140.0},  # 10 MW losses
-            q1={"L": 20.0}, q2={"L": -2.0},     # 18 MVar reactive losses
-        )
-        fd = self.service._compute_deltas(after, before)["flow_deltas"]
-        # At t1: 150 - 100 = 50
-        assert fd["L"]["delta_t1"] == 50.0
-        # At t2: -140 - (-95) = -45
-        assert fd["L"]["delta_t2"] == -45.0
-        # Reference terminal = after t1 (stronger): delta = 50
-        assert fd["L"]["delta"] == 50.0
-
-        rd = self.service._compute_deltas(after, before)["reactive_flow_deltas"]
-        # Q at t1: 20 - 10 = 10
-        assert rd["L"]["delta_t1"] == 10.0
-        # Q at t2: -2 - (-3) = 1
-        assert rd["L"]["delta_t2"] == 1.0
+        assert "flip_arrow" in result["L"]
+        assert isinstance(result["L"]["flip_arrow"], bool)
 
     # --- Reactive power delta tests ---
 
-    def test_reactive_uses_same_terminal_as_p(self):
-        """Q reference delta should be computed at the same terminal as P."""
+    def test_reactive_independent_from_p(self):
+        """Q delta should be computed with its own reference direction, independent of P."""
         # P enters at t1 in both states (t1 > t2). Reference = after (stronger).
-        # Q at t1: after=30, before=10 → delta = 20
+        # Q at t1: after=30, before=10 → same direction, Q delta = 20
         before = _make_flows(
             p1={"L": 100.0}, p2={"L": -98.0},
             q1={"L": 10.0}, q2={"L": -8.0},
@@ -203,10 +202,8 @@ class TestComputeDeltas:
         result = self.service._compute_deltas(after, before)
         assert result["reactive_flow_deltas"]["L"]["delta"] == 20.0
 
-    def test_reactive_at_t2_when_p_enters_t2(self):
-        """When P enters at t2, Q reference delta should also use t2."""
-        # P enters at t2 in both states (p2 > p1).
-        # Q at t2: after=15, before=10 → delta = 5
+    def test_reactive_entering_t2(self):
+        """When Q enters at t2 in both states, delta uses t2 reference."""
         before = _make_flows(
             p1={"L": -50.0}, p2={"L": 55.0},
             q1={"L": -8.0}, q2={"L": 10.0},
@@ -216,28 +213,10 @@ class TestComputeDeltas:
             q1={"L": -10.0}, q2={"L": 15.0},
         )
         result = self.service._compute_deltas(after, before)
-        # P at t2: 85 - 55 = 30
+        # P: both enter t2, after stronger → delta = 85 - 55 = 30
         assert result["flow_deltas"]["L"]["delta"] == 30.0
-        # Q at t2: 15 - 10 = 5
+        # Q: both enter t2, after stronger → delta = 15 - 10 = 5
         assert result["reactive_flow_deltas"]["L"]["delta"] == 5.0
-
-    def test_reactive_both_terminals_available(self):
-        """Both terminal Q deltas should be available for SLD use."""
-        before = _make_flows(
-            p1={"L": 100.0}, p2={"L": -98.0},
-            q1={"L": 10.0}, q2={"L": -3.0},
-        )
-        after = _make_flows(
-            p1={"L": 200.0}, p2={"L": -198.0},
-            q1={"L": 19.0}, q2={"L": -12.0},
-        )
-        rd = self.service._compute_deltas(after, before)["reactive_flow_deltas"]
-        # Q at t1: 19 - 10 = 9
-        assert rd["L"]["delta_t1"] == 9.0
-        # Q at t2: -12 - (-3) = -9
-        assert rd["L"]["delta_t2"] == -9.0
-        # Reference delta = t1 (P enters t1)
-        assert rd["L"]["delta"] == 9.0
 
     def test_reactive_zero_when_q_unchanged(self):
         before = _make_flows(
@@ -250,8 +229,56 @@ class TestComputeDeltas:
         )
         result = self.service._compute_deltas(after, before)
         assert result["reactive_flow_deltas"]["L"]["delta"] == 0.0
-        assert result["reactive_flow_deltas"]["L"]["delta_t1"] == 0.0
-        assert result["reactive_flow_deltas"]["L"]["delta_t2"] == 0.0
+
+    def test_q_flip_arrow_independent_from_p(self):
+        """Q's flip_arrow should be independent from P's flip_arrow."""
+        # P: same direction both states → no flip
+        # Q: direction reverses, before stronger → flip
+        before = _make_flows(
+            p1={"L": 100.0}, p2={"L": -98.0},
+            q1={"L": 20.0}, q2={"L": -15.0},   # Q enters t1, mag=20
+        )
+        after = _make_flows(
+            p1={"L": 200.0}, p2={"L": -198.0},
+            q1={"L": -5.0}, q2={"L": 10.0},     # Q enters t2, mag=10
+        )
+        result = self.service._compute_deltas(after, before)
+        # P: same dir, after stronger → no flip
+        assert result["flow_deltas"]["L"]["flip_arrow"] is False
+        # Q: direction reversed, before stronger (20 > 10) → flip
+        assert result["reactive_flow_deltas"]["L"]["flip_arrow"] is True
+
+    def test_p_flip_q_no_flip(self):
+        """P flips but Q does not when they have independent directions."""
+        # P: direction reverses, before stronger → flip
+        # Q: same direction → no flip
+        before = _make_flows(
+            p1={"L": 200.0}, p2={"L": -198.0},  # P enters t1, mag=200
+            q1={"L": 10.0}, q2={"L": -8.0},      # Q enters t1, mag=10
+        )
+        after = _make_flows(
+            p1={"L": -100.0}, p2={"L": 105.0},   # P enters t2, mag=105
+            q1={"L": 15.0}, q2={"L": -12.0},      # Q enters t1, mag=15
+        )
+        result = self.service._compute_deltas(after, before)
+        # P: reversed, before stronger (200 > 105) → flip
+        assert result["flow_deltas"]["L"]["flip_arrow"] is True
+        # Q: same direction, after stronger → no flip
+        assert result["reactive_flow_deltas"]["L"]["flip_arrow"] is False
+
+    def test_reactive_has_flip_arrow_field(self):
+        """Reactive flow deltas should always include flip_arrow."""
+        before = _make_flows(
+            p1={"L": 100.0}, p2={"L": -98.0},
+            q1={"L": 10.0}, q2={"L": -8.0},
+        )
+        after = _make_flows(
+            p1={"L": 200.0}, p2={"L": -198.0},
+            q1={"L": 20.0}, q2={"L": -18.0},
+        )
+        result = self.service._compute_deltas(after, before)
+        assert "flip_arrow" in result["reactive_flow_deltas"]["L"]
+        assert isinstance(result["reactive_flow_deltas"]["L"]["flip_arrow"], bool)
 
 
 class TestComputeAssetDeltas:

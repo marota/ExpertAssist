@@ -132,19 +132,6 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
 
         const fmtDelta = (v: number) => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
 
-        /** Pick the terminal-specific delta for the displayed voltage level.
-         *  SLD shows values at the terminal connected to vlOverlay.vlName,
-         *  so we must use delta_t1 (if vl1 matches) or delta_t2 (if vl2 matches).
-         *  Falls back to the reference-terminal delta if VL mapping is absent. */
-        const vlName = vlOverlay.vlName;
-        const pickTerminalDelta = (d: FlowDelta): number => {
-            if (d.delta_t1 !== undefined && d.delta_t2 !== undefined && d.vl1 && d.vl2) {
-                if (d.vl1 === vlName) return d.delta_t1;
-                if (d.vl2 === vlName) return d.delta_t2;
-            }
-            return d.delta;
-        };
-
         /** Find feeder SVG element for a given equipment id, walk up to cell ancestor. */
         const findCellEl = (equipId: string): Element | null => {
             let feederEl: Element | undefined;
@@ -198,14 +185,14 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             }
         };
 
-        /** Flip arrow direction in a cell by swapping sld-in ↔ sld-out.
-         *  pypowsybl SLD SVGs use these classes to control which arrow
-         *  (.sld-arrow-in / .sld-arrow-out) is visible via CSS rules:
-         *    .sld-out .sld-arrow-in {visibility: hidden}
-         *    .sld-in  .sld-arrow-out {visibility: hidden}
-         */
-        const flipArrowsInCell = (cellEl: Element) => {
-            cellEl.querySelectorAll('.sld-in, .sld-out').forEach(el => {
+        /** Flip arrow direction within a specific power-type scope.
+         *  pypowsybl SLD SVGs use .sld-in / .sld-out classes to control
+         *  which arrow (.sld-arrow-in / .sld-arrow-out) is visible.
+         *  P and Q arrows are flipped independently by scoping to
+         *  .sld-active-power or .sld-reactive-power. */
+        const flipArrows = (cellEl: Element, scopeClass: string) => {
+            const sel = `.${scopeClass} .sld-in, .${scopeClass} .sld-out, .${scopeClass}.sld-in, .${scopeClass}.sld-out`;
+            cellEl.querySelectorAll(sel).forEach(el => {
                 if (el.hasAttribute('data-arrow-flipped')) return;
                 if (el.classList.contains('sld-in')) {
                     el.classList.replace('sld-in', 'sld-out');
@@ -241,11 +228,13 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             const branchDelta = flowDeltas?.[equipId];
             if (branchDelta) {
                 cellEl.classList.add(`sld-delta-${branchDelta.category}`);
-                const pStr = fmtDelta(pickTerminalDelta(branchDelta));
+                const pStr = fmtDelta(branchDelta.delta);
                 const qDelta = reactiveDeltas?.[equipId];
-                const qStr = qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null;
+                const qStr = qDelta !== undefined ? fmtDelta(qDelta.delta) : null;
                 applyPQLabels(cellEl, pStr, qStr);
-                if (branchDelta.flip_arrow) flipArrowsInCell(cellEl);
+                // Flip P and Q arrows independently
+                if (branchDelta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
+                if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
                 processedEquipIds.add(equipId);
                 continue;
             }
@@ -267,8 +256,9 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             if (!cellEl) continue;
             cellEl.classList.add(`sld-delta-${delta.category}`);
             const qDelta = reactiveDeltas?.[equipId];
-            applyPQLabels(cellEl, fmtDelta(pickTerminalDelta(delta)), qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null);
-            if (delta.flip_arrow) flipArrowsInCell(cellEl);
+            applyPQLabels(cellEl, fmtDelta(delta.delta), qDelta !== undefined ? fmtDelta(qDelta.delta) : null);
+            if (delta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
+            if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
         }
         for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
             if (processedEquipIds.has(equipId)) continue;

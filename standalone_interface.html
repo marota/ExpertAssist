@@ -1546,15 +1546,22 @@
 
                 const fmtDelta = v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
 
-                // Pick terminal-specific delta for the displayed VL.
-                // SLD shows values at the terminal connected to vlOverlay.vlName.
-                const currentVlName = vlOverlay.vlName;
-                const pickTerminalDelta = (d) => {
-                    if (d.delta_t1 !== undefined && d.delta_t2 !== undefined && d.vl1 && d.vl2) {
-                        if (d.vl1 === currentVlName) return d.delta_t1;
-                        if (d.vl2 === currentVlName) return d.delta_t2;
-                    }
-                    return d.delta;
+                /** Flip arrow direction within a specific power-type scope.
+                 *  pypowsybl SLD SVGs use .sld-in / .sld-out classes to control
+                 *  which arrow (.sld-arrow-in / .sld-arrow-out) is visible.
+                 *  P and Q arrows are flipped independently by scoping to
+                 *  .sld-active-power or .sld-reactive-power. */
+                const flipArrows = (cellEl, scopeClass) => {
+                    const sel = `.${scopeClass} .sld-in, .${scopeClass} .sld-out, .${scopeClass}.sld-in, .${scopeClass}.sld-out`;
+                    cellEl.querySelectorAll(sel).forEach(el => {
+                        if (el.hasAttribute('data-arrow-flipped')) return;
+                        if (el.classList.contains('sld-in')) {
+                            el.classList.replace('sld-in', 'sld-out');
+                        } else {
+                            el.classList.replace('sld-out', 'sld-in');
+                        }
+                        el.setAttribute('data-arrow-flipped', '1');
+                    });
                 };
 
                 const applyTextDelta = (label, val) => {
@@ -1614,19 +1621,6 @@
                     }
                 };
 
-                // Flip arrow direction by swapping sld-in ↔ sld-out classes
-                const flipArrowsInCell = (cellEl) => {
-                    cellEl.querySelectorAll('.sld-in, .sld-out').forEach(el => {
-                        if (el.hasAttribute('data-arrow-flipped')) return;
-                        if (el.classList.contains('sld-in')) {
-                            el.classList.replace('sld-in', 'sld-out');
-                        } else {
-                            el.classList.replace('sld-out', 'sld-in');
-                        }
-                        el.setAttribute('data-arrow-flipped', '1');
-                    });
-                };
-
                 // Iterate ALL feeders from SLD metadata so we process branches, loads,
                 // and generators — not just equipment IDs found in flow_deltas.
                 const processedEquipIds = new Set();
@@ -1650,11 +1644,13 @@
                     const branchDelta = flowDeltas?.[equipId];
                     if (branchDelta) {
                         cellEl.classList.add(`sld-delta-${branchDelta.category}`);
-                        const pStr = fmtDelta(pickTerminalDelta(branchDelta));
+                        const pStr = fmtDelta(branchDelta.delta);
                         const qDelta = reactiveDeltas?.[equipId];
-                        const qStr = qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null;
+                        const qStr = qDelta !== undefined ? fmtDelta(qDelta.delta) : null;
                         applyPQLabels(cellEl, pStr, qStr);
-                        if (branchDelta.flip_arrow) flipArrowsInCell(cellEl);
+                        // Flip P and Q arrows independently
+                        if (branchDelta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
+                        if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
                         processedEquipIds.add(equipId);
                         continue;
                     }
@@ -1674,8 +1670,9 @@
                     if (!cellEl) continue;
                     cellEl.classList.add(`sld-delta-${delta.category}`);
                     const qDelta = reactiveDeltas?.[equipId];
-                    applyPQLabels(cellEl, fmtDelta(pickTerminalDelta(delta)), qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null);
-                    if (delta.flip_arrow) flipArrowsInCell(cellEl);
+                    applyPQLabels(cellEl, fmtDelta(delta.delta), qDelta !== undefined ? fmtDelta(qDelta.delta) : null);
+                    if (delta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
+                    if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
                 }
                 for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
                     if (processedEquipIds.has(equipId)) continue;

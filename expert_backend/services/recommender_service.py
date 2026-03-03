@@ -719,25 +719,45 @@ class RecommenderService:
         return flows
 
     @staticmethod
-    def _pick_reference_terminal(a1, a2, b1, b2):
-        """Pick the entering terminal of the state with larger absolute flow.
+    def _direction_aware_delta(a_t1, a_t2, b_t1, b_t2):
+        """Compute a direction-aware flow delta using absolute magnitudes.
 
-        pypowsybl sign convention: positive value at a terminal means power
-        *enters* the branch from that side.
+        pypowsybl sign convention: positive = power *enters* at that terminal.
+        The entering terminal has the larger absolute value.
 
-        We choose the entering terminal (larger absolute value) from the
-        state with the higher overall magnitude.  This gives a stable
-        reference direction even when one state is near-zero.
+        Algorithm:
+          1. Reference state = state with stronger flow (larger magnitude)
+          2. Reference direction = entering terminal of reference state
+          3. Each state's signed value = +magnitude if same dir, -magnitude if opposite
+          4. delta = after_signed - before_signed
+          5. flip_arrow = True when before is reference AND direction reversed
 
-        Returns True for terminal 1, False for terminal 2.
+        This ensures the delta sign always matches the category colour:
+        positive (orange) = flow increased, negative (blue) = flow decreased.
+
+        Returns (delta: float, flip_arrow: bool).
         """
-        after_mag = max(abs(a1), abs(a2))
-        before_mag = max(abs(b1), abs(b2))
+        a_mag = max(abs(a_t1), abs(a_t2))
+        b_mag = max(abs(b_t1), abs(b_t2))
 
-        if before_mag > after_mag:
-            return abs(b1) >= abs(b2)
-        else:
-            return abs(a1) >= abs(a2)
+        # Entering terminal: the one with the larger absolute value
+        a_enters_t1 = abs(a_t1) >= abs(a_t2)
+        b_enters_t1 = abs(b_t1) >= abs(b_t2)
+
+        # Reference state and its direction
+        ref_is_before = b_mag > a_mag
+        ref_enters_t1 = b_enters_t1 if ref_is_before else a_enters_t1
+
+        # Signed magnitudes in the reference direction
+        a_signed = a_mag if (a_enters_t1 == ref_enters_t1) else -a_mag
+        b_signed = b_mag if (b_enters_t1 == ref_enters_t1) else -b_mag
+
+        delta = a_signed - b_signed
+
+        direction_reversed = (a_enters_t1 != b_enters_t1)
+        flip_arrow = bool(ref_is_before and direction_reversed)
+
+        return delta, flip_arrow
 
     @staticmethod
     def _apply_threshold(deltas):
@@ -765,41 +785,36 @@ class RecommenderService:
     def _compute_deltas(self, after_flows, before_flows):
         """Compute per-line active AND reactive flow deltas between two flow sets.
 
-        For the NAD (Network Area Diagram) we pick one "reference" terminal
-        (the entering terminal of the state with the stronger active-power
-        flow) and report a single delta at that terminal.
+        P and Q deltas are computed **independently** using
+        ``_direction_aware_delta``, which expresses each state's flow as a
+        signed magnitude in the reference direction (the direction of the
+        stronger state) and returns ``delta = after - before``.
 
-        For the SLD (Single Line Diagram) we need the delta at *both*
-        terminals, because the SLD for a given voltage level always shows
-        the value at the terminal connected to that VL.  We therefore
-        include ``delta_t1`` and ``delta_t2`` plus the voltage-level IDs
-        ``vl1`` / ``vl2`` so the frontend can pick the right one.
+        Because the delta is always expressed in the reference direction,
+        the sign is consistent with the category colour regardless of which
+        SLD voltage level is being viewed:
+          positive (orange) = flow increased
+          negative (blue)   = flow decreased
+
+        Each variable also gets its own ``flip_arrow`` flag, since P and Q
+        can have independent flow directions.  Category is based solely on
+        the active-power (P) delta.
 
         Returns a dict with keys:
-            flow_deltas:          {line_id: {delta, delta_t1, delta_t2, vl1, vl2, category}}
-            reactive_flow_deltas: {line_id: {delta, delta_t1, delta_t2, vl1, vl2, category}}
+            flow_deltas:          {line_id: {delta, category, flip_arrow}}
+            reactive_flow_deltas: {line_id: {delta, category, flip_arrow}}
         """
         ap1, ap2 = after_flows["p1"], after_flows["p2"]
         bp1, bp2 = before_flows["p1"], before_flows["p2"]
         aq1, aq2 = after_flows["q1"], after_flows["q2"]
         bq1, bq2 = before_flows["q1"], before_flows["q2"]
-        # VL mapping comes from whichever flow set has data (topology is the
-        # same between the two states – lines/trafos don't move VLs).
-        avl1 = after_flows.get("vl1", {})
-        avl2 = after_flows.get("vl2", {})
-        bvl1 = before_flows.get("vl1", {})
-        bvl2 = before_flows.get("vl2", {})
 
         all_ids = set(ap1.keys()) | set(bp1.keys())
 
-        p_ref = {}   # reference-terminal P delta (for NAD)
-        q_ref = {}   # reference-terminal Q delta (for NAD)
-        p_t1 = {}    # terminal-1 P delta
-        p_t2 = {}    # terminal-2 P delta
-        q_t1 = {}    # terminal-1 Q delta
-        q_t2 = {}    # terminal-2 Q delta
-        vl_map = {}  # {lid: (vl1_id, vl2_id)}
-        flip_map = {} # {lid: bool} — whether "after" SVG arrows need flipping
+        p_delta_map = {}
+        p_flip_map = {}
+        q_delta_map = {}
+        q_flip_map = {}
 
         for lid in all_ids:
             a_p1 = ap1.get(lid, 0.0)
@@ -807,40 +822,23 @@ class RecommenderService:
             b_p1 = bp1.get(lid, 0.0)
             b_p2 = bp2.get(lid, 0.0)
 
-            # Deltas at each terminal
-            p_t1[lid] = a_p1 - b_p1
-            p_t2[lid] = a_p2 - b_p2
-            q_t1[lid] = aq1.get(lid, 0.0) - bq1.get(lid, 0.0)
-            q_t2[lid] = aq2.get(lid, 0.0) - bq2.get(lid, 0.0)
+            # P: direction-aware delta with its own reference direction
+            pd, pf = self._direction_aware_delta(a_p1, a_p2, b_p1, b_p2)
+            p_delta_map[lid] = pd
+            p_flip_map[lid] = pf
 
-            # Reference terminal (for NAD): entering terminal of stronger P state
-            use_t1 = self._pick_reference_terminal(a_p1, a_p2, b_p1, b_p2)
-            p_ref[lid] = p_t1[lid] if use_t1 else p_t2[lid]
-            q_ref[lid] = q_t1[lid] if use_t1 else q_t2[lid]
+            # Q: direction-aware delta with its OWN independent reference direction
+            a_q1 = aq1.get(lid, 0.0)
+            a_q2 = aq2.get(lid, 0.0)
+            b_q1 = bq1.get(lid, 0.0)
+            b_q2 = bq2.get(lid, 0.0)
+            qd, qf = self._direction_aware_delta(a_q1, a_q2, b_q1, b_q2)
+            q_delta_map[lid] = qd
+            q_flip_map[lid] = qf
 
-            # VL mapping (prefer after; fall back to before for disconnected elements)
-            v1 = avl1.get(lid) or bvl1.get(lid, "")
-            v2 = avl2.get(lid) or bvl2.get(lid, "")
-            vl_map[lid] = (v1, v2)
-
-            # Arrow flip: the SVG is generated for the "after" state, so its
-            # arrows point in the after-state's flow direction.  When the
-            # "before" state is the reference (stronger) AND the flow reversed
-            # direction between the two states, the SVG arrows are opposite to
-            # the reference direction and need flipping.
-            after_mag = max(abs(a_p1), abs(a_p2))
-            before_mag = max(abs(b_p1), abs(b_p2))
-            ref_is_before = before_mag > after_mag
-            # Direction reversed when p1 changes sign between states
-            if a_p1 != 0.0 and b_p1 != 0.0:
-                direction_reversed = (a_p1 > 0) != (b_p1 > 0)
-            else:
-                direction_reversed = False
-            flip_map[lid] = bool(ref_is_before and direction_reversed)
-
-        # Apply threshold based on reference P deltas (determines category)
-        if p_ref:
-            max_abs = max(abs(d) for d in p_ref.values())
+        # Category threshold based on P deltas
+        if p_delta_map:
+            max_abs = max(abs(d) for d in p_delta_map.values())
         else:
             max_abs = 0.0
         threshold = max_abs * 0.05
@@ -848,32 +846,22 @@ class RecommenderService:
         flow_deltas = {}
         reactive_flow_deltas = {}
         for lid in all_ids:
-            d = p_ref[lid]
+            d = p_delta_map[lid]
             if abs(d) < threshold:
                 cat = "grey"
             elif d > 0:
                 cat = "positive"
             else:
                 cat = "negative"
-            v1, v2 = vl_map[lid]
-            flip = flip_map[lid]
             flow_deltas[lid] = {
-                "delta": round(float(p_ref[lid]), 1),
-                "delta_t1": round(float(p_t1[lid]), 1),
-                "delta_t2": round(float(p_t2[lid]), 1),
-                "vl1": v1,
-                "vl2": v2,
+                "delta": round(float(p_delta_map[lid]), 1),
                 "category": cat,
-                "flip_arrow": flip,
+                "flip_arrow": p_flip_map[lid],
             }
             reactive_flow_deltas[lid] = {
-                "delta": round(float(q_ref[lid]), 1),
-                "delta_t1": round(float(q_t1[lid]), 1),
-                "delta_t2": round(float(q_t2[lid]), 1),
-                "vl1": v1,
-                "vl2": v2,
+                "delta": round(float(q_delta_map[lid]), 1),
                 "category": cat,
-                "flip_arrow": flip,
+                "flip_arrow": q_flip_map[lid],
             }
 
         return {

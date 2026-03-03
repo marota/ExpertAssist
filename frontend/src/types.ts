@@ -61,10 +61,6 @@ export interface DiagramData {
 
 export interface FlowDelta {
     delta: number;
-    delta_t1?: number;
-    delta_t2?: number;
-    vl1?: string;
-    vl2?: string;
     category: 'positive' | 'negative' | 'grey';
     flip_arrow?: boolean;
 }
