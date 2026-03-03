@@ -53,12 +53,20 @@ export interface DiagramData {
     lf_status?: string;
     action_id?: string;
     flow_deltas?: Record<string, FlowDelta>;
+    reactive_flow_deltas?: Record<string, FlowDelta>;
+    asset_deltas?: Record<string, AssetDelta>;
     originalViewBox?: ViewBox | null;
     lines_overloaded?: string[];
 }
 
 export interface FlowDelta {
     delta: number;
+    category: 'positive' | 'negative' | 'grey';
+}
+
+export interface AssetDelta {
+    delta_p: number;
+    delta_q: number;
     category: 'positive' | 'negative' | 'grey';
 }
 
