@@ -122,6 +122,19 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
 
         const fmtDelta = (v: number) => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
 
+        /** Pick the terminal-specific delta for the displayed voltage level.
+         *  SLD shows values at the terminal connected to vlOverlay.vlName,
+         *  so we must use delta_t1 (if vl1 matches) or delta_t2 (if vl2 matches).
+         *  Falls back to the reference-terminal delta if VL mapping is absent. */
+        const vlName = vlOverlay.vlName;
+        const pickTerminalDelta = (d: FlowDelta): number => {
+            if (d.delta_t1 !== undefined && d.delta_t2 !== undefined && d.vl1 && d.vl2) {
+                if (d.vl1 === vlName) return d.delta_t1;
+                if (d.vl2 === vlName) return d.delta_t2;
+            }
+            return d.delta;
+        };
+
         /** Find feeder SVG element for a given equipment id, walk up to cell ancestor. */
         const findCellEl = (equipId: string): Element | null => {
             let feederEl: Element | undefined;
@@ -200,9 +213,9 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             const branchDelta = flowDeltas?.[equipId];
             if (branchDelta) {
                 cellEl.classList.add(`sld-delta-${branchDelta.category}`);
-                const pStr = fmtDelta(branchDelta.delta);
+                const pStr = fmtDelta(pickTerminalDelta(branchDelta));
                 const qDelta = reactiveDeltas?.[equipId];
-                const qStr = qDelta !== undefined ? fmtDelta(qDelta.delta) : null;
+                const qStr = qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null;
                 applyPQLabels(cellEl, pStr, qStr);
                 processedEquipIds.add(equipId);
                 continue;
@@ -225,7 +238,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             if (!cellEl) continue;
             cellEl.classList.add(`sld-delta-${delta.category}`);
             const qDelta = reactiveDeltas?.[equipId];
-            applyPQLabels(cellEl, fmtDelta(delta.delta), qDelta !== undefined ? fmtDelta(qDelta.delta) : null);
+            applyPQLabels(cellEl, fmtDelta(pickTerminalDelta(delta)), qDelta !== undefined ? fmtDelta(pickTerminalDelta(qDelta)) : null);
         }
         for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
             if (processedEquipIds.has(equipId)) continue;

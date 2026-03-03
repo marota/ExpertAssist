@@ -666,28 +666,38 @@ class RecommenderService:
         return currents
 
     def _get_network_flows(self, network):
-        """Extract p1/p2 and q1/q2 flows for lines and transformers from a simulated network."""
+        """Extract p1/p2 and q1/q2 flows for lines and transformers from a simulated network.
+
+        Also extracts voltage_level1_id and voltage_level2_id so the frontend
+        can determine which terminal corresponds to the SLD voltage level.
+        """
         import numpy as np
 
-        lines = network.get_lines()[['p1', 'p2', 'q1', 'q2']]
-        trafos = network.get_2_windings_transformers()[['p1', 'p2', 'q1', 'q2']]
+        lines = network.get_lines()[['p1', 'p2', 'q1', 'q2', 'voltage_level1_id', 'voltage_level2_id']]
+        trafos = network.get_2_windings_transformers()[['p1', 'p2', 'q1', 'q2', 'voltage_level1_id', 'voltage_level2_id']]
 
         p1 = {}
         p2 = {}
         q1 = {}
         q2 = {}
+        vl1 = {}
+        vl2 = {}
         for lid in lines.index:
             p1[lid] = lines.loc[lid, 'p1'] if not np.isnan(lines.loc[lid, 'p1']) else 0.0
             p2[lid] = lines.loc[lid, 'p2'] if not np.isnan(lines.loc[lid, 'p2']) else 0.0
             q1[lid] = lines.loc[lid, 'q1'] if not np.isnan(lines.loc[lid, 'q1']) else 0.0
             q2[lid] = lines.loc[lid, 'q2'] if not np.isnan(lines.loc[lid, 'q2']) else 0.0
+            vl1[lid] = lines.loc[lid, 'voltage_level1_id']
+            vl2[lid] = lines.loc[lid, 'voltage_level2_id']
         for tid in trafos.index:
             p1[tid] = trafos.loc[tid, 'p1'] if not np.isnan(trafos.loc[tid, 'p1']) else 0.0
             p2[tid] = trafos.loc[tid, 'p2'] if not np.isnan(trafos.loc[tid, 'p2']) else 0.0
             q1[tid] = trafos.loc[tid, 'q1'] if not np.isnan(trafos.loc[tid, 'q1']) else 0.0
             q2[tid] = trafos.loc[tid, 'q2'] if not np.isnan(trafos.loc[tid, 'q2']) else 0.0
+            vl1[tid] = trafos.loc[tid, 'voltage_level1_id']
+            vl2[tid] = trafos.loc[tid, 'voltage_level2_id']
 
-        return {"p1": p1, "p2": p2, "q1": q1, "q2": q2}
+        return {"p1": p1, "p2": p2, "q1": q1, "q2": q2, "vl1": vl1, "vl2": vl2}
 
     def _get_asset_flows(self, network):
         """Extract p/q flows for loads and generators from a simulated network."""
@@ -755,25 +765,40 @@ class RecommenderService:
     def _compute_deltas(self, after_flows, before_flows):
         """Compute per-line active AND reactive flow deltas between two flow sets.
 
-        The reference terminal is chosen once from the active power (P) flow
-        — whichever state has the stronger P picks the entering terminal.
-        Both P and Q deltas are then computed at that SAME terminal via
-        simple subtraction (after − before).  This ensures the delta matches
-        the value the user sees in the SLD, which always shows P and Q at
-        the same terminal.
+        For the NAD (Network Area Diagram) we pick one "reference" terminal
+        (the entering terminal of the state with the stronger active-power
+        flow) and report a single delta at that terminal.
+
+        For the SLD (Single Line Diagram) we need the delta at *both*
+        terminals, because the SLD for a given voltage level always shows
+        the value at the terminal connected to that VL.  We therefore
+        include ``delta_t1`` and ``delta_t2`` plus the voltage-level IDs
+        ``vl1`` / ``vl2`` so the frontend can pick the right one.
 
         Returns a dict with keys:
-            flow_deltas:          {line_id: {delta, category}}   (active power P)
-            reactive_flow_deltas: {line_id: {delta, category}}   (reactive power Q)
+            flow_deltas:          {line_id: {delta, delta_t1, delta_t2, vl1, vl2, category}}
+            reactive_flow_deltas: {line_id: {delta, delta_t1, delta_t2, vl1, vl2, category}}
         """
         ap1, ap2 = after_flows["p1"], after_flows["p2"]
         bp1, bp2 = before_flows["p1"], before_flows["p2"]
         aq1, aq2 = after_flows["q1"], after_flows["q2"]
         bq1, bq2 = before_flows["q1"], before_flows["q2"]
+        # VL mapping comes from whichever flow set has data (topology is the
+        # same between the two states – lines/trafos don't move VLs).
+        avl1 = after_flows.get("vl1", {})
+        avl2 = after_flows.get("vl2", {})
+        bvl1 = before_flows.get("vl1", {})
+        bvl2 = before_flows.get("vl2", {})
 
         all_ids = set(ap1.keys()) | set(bp1.keys())
-        p_raw = {}
-        q_raw = {}
+
+        p_ref = {}   # reference-terminal P delta (for NAD)
+        q_ref = {}   # reference-terminal Q delta (for NAD)
+        p_t1 = {}    # terminal-1 P delta
+        p_t2 = {}    # terminal-2 P delta
+        q_t1 = {}    # terminal-1 Q delta
+        q_t2 = {}    # terminal-2 Q delta
+        vl_map = {}  # {lid: (vl1_id, vl2_id)}
 
         for lid in all_ids:
             a_p1 = ap1.get(lid, 0.0)
@@ -781,20 +806,60 @@ class RecommenderService:
             b_p1 = bp1.get(lid, 0.0)
             b_p2 = bp2.get(lid, 0.0)
 
-            # Pick reference terminal from P (entering terminal of stronger state)
-            use_t1 = self._pick_reference_terminal(a_p1, a_p2, b_p1, b_p2)
+            # Deltas at each terminal
+            p_t1[lid] = a_p1 - b_p1
+            p_t2[lid] = a_p2 - b_p2
+            q_t1[lid] = aq1.get(lid, 0.0) - bq1.get(lid, 0.0)
+            q_t2[lid] = aq2.get(lid, 0.0) - bq2.get(lid, 0.0)
 
-            # P and Q deltas at the same terminal: simple subtraction
-            if use_t1:
-                p_raw[lid] = a_p1 - b_p1
-                q_raw[lid] = aq1.get(lid, 0.0) - bq1.get(lid, 0.0)
+            # Reference terminal (for NAD): entering terminal of stronger P state
+            use_t1 = self._pick_reference_terminal(a_p1, a_p2, b_p1, b_p2)
+            p_ref[lid] = p_t1[lid] if use_t1 else p_t2[lid]
+            q_ref[lid] = q_t1[lid] if use_t1 else q_t2[lid]
+
+            # VL mapping (prefer after; fall back to before for disconnected elements)
+            v1 = avl1.get(lid) or bvl1.get(lid, "")
+            v2 = avl2.get(lid) or bvl2.get(lid, "")
+            vl_map[lid] = (v1, v2)
+
+        # Apply threshold based on reference P deltas (determines category)
+        if p_ref:
+            max_abs = max(abs(d) for d in p_ref.values())
+        else:
+            max_abs = 0.0
+        threshold = max_abs * 0.05
+
+        flow_deltas = {}
+        reactive_flow_deltas = {}
+        for lid in all_ids:
+            d = p_ref[lid]
+            if abs(d) < threshold:
+                cat = "grey"
+            elif d > 0:
+                cat = "positive"
             else:
-                p_raw[lid] = a_p2 - b_p2
-                q_raw[lid] = aq2.get(lid, 0.0) - bq2.get(lid, 0.0)
+                cat = "negative"
+            v1, v2 = vl_map[lid]
+            flow_deltas[lid] = {
+                "delta": round(float(p_ref[lid]), 1),
+                "delta_t1": round(float(p_t1[lid]), 1),
+                "delta_t2": round(float(p_t2[lid]), 1),
+                "vl1": v1,
+                "vl2": v2,
+                "category": cat,
+            }
+            reactive_flow_deltas[lid] = {
+                "delta": round(float(q_ref[lid]), 1),
+                "delta_t1": round(float(q_t1[lid]), 1),
+                "delta_t2": round(float(q_t2[lid]), 1),
+                "vl1": v1,
+                "vl2": v2,
+                "category": cat,
+            }
 
         return {
-            "flow_deltas": self._apply_threshold(p_raw),
-            "reactive_flow_deltas": self._apply_threshold(q_raw),
+            "flow_deltas": flow_deltas,
+            "reactive_flow_deltas": reactive_flow_deltas,
         }
 
     def _compute_asset_deltas(self, after_asset_flows, before_asset_flows):
