@@ -2823,7 +2823,7 @@
                                             const overlapIds = selectedEntries.filter(([id]) => manuallyAddedIds.has(id) && analysisActionIds.has(id)).map(([id]) => id).join(', ');
                                             return (
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', padding: '8px 10px', background: '#fff3cd', border: '1px solid #ffeeba', borderRadius: '6px', marginBottom: '10px', fontSize: '13px', color: '#856404' }}>
-                                                    <div>⚠️ User warning: The following manually selected actions are also recommended by the recent analysis run: {overlapIds}</div>
+                                                    <div>⚠️ User warning: The following manually selected actions were also recommended by the recent analysis run and are not being duplicated: {overlapIds}</div>
                                                     <button onClick={() => setDismissedSelectedWarning(true)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: '0', fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">&times;</button>
                                                 </div>
                                             );
@@ -2831,7 +2831,31 @@
                                         {renderActionList(selectedEntries)}
                                     </>
                                 ) : (
-                                    <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0 15px 0' }}>Select an action manually or from suggested ones.</p>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '5px 0 15px 0' }}>
+                                        <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: 0 }}>Select an action manually or from suggested ones.</p>
+                                        <button
+                                            onClick={handleOpenSearch}
+                                            style={{
+                                                padding: '10px',
+                                                backgroundColor: '#f8f9fa',
+                                                border: '1px dashed #007bff',
+                                                color: '#007bff',
+                                                borderRadius: '8px',
+                                                cursor: 'pointer',
+                                                fontWeight: 600,
+                                                fontSize: '14px',
+                                                transition: 'all 0.2s',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '8px'
+                                            }}
+                                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#e7f1ff'; }}
+                                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#f8f9fa'; }}
+                                        >
+                                            <span style={{ fontSize: '16px' }}>💡</span> Make a first guess
+                                        </button>
+                                    </div>
                                 )}
                             </div>
 
