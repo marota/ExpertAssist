@@ -417,7 +417,7 @@ class RecommenderService:
             pp.loadflow.run_ac(n_base, params)
             base_flows = self._get_network_flows(n_base)
             n1_flows = self._get_network_flows(n)
-            deltas = self._compute_deltas(n1_flows, base_flows)
+            deltas = self._compute_deltas(n1_flows, base_flows, voltage_level_ids=voltage_level_ids)
             diagram["flow_deltas"] = deltas["flow_deltas"]
             diagram["reactive_flow_deltas"] = deltas["reactive_flow_deltas"]
             # Asset deltas (loads & generators)
@@ -495,7 +495,7 @@ class RecommenderService:
             n1_flows = self._get_network_flows(n1_network)
             n1_assets = self._get_asset_flows(n1_network)
 
-            deltas = self._compute_deltas(action_flows, n1_flows)
+            deltas = self._compute_deltas(action_flows, n1_flows, voltage_level_ids=voltage_level_ids)
             diagram["flow_deltas"] = deltas["flow_deltas"]
             diagram["reactive_flow_deltas"] = deltas["reactive_flow_deltas"]
             diagram["asset_deltas"] = self._compute_asset_deltas(action_assets, n1_assets)
@@ -719,45 +719,71 @@ class RecommenderService:
         return flows
 
     @staticmethod
-    def _direction_aware_delta(a_t1, a_t2, b_t1, b_t2):
-        """Compute a direction-aware flow delta using absolute magnitudes.
+    def _terminal_aware_delta(after_val, before_val):
+        """Compute a direction-aware delta at a single observed terminal.
 
         pypowsybl sign convention: positive = power *enters* at that terminal.
-        The entering terminal has the larger absolute value.
 
         Algorithm:
-          1. Reference state = state with stronger flow (larger magnitude)
-          2. Reference direction = entering terminal of reference state
-          3. Each state's signed value = +magnitude if same dir, -magnitude if opposite
-          4. delta = after_signed - before_signed
-          5. flip_arrow = True when before is reference AND direction reversed
+          1. Take absolute values of both states at the observed terminal.
+          2. Reference direction = sign (direction) of the state with the
+             strongest absolute value.
+          3. Transform each value to match the reference direction:
+             +abs(val) if same direction as reference, -abs(val) if opposite.
+          4. delta = transformed_after - transformed_before.
+          5. flip_arrow = True when the reference is the before state AND
+             the two states have different signs (direction reversed).
 
-        This ensures the delta sign always matches the category colour:
-        positive (orange) = flow increased, negative (blue) = flow decreased.
+        The delta sign is consistent with the category colour:
+          positive (orange) = flow increased
+          negative (blue)   = flow decreased
 
         Returns (delta: float, flip_arrow: bool).
         """
-        a_mag = max(abs(a_t1), abs(a_t2))
-        b_mag = max(abs(b_t1), abs(b_t2))
+        abs_after = abs(after_val)
+        abs_before = abs(before_val)
 
-        # Entering terminal: the one with the larger absolute value
-        a_enters_t1 = abs(a_t1) >= abs(a_t2)
-        b_enters_t1 = abs(b_t1) >= abs(b_t2)
+        # Reference: the state with the strongest absolute value
+        if abs_after >= abs_before:
+            ref_positive = (after_val >= 0)
+            ref_is_before = False
+        else:
+            ref_positive = (before_val >= 0)
+            ref_is_before = True
 
-        # Reference state and its direction
-        ref_is_before = b_mag > a_mag
-        ref_enters_t1 = b_enters_t1 if ref_is_before else a_enters_t1
+        # Transform: +abs if same direction as reference, -abs if opposite
+        def _signed(val):
+            if val == 0:
+                return 0.0
+            same_dir = (val > 0) == ref_positive
+            return abs(val) if same_dir else -abs(val)
 
-        # Signed magnitudes in the reference direction
-        a_signed = a_mag if (a_enters_t1 == ref_enters_t1) else -a_mag
-        b_signed = b_mag if (b_enters_t1 == ref_enters_t1) else -b_mag
+        delta = _signed(after_val) - _signed(before_val)
 
-        delta = a_signed - b_signed
-
-        direction_reversed = (a_enters_t1 != b_enters_t1)
+        # flip_arrow when reference is before AND direction reversed
+        after_positive = (after_val >= 0)
+        before_positive = (before_val >= 0)
+        direction_reversed = (after_positive != before_positive)
         flip_arrow = bool(ref_is_before and direction_reversed)
 
         return delta, flip_arrow
+
+    @staticmethod
+    def _select_terminal_for_branch(lid, avl1, avl2, bvl1, bvl2, vl_set):
+        """Select which terminal (1 or 2) to observe for a given branch.
+
+        Picks the terminal whose voltage level is in the requested set.
+        Falls back to terminal 1 when both or neither match.
+        """
+        if not vl_set:
+            return 1
+        v1 = avl1.get(lid) or bvl1.get(lid)
+        v2 = avl2.get(lid) or bvl2.get(lid)
+        if v1 in vl_set and v2 not in vl_set:
+            return 1
+        if v2 in vl_set and v1 not in vl_set:
+            return 2
+        return 1
 
     @staticmethod
     def _apply_threshold(deltas):
@@ -782,23 +808,27 @@ class RecommenderService:
             result[lid] = {"delta": round(float(delta), 1), "category": cat}
         return result
 
-    def _compute_deltas(self, after_flows, before_flows):
+    def _compute_deltas(self, after_flows, before_flows, voltage_level_ids=None):
         """Compute per-line active AND reactive flow deltas between two flow sets.
 
-        P and Q deltas are computed **independently** using
-        ``_direction_aware_delta``, which expresses each state's flow as a
-        signed magnitude in the reference direction (the direction of the
-        stronger state) and returns ``delta = after - before``.
+        Terminal-aware computation: for each branch, selects the terminal
+        whose voltage level matches one of *voltage_level_ids* (the VLs
+        displayed in the diagram).  P and Q deltas are computed
+        **independently** using ``_terminal_aware_delta`` on the selected
+        terminal's values.
 
-        Because the delta is always expressed in the reference direction,
-        the sign is consistent with the category colour regardless of which
-        SLD voltage level is being viewed:
+        Algorithm per branch per variable:
+          1. Pick the terminal at the observed voltage level.
+          2. Get the value at that terminal in both states; take abs.
+          3. Reference direction = direction of the state with the
+             strongest absolute value.
+          4. Transform each value to match the reference direction.
+          5. delta = transformed_after - transformed_before.
+
+        Category is based solely on the active-power (P) delta:
           positive (orange) = flow increased
           negative (blue)   = flow decreased
-
-        Each variable also gets its own ``flip_arrow`` flag, since P and Q
-        can have independent flow directions.  Category is based solely on
-        the active-power (P) delta.
+          grey = insignificant (< 5 % of max |deltaP|)
 
         Returns a dict with keys:
             flow_deltas:          {line_id: {delta, category, flip_arrow}}
@@ -809,6 +839,13 @@ class RecommenderService:
         aq1, aq2 = after_flows["q1"], after_flows["q2"]
         bq1, bq2 = before_flows["q1"], before_flows["q2"]
 
+        # VL info for terminal selection (topology doesn't change between states)
+        avl1 = after_flows.get("vl1", {})
+        avl2 = after_flows.get("vl2", {})
+        bvl1 = before_flows.get("vl1", {})
+        bvl2 = before_flows.get("vl2", {})
+        vl_set = set(voltage_level_ids) if voltage_level_ids else set()
+
         all_ids = set(ap1.keys()) | set(bp1.keys())
 
         p_delta_map = {}
@@ -817,22 +854,29 @@ class RecommenderService:
         q_flip_map = {}
 
         for lid in all_ids:
-            a_p1 = ap1.get(lid, 0.0)
-            a_p2 = ap2.get(lid, 0.0)
-            b_p1 = bp1.get(lid, 0.0)
-            b_p2 = bp2.get(lid, 0.0)
+            # Select which terminal to observe for this branch
+            terminal = self._select_terminal_for_branch(
+                lid, avl1, avl2, bvl1, bvl2, vl_set
+            )
 
-            # P: direction-aware delta with its own reference direction
-            pd, pf = self._direction_aware_delta(a_p1, a_p2, b_p1, b_p2)
+            if terminal == 1:
+                a_p = ap1.get(lid, 0.0)
+                b_p = bp1.get(lid, 0.0)
+                a_q = aq1.get(lid, 0.0)
+                b_q = bq1.get(lid, 0.0)
+            else:
+                a_p = ap2.get(lid, 0.0)
+                b_p = bp2.get(lid, 0.0)
+                a_q = aq2.get(lid, 0.0)
+                b_q = bq2.get(lid, 0.0)
+
+            # P: terminal-aware delta with its own reference direction
+            pd, pf = self._terminal_aware_delta(a_p, b_p)
             p_delta_map[lid] = pd
             p_flip_map[lid] = pf
 
-            # Q: direction-aware delta with its OWN independent reference direction
-            a_q1 = aq1.get(lid, 0.0)
-            a_q2 = aq2.get(lid, 0.0)
-            b_q1 = bq1.get(lid, 0.0)
-            b_q2 = bq2.get(lid, 0.0)
-            qd, qf = self._direction_aware_delta(a_q1, a_q2, b_q1, b_q2)
+            # Q: terminal-aware delta with its OWN independent reference direction
+            qd, qf = self._terminal_aware_delta(a_q, b_q)
             q_delta_map[lid] = qd
             q_flip_map[lid] = qf
 
@@ -847,7 +891,7 @@ class RecommenderService:
         reactive_flow_deltas = {}
         for lid in all_ids:
             d = p_delta_map[lid]
-            if abs(d) < threshold:
+            if max_abs == 0.0 or abs(d) < threshold:
                 cat = "grey"
             elif d > 0:
                 cat = "positive"
@@ -895,7 +939,7 @@ class RecommenderService:
         for aid in all_ids:
             dp = raw_p[aid]
             dq = raw_q[aid]
-            if abs(dp) < threshold:
+            if max_abs == 0.0 or abs(dp) < threshold:
                 cat = "grey"
             elif dp > 0:
                 cat = "positive"
