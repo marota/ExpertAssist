@@ -104,14 +104,25 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
 
         if (!flowDeltas && !assetDeltas) return;
 
-        // Build equipmentId → [svgId, ...] multimap from SLD metadata (feederNodes array).
-        // A multimap is used because bus couplers (e.g. C.REG) can appear as TWO feeder
-        // nodes sharing the same equipmentId (one per connected bus bar).
+        // Build equipmentId → [svgId, ...] multimap from SLD metadata.
+        // pypowsybl SLD metadata uses 'nodes' (for lines, transformers, breakers,
+        // bus-bar sections) and 'feederInfos' (for ARROW_ACTIVE/ARROW_REACTIVE).
+        // Older versions may use 'feederNodes' instead.
         const equipIdToSvgIds = new Map<string, string[]>();
         if (vlOverlay.sldMetadata) {
             try {
-                const meta = JSON.parse(vlOverlay.sldMetadata) as { feederNodes?: SldFeederNode[] };
-                for (const fn of meta.feederNodes ?? []) {
+                const meta = JSON.parse(vlOverlay.sldMetadata) as {
+                    nodes?: SldFeederNode[];
+                    feederInfos?: SldFeederNode[];
+                    feederNodes?: SldFeederNode[];
+                };
+                // Collect entries from all possible metadata arrays
+                const sources = [
+                    ...(meta.nodes ?? []),
+                    ...(meta.feederInfos ?? []),
+                    ...(meta.feederNodes ?? []),
+                ];
+                for (const fn of sources) {
                     if (fn.equipmentId && fn.id) {
                         const ids = equipIdToSvgIds.get(fn.equipmentId) ?? [];
                         ids.push(fn.id);
