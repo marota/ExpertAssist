@@ -56,6 +56,10 @@ class RecommenderService:
             config.MONITORING_FACTOR_THERMAL_LIMITS = settings.monitoring_factor
         if hasattr(settings, 'pre_existing_overload_threshold') and settings.pre_existing_overload_threshold is not None:
             config.PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD = settings.pre_existing_overload_threshold
+        if hasattr(settings, 'ignore_reconnections') and settings.ignore_reconnections is not None:
+            config.IGNORE_RECONNECTIONS = settings.ignore_reconnections
+        if hasattr(settings, 'pypowsybl_fast_mode') and settings.pypowsybl_fast_mode is not None:
+            config.PYPOWSYBL_FAST_MODE = settings.pypowsybl_fast_mode
 
         # Force the requested global flags
         config.MAX_RHO_BOTH_EXTREMITIES = True

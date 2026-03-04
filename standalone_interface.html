@@ -959,6 +959,8 @@
             const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
             const [monitoringFactor, setMonitoringFactor] = useState(0.95);
             const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState(0.02);
+            const [ignoreReconnections, setIgnoreReconnections] = useState(localStorage.getItem('ignoreReconnections') === 'true');
+            const [pypowsyblFastMode, setPypowsyblFastMode] = useState(localStorage.getItem('pypowsyblFastMode') === null ? true : localStorage.getItem('pypowsyblFastMode') === 'true');
             const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
             const [totalLinesCount, setTotalLinesCount] = useState(0);
             const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
@@ -985,7 +987,9 @@
                     nPrioritizedActions,
                     linesMonitoringPath,
                     monitoringFactor,
-                    preExistingOverloadThreshold
+                    preExistingOverloadThreshold,
+                    ignoreReconnections,
+                    pypowsyblFastMode
                 });
                 setIsSettingsOpen(true);
             };
@@ -1000,6 +1004,8 @@
                     setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
                     setMonitoringFactor(settingsBackup.monitoringFactor);
                     setPreExistingOverloadThreshold(settingsBackup.preExistingOverloadThreshold);
+                    setIgnoreReconnections(settingsBackup.ignoreReconnections ?? false);
+                    setPypowsyblFastMode(settingsBackup.pypowsyblFastMode ?? true);
                 }
                 setIsSettingsOpen(false);
             };
@@ -1021,7 +1027,9 @@
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
-                        pre_existing_overload_threshold: preExistingOverloadThreshold
+                        pre_existing_overload_threshold: preExistingOverloadThreshold,
+                        ignore_reconnections: ignoreReconnections,
+                        pypowsybl_fast_mode: pypowsyblFastMode
                     });
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
@@ -1038,7 +1046,9 @@
                         nPrioritizedActions,
                         linesMonitoringPath,
                         monitoringFactor,
-                        preExistingOverloadThreshold
+                        preExistingOverloadThreshold,
+                        ignoreReconnections,
+                        pypowsyblFastMode
                     });
                     setInfoMessage('Settings applied successfully. Please reload study or run analysis to see effects.');
                     setIsSettingsOpen(false);
@@ -1128,6 +1138,8 @@
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
             useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
             useEffect(() => { localStorage.setItem('linesMonitoringPath', linesMonitoringPath); }, [linesMonitoringPath]);
+            useEffect(() => { localStorage.setItem('ignoreReconnections', ignoreReconnections); }, [ignoreReconnections]);
+            useEffect(() => { localStorage.setItem('pypowsyblFastMode', pypowsyblFastMode); }, [pypowsyblFastMode]);
 
             const pickPath = async (type, setter) => {
                 try {
@@ -1161,7 +1173,9 @@
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
-                        pre_existing_overload_threshold: preExistingOverloadThreshold
+                        pre_existing_overload_threshold: preExistingOverloadThreshold,
+                        ignore_reconnections: ignoreReconnections,
+                        pypowsybl_fast_mode: pypowsyblFastMode
                     });
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
@@ -2886,6 +2900,22 @@
                                             </div>
                                             <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-10px' }}>
                                                 Pre-existing overloads excluded from N-1 & max loading unless worsened by this fraction (default 2%)
+                                            </div>
+
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '10px', background: '#f8f9fa', borderRadius: '4px', border: '1px solid #eee' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                    <input type="checkbox" id="ignoreRecStandalone" checked={ignoreReconnections} onChange={e => setIgnoreReconnections(e.target.checked)} style={{ width: '16px', height: '16px' }} />
+                                                    <label htmlFor="ignoreRecStandalone" style={{ fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer' }}>Ignore Reconnections</label>
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                                        <input type="checkbox" id="fastModeStandalone" checked={pypowsyblFastMode} onChange={e => setPypowsyblFastMode(e.target.checked)} style={{ width: '16px', height: '16px' }} />
+                                                        <label htmlFor="fastModeStandalone" style={{ fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer' }}>Pypowsybl Fast Mode</label>
+                                                    </div>
+                                                    <div style={{ fontSize: '0.75rem', color: '#666', fontStyle: 'italic', marginLeft: '26px' }}>
+                                                        Disable voltage control in pypowsybl for faster simulations (may affect convergence)
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
