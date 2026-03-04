@@ -1350,7 +1350,6 @@
                 setAnalysisRan(false);
                 setPendingAnalysisResult(null);
                 // Keep result (manual actions) intact — don't clear it
-                setActiveTab('overflow');
 
                 try {
                     const response = await fetch(API_BASE + '/api/run-analysis', {
@@ -1384,6 +1383,7 @@
                             }
                         }
                     }
+                    setActiveTab('overflow');
                 } catch (err) { setError('Analysis failed: ' + err.message); }
                 finally { setAnalysisLoading(false); setAnalysisRan(true); }
             };

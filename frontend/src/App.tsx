@@ -297,7 +297,6 @@ function App() {
     setSelectedActionId(null);
     setActionDiagram(null);
     setPendingAnalysisResult(null);
-    setActiveTab('overflow');
 
     try {
       const response = await fetch('http://localhost:8000/api/run-analysis', {
@@ -331,6 +330,7 @@ function App() {
           }
         }
       }
+      setActiveTab('overflow');
     } catch (err: unknown) {
       setError('Analysis failed: ' + (err as Error).message);
     } finally {
