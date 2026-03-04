@@ -223,27 +223,45 @@
         }
 
         /* ===== SLD overlay delta flow visualization ===== */
-        .sld-delta-positive path, .sld-delta-positive line,
-        .sld-delta-positive polyline, .sld-delta-positive rect,
+        .sld-delta-positive path,
+        .sld-delta-positive line,
+        .sld-delta-positive polyline,
+        .sld-delta-positive rect,
         .sld-delta-positive circle {
             stroke: #ff8c00 !important;
             stroke-width: 2px !important;
         }
-        .sld-delta-negative path, .sld-delta-negative line,
-        .sld-delta-negative polyline, .sld-delta-negative rect,
+
+        .sld-delta-negative path,
+        .sld-delta-negative line,
+        .sld-delta-negative polyline,
+        .sld-delta-negative rect,
         .sld-delta-negative circle {
             stroke: #2196F3 !important;
             stroke-width: 2px !important;
         }
-        .sld-delta-grey path, .sld-delta-grey line,
-        .sld-delta-grey polyline, .sld-delta-grey rect,
+
+        .sld-delta-grey path,
+        .sld-delta-grey line,
+        .sld-delta-grey polyline,
+        .sld-delta-grey rect,
         .sld-delta-grey circle {
             stroke: #999 !important;
             stroke-opacity: 0.5 !important;
         }
-        .sld-delta-positive .sld-label { fill: #ff8c00 !important; }
-        .sld-delta-negative .sld-label { fill: #2196F3 !important; }
-        .sld-delta-grey .sld-label { fill: #999 !important; fill-opacity: 0.5 !important; }
+
+        .sld-delta-text-positive {
+            fill: #ff8c00 !important;
+        }
+
+        .sld-delta-text-negative {
+            fill: #2196F3 !important;
+        }
+
+        .sld-delta-text-grey {
+            fill: #999 !important;
+            fill-opacity: 0.5 !important;
+        }
 
         /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
         .voltage-sidebar {
@@ -1696,9 +1714,20 @@
                         const qDelta = lookupDelta(reactiveDeltas, equipId);
                         const qStr = qDelta !== undefined ? fmtDelta(qDelta.delta) : null;
                         applyPQLabels(cellEl, pStr, qStr);
+
+                        // Apply specific category classes to the labels instead of the cell
+                        let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+                        if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+                        pLabels.forEach(l => l.classList.add(`sld-delta-text-${branchDelta.category}`));
+
                         // Flip P and Q arrows independently
-                        if (branchDelta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
-                        if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
+                        if (branchDelta.flip_arrow) {
+                            flipArrows(cellEl, 'sld-active-power');
+                        }
+                        if (qDelta) {
+                            if (qDelta.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
+                            cellEl.querySelectorAll('.sld-reactive-power .sld-label').forEach(l => l.classList.add(`sld-delta-text-${qDelta.category}`));
+                        }
                         processedEquipIds.add(equipId);
                         continue;
                     }
@@ -1707,6 +1736,7 @@
                     if (assetDelta) {
                         cellEl.classList.add(`sld-delta-${assetDelta.category}`);
                         applyPQLabels(cellEl, fmtDelta(assetDelta.delta_p), fmtDelta(assetDelta.delta_q));
+                        cellEl.querySelectorAll('.sld-label').forEach(l => l.classList.add(`sld-delta-text-${assetDelta.category}`));
                         processedEquipIds.add(equipId);
                     }
                 }
@@ -1724,8 +1754,16 @@
                     cellEl.classList.add(`sld-delta-${delta.category}`);
                     const qDelta = lookupDelta(reactiveDeltas, equipId);
                     applyPQLabels(cellEl, fmtDelta(delta.delta), qDelta !== undefined ? fmtDelta(qDelta.delta) : null);
+
+                    let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
+                    if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
+                    pLabels.forEach(l => l.classList.add(`sld-delta-text-${delta.category}`));
+
                     if (delta.flip_arrow) flipArrows(cellEl, 'sld-active-power');
-                    if (qDelta?.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
+                    if (qDelta) {
+                        if (qDelta.flip_arrow) flipArrows(cellEl, 'sld-reactive-power');
+                        cellEl.querySelectorAll('.sld-reactive-power .sld-label').forEach(l => l.classList.add(`sld-delta-text-${qDelta.category}`));
+                    }
                 }
                 for (const [equipId, assetDelta] of Object.entries(assetDeltas ?? {})) {
                     if (isProcessed(equipId)) continue;
@@ -1734,11 +1772,12 @@
                     if (!cellEl) continue;
                     cellEl.classList.add(`sld-delta-${assetDelta.category}`);
                     applyPQLabels(cellEl, fmtDelta(assetDelta.delta_p), fmtDelta(assetDelta.delta_q));
+                    cellEl.querySelectorAll('.sld-label').forEach(l => l.classList.add(`sld-delta-text-${assetDelta.category}`));
                 }
             }, [vlOverlay?.svg, vlOverlay?.sldMetadata, vlOverlay?.tab, actionViewMode,
-                n1Diagram?.flow_deltas, actionDiagram?.flow_deltas,
-                n1Diagram?.reactive_flow_deltas, actionDiagram?.reactive_flow_deltas,
-                n1Diagram?.asset_deltas, actionDiagram?.asset_deltas]);
+            n1Diagram?.flow_deltas, actionDiagram?.flow_deltas,
+            n1Diagram?.reactive_flow_deltas, actionDiagram?.reactive_flow_deltas,
+            n1Diagram?.asset_deltas, actionDiagram?.asset_deltas]);
 
             // Mouse pan inside overlay body
             const startOverlayPan = (e) => {
