@@ -1012,10 +1012,10 @@ class RecommenderService:
           4. Transform each value to match the reference direction.
           5. delta = transformed_after - transformed_before.
 
-        Category is based solely on the active-power (P) delta:
+        Category is calculated independently for active (P) and reactive (Q) power:
           positive (orange) = flow increased
           negative (blue)   = flow decreased
-          grey = insignificant (< 5 % of max |deltaP|)
+          grey = insignificant (< 5 % of max |delta|)
 
         Returns a dict with keys:
             flow_deltas:          {line_id: {delta, category, flip_arrow}}
@@ -1069,29 +1069,47 @@ class RecommenderService:
 
         # Category threshold based on P deltas
         if p_delta_map:
-            max_abs = max(abs(d) for d in p_delta_map.values())
+            max_abs_p = max(abs(d) for d in p_delta_map.values())
         else:
-            max_abs = 0.0
-        threshold = max_abs * 0.05
+            max_abs_p = 0.0
+        threshold_p = max_abs_p * 0.05
+
+        # Category threshold based on Q deltas independently
+        if q_delta_map:
+            max_abs_q = max(abs(d) for d in q_delta_map.values())
+        else:
+            max_abs_q = 0.0
+        threshold_q = max_abs_q * 0.05
 
         flow_deltas = {}
         reactive_flow_deltas = {}
         for lid in all_ids:
-            d = p_delta_map[lid]
-            if max_abs == 0.0 or abs(d) < threshold:
-                cat = "grey"
-            elif d > 0:
-                cat = "positive"
+            # P category
+            dp = p_delta_map[lid]
+            if max_abs_p == 0.0 or abs(dp) < threshold_p:
+                cat_p = "grey"
+            elif dp > 0:
+                cat_p = "positive"
             else:
-                cat = "negative"
+                cat_p = "negative"
+                
+            # Q category
+            dq = q_delta_map[lid]
+            if max_abs_q == 0.0 or abs(dq) < threshold_q:
+                cat_q = "grey"
+            elif dq > 0:
+                cat_q = "positive"
+            else:
+                cat_q = "negative"
+
             flow_deltas[lid] = {
-                "delta": round(float(p_delta_map[lid]), 1),
-                "category": cat,
+                "delta": round(float(dp), 1),
+                "category": cat_p,
                 "flip_arrow": p_flip_map[lid],
             }
             reactive_flow_deltas[lid] = {
-                "delta": round(float(q_delta_map[lid]), 1),
-                "category": cat,
+                "delta": round(float(dq), 1),
+                "category": cat_q,
                 "flip_arrow": q_flip_map[lid],
             }
 
@@ -1104,7 +1122,8 @@ class RecommenderService:
         """Compute delta P and Q for loads and generators.
 
         Returns {asset_id: {delta_p, delta_q, category}}.
-        Category is based on active power delta only.
+        Category is calculated based on active power delta, except when P is zero
+        and Q changes significantly.
         """
         all_ids = set(after_asset_flows.keys()) | set(before_asset_flows.keys())
         raw_p = {}
@@ -1117,26 +1136,42 @@ class RecommenderService:
 
         # Threshold based on active power deltas
         if raw_p:
-            max_abs = max(abs(d) for d in raw_p.values())
+            max_abs_p = max(abs(d) for d in raw_p.values())
         else:
-            max_abs = 0.0
-        threshold = max_abs * 0.05
+            max_abs_p = 0.0
+        threshold_p = max_abs_p * 0.05
+        
+        # Threshold based on reactive power deltas
+        if raw_q:
+            max_abs_q = max(abs(d) for d in raw_q.values())
+        else:
+            max_abs_q = 0.0
+        threshold_q = max_abs_q * 0.05
 
         result = {}
         for aid in all_ids:
             dp = raw_p[aid]
             dq = raw_q[aid]
-            if max_abs == 0.0 or abs(dp) < threshold:
-                cat = "grey"
-            elif dp > 0:
-                cat = "positive"
+            
+            if max_abs_p > 0.0 and abs(dp) >= threshold_p:
+                if dp > 0:
+                    cat = "positive"
+                else:
+                    cat = "negative"
+            elif max_abs_q > 0.0 and abs(dq) >= threshold_q:
+                if dq > 0:
+                    cat = "positive"
+                else:
+                    cat = "negative"
             else:
-                cat = "negative"
+                cat = "grey"
+                
             result[aid] = {
                 "delta_p": round(float(dp), 1),
                 "delta_q": round(float(dq), 1),
                 "category": cat,
             }
+
         return result
 
     def get_all_action_ids(self):
