@@ -1754,13 +1754,29 @@
                         cellEl.classList.add(`sld-delta-${branchDelta.category}`);
                         const pDeltaVal = branchDelta.delta;
                         const pStr = fmtDelta(pDeltaVal);
+
+                        const qDelta = lookupDelta(reactiveDeltas, equipId);
+                        const qStr = qDelta !== undefined ? fmtDelta(qDelta.delta) : null;
+
                         // Always apply labels to ensure original flows are replaced
-                        applyPQLabels(cellEl, pStr, null);
+                        applyPQLabels(cellEl, pStr, qStr);
 
                         // Apply specific category classes to the labels instead of the cell
                         let pLabels = cellEl.querySelectorAll('.sld-active-power .sld-label');
                         if (pLabels.length === 0) pLabels = cellEl.querySelectorAll('.sld-label');
                         pLabels.forEach(l => l.classList.add(`sld-delta-text-${branchDelta.category}`));
+
+                        if (qDelta) {
+                            cellEl.querySelectorAll('.sld-reactive-power .sld-label').forEach(l => l.classList.add(`sld-delta-text-${qDelta.category}`));
+                        }
+
+                        // Flip P and Q arrows independently (regardless of category)
+                        if (branchDelta.flip_arrow) {
+                            flipArrows(cellEl, 'sld-active-power');
+                        }
+                        if (qDelta && qDelta.flip_arrow) {
+                            flipArrows(cellEl, 'sld-reactive-power');
+                        }
                         processedEquipIds.add(equipId);
                         continue;
                     }
