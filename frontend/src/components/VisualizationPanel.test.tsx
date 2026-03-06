@@ -36,6 +36,8 @@ const createDefaultProps = (overrides: Record<string, unknown> = {}) => ({
     vlOverlay: null,
     onOverlayClose: vi.fn(),
     onOverlaySldTabChange: vi.fn(),
+    voltageLevels: [] as string[],
+    onVlOpen: vi.fn(),
     ...overrides,
 });
 
@@ -198,6 +200,8 @@ describe('VisualizationPanel', () => {
                 vlOverlay,
                 actionViewMode: 'network', // Doesn't matter which mode, cleanup runs first always
                 activeTab: 'n',
+                n1Diagram: null,
+                actionDiagram: null,
             });
 
             const { container } = render(<VisualizationPanel {...props} />);

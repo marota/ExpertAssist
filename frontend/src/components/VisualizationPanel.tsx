@@ -32,6 +32,8 @@ interface VisualizationPanelProps {
     vlOverlay: VlOverlay | null;
     onOverlayClose: () => void;
     onOverlaySldTabChange: (tab: SldTab) => void;
+    voltageLevels: string[];
+    onVlOpen: (vlName: string) => void;
 }
 
 // ===== SLD Overlay sub-component =====
@@ -42,11 +44,14 @@ interface SldOverlayProps {
     actionViewMode: 'network' | 'delta';
     onOverlayClose: () => void;
     onOverlaySldTabChange: (tab: SldTab) => void;
+    n1Diagram: DiagramData | null;
+    actionDiagram: DiagramData | null;
 }
 
 const SldOverlay: React.FC<SldOverlayProps> = ({
     vlOverlay, actionViewMode,
     onOverlayClose, onOverlaySldTabChange,
+    n1Diagram, actionDiagram,
 }) => {
     const overlayBodyRef = useRef<HTMLDivElement>(null);
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
@@ -448,7 +453,11 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                         </span>
                     </div>
                     <div style={{ display: 'flex', gap: '4px' }}>
-                        {(['n', 'n-1', 'action'] as SldTab[]).map(tabMode => (
+                        {(['n', 'n-1', 'action'] as SldTab[]).filter(tabMode => {
+                            if (tabMode === 'n-1') return !!n1Diagram;
+                            if (tabMode === 'action') return !!actionDiagram;
+                            return true; // always show N
+                        }).map(tabMode => (
                             <button
                                 key={tabMode}
                                 onMouseDown={e => e.stopPropagation()}
@@ -530,6 +539,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     vlOverlay,
     onOverlayClose,
     onOverlaySldTabChange,
+    voltageLevels,
+    onVlOpen,
 }) => {
     const showViewModeToggle = activeTab !== 'overflow' && (
         (activeTab === 'n' && !!nDiagram?.svg) ||
@@ -811,6 +822,8 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         actionViewMode={actionViewMode}
                         onOverlayClose={onOverlayClose}
                         onOverlaySldTabChange={onOverlaySldTabChange}
+                        n1Diagram={n1Diagram}
+                        actionDiagram={actionDiagram}
                     />
                 )}
 
@@ -887,6 +900,20 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 <datalist id="inspectables">
                                     {inspectableItems.map(b => <option key={b} value={b} />)}
                                 </datalist>
+                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
+                                    <button
+                                        onClick={() => onVlOpen(inspectQuery)}
+                                        style={{
+                                            background: '#d1fae5', color: '#065f46', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            fontWeight: 600
+                                        }}
+                                        title="Open Single Line Diagram"
+                                    >
+                                        📄 SLD
+                                    </button>
+                                )}
                                 {inspectQuery && (
                                     <button
                                         onClick={() => onInspectQueryChange('')}
