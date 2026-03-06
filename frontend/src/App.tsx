@@ -1190,6 +1190,8 @@ function App() {
             vlOverlay={vlOverlay}
             onOverlayClose={handleOverlayClose}
             onOverlaySldTabChange={handleOverlaySldTabChange}
+            voltageLevels={voltageLevels}
+            onVlOpen={(vlName) => handleVlDoubleClick(activeTab === 'action' ? selectedActionId || '' : '', vlName)}
           />
         </div>
       </div>

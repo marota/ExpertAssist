@@ -2638,7 +2638,11 @@
                                             </span>
                                         </div>
                                         <div style={{ display: 'flex', gap: '4px' }}>
-                                            {['n', 'n-1', 'action'].map(tabMode => (
+                                            {['n', 'n-1', 'action'].filter(tabMode => {
+                                                if (tabMode === 'n-1') return !!n1Diagram;
+                                                if (tabMode === 'action') return !!actionDiagram;
+                                                return true; // always show N
+                                            }).map(tabMode => (
                                                 <button
                                                     key={tabMode}
                                                     onMouseDown={e => e.stopPropagation()} // Prevent dragging when clicking tabs
@@ -3556,6 +3560,20 @@
                                                     }}
                                                 />
                                                 <datalist id="inspectables">{inspectableItems.map(b => <option key={b} value={b} />)}</datalist>
+                                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
+                                                    <button
+                                                        onClick={() => handleVlDoubleClick(activeTab === 'action' ? selectedActionId || '' : '', inspectQuery)}
+                                                        style={{
+                                                            background: '#d1fae5', color: '#065f46', border: 'none',
+                                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                                            fontWeight: 600
+                                                        }}
+                                                        title="Open Single Line Diagram"
+                                                    >
+                                                        📄 SLD
+                                                    </button>
+                                                )}
                                                 {inspectQuery && (
                                                     <button onClick={() => setInspectQuery('')} style={{ background: '#e74c3c', color: 'white', border: 'none', borderRadius: '4px', padding: '4px 8px', cursor: 'pointer', fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)' }} title="Clear">
                                                         ✖
