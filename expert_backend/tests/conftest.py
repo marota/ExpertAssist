@@ -29,6 +29,8 @@ _MOCK_MODULES = [
     "expert_op4grid_recommender.environment_pypowsybl",
     "expert_op4grid_recommender.utils.simulation_pypowsybl",
     "expert_op4grid_recommender.environment",
+    "expert_op4grid_recommender.pypowsybl_backend",
+    "expert_op4grid_recommender.pypowsybl_backend.simulation_env",
 ]
 
 for mod_name in _MOCK_MODULES:
