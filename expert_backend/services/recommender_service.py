@@ -173,7 +173,7 @@ class RecommenderService:
             print("Action dictionary already loaded, skipping reload.")
 
         # Inject missing config parameter and redirect output
-        config.DO_VISUALIZATION = True
+        config.DO_VISUALIZATION = getattr(settings, 'do_visualization', True)
         # Don't check all actions
         config.CHECK_ACTION_SIMULATION = False
 

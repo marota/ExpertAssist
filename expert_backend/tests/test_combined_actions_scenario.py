@@ -55,6 +55,7 @@ def analysis_results(scenario_data):
             self.monitoring_factor = 0.95
             self.pre_existing_overload_threshold = 0.02
             self.lines_monitoring_path = None
+            self.do_visualization = False
 
     # Load the network BEFORE updating config, so that self.network is available
     # for enrich_actions_lazy called inside update_config.
