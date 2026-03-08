@@ -7,17 +7,20 @@ class TestOverloadFiltering:
     def service(self):
         return RecommenderService()
 
-    @patch("expert_backend.services.recommender_service.run_analysis_step2")
-    def test_run_analysis_step2_filters_care_about(self, mock_run_step2, service):
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_graph")
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_discovery")
+    def test_run_analysis_step2_filters_care_about(self, mock_run_discovery, mock_run_graph, service):
         """Verify that deselected overloads are removed from lines_we_care_about."""
-        # Setup context
-        mock_run_step2.return_value = {
+        # Setup mocks
+        mock_run_graph.side_effect = lambda ctx: ctx
+        mock_run_discovery.return_value = {
             "prioritized_actions": {},
             "action_scores": {},
             "lines_overloaded_names": ["LINE_1", "LINE_2"]
         }
         
         service._analysis_context = {
+            "env": MagicMock(),
             "lines_overloaded_names": ["LINE_1", "LINE_2"],
             "lines_overloaded_ids": [0, 1],
             "lines_overloaded_ids_kept": [0, 1],
@@ -35,10 +38,12 @@ class TestOverloadFiltering:
         assert service._analysis_context["lines_we_care_about"] == {"LINE_1", "LINE_3"}
         assert service._analysis_context["lines_overloaded_names"] == ["LINE_1"]
 
-    @patch("expert_backend.services.recommender_service.run_analysis_step2")
-    def test_run_analysis_step2_preserves_care_about_when_monitoring(self, mock_run_step2, service):
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_graph")
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_discovery")
+    def test_run_analysis_step2_preserves_care_about_when_monitoring(self, mock_run_discovery, mock_run_graph, service):
         """Verify that lines_we_care_about is NOT filtered when monitor_deselected=True."""
-        mock_run_step2.return_value = {
+        mock_run_graph.side_effect = lambda ctx: ctx
+        mock_run_discovery.return_value = {
             "prioritized_actions": {},
             "action_scores": {},
             "lines_overloaded_names": ["LINE_1", "LINE_2"]
@@ -46,6 +51,7 @@ class TestOverloadFiltering:
         
         initial_care = {"LINE_1", "LINE_2", "LINE_3"}
         service._analysis_context = {
+            "env": MagicMock(),
             "lines_overloaded_names": ["LINE_1", "LINE_2"],
             "lines_overloaded_ids": [0, 1],
             "lines_overloaded_ids_kept": [0, 1],
@@ -63,10 +69,12 @@ class TestOverloadFiltering:
         # But resolution targets are still filtered
         assert service._analysis_context["lines_overloaded_names"] == ["LINE_1"]
 
-    @patch("expert_backend.services.recommender_service.run_analysis_step2")
-    def test_run_analysis_step2_handles_different_iterable_types(self, mock_run_step2, service):
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_graph")
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_discovery")
+    def test_run_analysis_step2_handles_different_iterable_types(self, mock_run_discovery, mock_run_graph, service):
         """Verify filtering works for both sets and lists in lines_we_care_about."""
-        mock_run_step2.return_value = {
+        mock_run_graph.side_effect = lambda ctx: ctx
+        mock_run_discovery.return_value = {
             "prioritized_actions": {},
             "action_scores": {},
             "lines_overloaded_names": ["L1", "L2"]
@@ -74,6 +82,7 @@ class TestOverloadFiltering:
         
         # Case 1: List
         service._analysis_context = {
+            "env": MagicMock(),
             "lines_overloaded_names": ["L1", "L2"],
             "lines_overloaded_ids": [0, 1],
             "lines_overloaded_ids_kept": [0, 1],
@@ -82,17 +91,19 @@ class TestOverloadFiltering:
         list(service.run_analysis_step2(selected_overloads=["L1"], all_overloads=["L1", "L2"], monitor_deselected=False))
         assert service._analysis_context["lines_we_care_about"] == ["L1", "L3"]
 
-
-    @patch("expert_backend.services.recommender_service.run_analysis_step2")
-    def test_run_analysis_step2_handles_empty_selection(self, mock_run_step2, service):
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_graph")
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_discovery")
+    def test_run_analysis_step2_handles_empty_selection(self, mock_run_discovery, mock_run_graph, service):
         """Verify that empty selected_overloads results in empty targets but doesn't crash."""
-        mock_run_step2.return_value = {
+        mock_run_graph.side_effect = lambda ctx: ctx
+        mock_run_discovery.return_value = {
             "prioritized_actions": {},
             "action_scores": {},
             "lines_overloaded_names": ["L1", "L2"]
         }
         
         service._analysis_context = {
+            "env": MagicMock(),
             "lines_overloaded_names": ["L1", "L2"],
             "lines_overloaded_ids": [0, 1],
             "lines_overloaded_ids_kept": [0, 1],
@@ -105,16 +116,19 @@ class TestOverloadFiltering:
         assert service._analysis_context["lines_overloaded_ids"] == []
         assert service._analysis_context["lines_we_care_about"] == {"L3"}
 
-    @patch("expert_backend.services.recommender_service.run_analysis_step2")
-    def test_run_analysis_step2_handles_invalid_names_in_selection(self, mock_run_step2, service):
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_graph")
+    @patch("expert_backend.services.recommender_service.run_analysis_step2_discovery")
+    def test_run_analysis_step2_handles_invalid_names_in_selection(self, mock_run_discovery, mock_run_graph, service):
         """Verify that invalid names in selected_overloads are ignored."""
-        mock_run_step2.return_value = {
+        mock_run_graph.side_effect = lambda ctx: ctx
+        mock_run_discovery.return_value = {
             "prioritized_actions": {},
             "action_scores": {},
             "lines_overloaded_names": ["L1", "L2"]
         }
         
         service._analysis_context = {
+            "env": MagicMock(),
             "lines_overloaded_names": ["L1", "L2"],
             "lines_overloaded_ids": [0, 1],
             "lines_overloaded_ids_kept": [0, 1],
