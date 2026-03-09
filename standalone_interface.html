@@ -597,6 +597,11 @@
             return { viewBox, setViewBox: setViewBoxPublic };
         };
 
+        // LRU-ish cache for boosted SVG strings keyed by (length + first 200 chars + vlCount).
+        // Avoids re-running DOMParser → mutate → XMLSerializer on the same SVG.
+        const _boostCache = new Map();
+        const BOOST_CACHE_MAX = 6; // N + N-1 + action × 2
+
         // Scale SVG elements for large grids so text, nodes, and flow values
         // are readable when zoomed in and naturally shrink at full view.
         // Uses DOMParser for in-place DOM manipulation instead of regex on
@@ -607,6 +612,10 @@
             // Skip boost entirely for grids with < 500 voltage levels —
             // smaller grids render well at native pypowsybl sizes.
             if (!vlCount || vlCount < 500) return svgString;
+
+            // Cache key: length + first 200 chars is enough to distinguish N vs N-1 vs Action SVGs
+            const cacheKey = `${svgString.length}:${vlCount}:${svgString.substring(0, 200)}`;
+            if (_boostCache.has(cacheKey)) return _boostCache.get(cacheKey);
 
             const diagramSize = Math.max(viewBox.w, viewBox.h);
             const REFERENCE_SIZE = 1250; // small grid where everything is readable
@@ -678,7 +687,14 @@
                 });
             }
 
-            return new XMLSerializer().serializeToString(svgEl);
+            const result = new XMLSerializer().serializeToString(svgEl);
+            // Evict oldest entries if cache grows too large
+            if (_boostCache.size >= BOOST_CACHE_MAX) {
+                const firstKey = _boostCache.keys().next().value;
+                _boostCache.delete(firstKey);
+            }
+            _boostCache.set(cacheKey, result);
+            return result;
         };
 
         // ===== Cached DOM ID Map =====
@@ -2042,6 +2058,16 @@
                 if (!selectedBranch) { setSearchError('Run an analysis first'); return; }
                 setSimulatingActionId(actionId);
                 setSearchError('');
+
+                // Start fetching the action diagram in parallel with the simulation.
+                // The diagram API is independent of the simulation result.
+                const diagramPromise = axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId })
+                    .then(res => {
+                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
+                        return { ...res.data, svg, originalViewBox: viewBox };
+                    })
+                    .catch(() => null);
+
                 try {
                     const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
                         action_id: actionId,
@@ -2073,7 +2099,19 @@
                     });
                     setSearchOpen(false);
                     setSearchQuery('');
-                    handleActionSelect(actionId);
+
+                    // Use pre-fetched diagram if available (already processed in parallel)
+                    const prefetched = await diagramPromise;
+                    if (prefetched) {
+                        actionSyncSourceRef.current =
+                            (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
+                            || n1PZ.viewBox || nPZ.viewBox;
+                        setSelectedActionId(actionId);
+                        setActiveTab('action');
+                        setActionDiagram(prefetched);
+                    } else {
+                        handleActionSelect(actionId);
+                    }
                 } catch (err) {
                     setSearchError(err?.response?.data?.detail || 'Simulation failed');
                 } finally {
@@ -2202,6 +2240,8 @@
             // ===== Highlights =====
             // Track which tabs need highlight re-application
             const staleHighlights = useRef(new Set());
+            // Track the last activeTab to detect actual tab switches vs data changes
+            const prevActiveTabRef = useRef(activeTab);
 
             // Helper to apply delta visuals
             const applyDeltaVisuals = useCallback((container, diagram, metaIndex) => {
@@ -2359,16 +2399,33 @@
                 }
             }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, selectedBranch, applyDeltaVisuals]);
 
-            // Apply highlights only for the active tab; mark others as stale
+            // Apply highlights only for the active tab; mark others as stale.
+            // When the trigger is a tab switch (not a data change), defer the
+            // work to the next animation frame so the browser paints the tab
+            // switch instantly and decorations appear a frame later.
             useEffect(() => {
-                applyHighlightsForTab(activeTab);
-                staleHighlights.current.delete(activeTab);
+                const isTabSwitch = prevActiveTabRef.current !== activeTab;
+                prevActiveTabRef.current = activeTab;
+                // Mark inactive tabs as needing catch-up
                 ['n', 'n-1', 'action'].filter(t => t !== activeTab).forEach(t => staleHighlights.current.add(t));
+
+                if (isTabSwitch) {
+                    // Defer: let the browser paint the tab first
+                    const id = requestAnimationFrame(() => {
+                        applyHighlightsForTab(activeTab);
+                        staleHighlights.current.delete(activeTab);
+                    });
+                    return () => cancelAnimationFrame(id);
+                } else {
+                    applyHighlightsForTab(activeTab);
+                    staleHighlights.current.delete(activeTab);
+                }
             }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, activeTab, selectedBranch, applyHighlightsForTab]);
 
             // ===== VOLTAGE RANGE FILTER =====
             // Track which tabs have stale voltage filters
             const staleVoltageFilter = useRef(new Set());
+            const prevVFTabRef = useRef(activeTab);
 
             const applyVoltageFilter = useCallback((container, metaIndex) => {
                 if (!container || !metaIndex) return;
@@ -2419,46 +2476,43 @@
                 }
             }, [voltageRange, nominalVoltageMap, uniqueVoltages]);
 
-            // Apply voltage filter only to the active tab; mark others as stale
+            // Apply voltage filter only to the active tab; mark others as stale.
+            // On tab switch, defer to next frame so the browser paints first.
             useEffect(() => {
                 if (uniqueVoltages.length === 0 || Object.keys(nominalVoltageMap).length === 0) return;
 
-                if (activeTab === 'n' || activeTab === 'overflow') {
-                    applyVoltageFilter(nSvgContainerRef.current, nMetaIndex);
-                    staleVoltageFilter.current.delete('n');
-                    staleVoltageFilter.current.add('n-1');
-                    staleVoltageFilter.current.add('action');
-                } else if (activeTab === 'n-1') {
-                    applyVoltageFilter(n1SvgContainerRef.current, n1MetaIndex);
-                    staleVoltageFilter.current.delete('n-1');
-                    staleVoltageFilter.current.add('n');
-                    staleVoltageFilter.current.add('action');
-                } else if (activeTab === 'action') {
-                    applyVoltageFilter(actionSvgContainerRef.current, actionMetaIndex);
-                    staleVoltageFilter.current.delete('action');
-                    staleVoltageFilter.current.add('n');
-                    staleVoltageFilter.current.add('n-1');
+                const isTabSwitch = prevVFTabRef.current !== activeTab;
+                prevVFTabRef.current = activeTab;
+
+                const runFilter = () => {
+                    if (activeTab === 'n' || activeTab === 'overflow') {
+                        applyVoltageFilter(nSvgContainerRef.current, nMetaIndex);
+                        staleVoltageFilter.current.delete('n');
+                        staleVoltageFilter.current.add('n-1');
+                        staleVoltageFilter.current.add('action');
+                    } else if (activeTab === 'n-1') {
+                        applyVoltageFilter(n1SvgContainerRef.current, n1MetaIndex);
+                        staleVoltageFilter.current.delete('n-1');
+                        staleVoltageFilter.current.add('n');
+                        staleVoltageFilter.current.add('action');
+                    } else if (activeTab === 'action') {
+                        applyVoltageFilter(actionSvgContainerRef.current, actionMetaIndex);
+                        staleVoltageFilter.current.delete('action');
+                        staleVoltageFilter.current.add('n');
+                        staleVoltageFilter.current.add('n-1');
+                    }
+                };
+
+                if (isTabSwitch) {
+                    const id = requestAnimationFrame(runFilter);
+                    return () => cancelAnimationFrame(id);
+                } else {
+                    runFilter();
                 }
             }, [voltageRange, nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, nominalVoltageMap, uniqueVoltages, activeTab, applyVoltageFilter]);
 
-            // Catch-up: when switching to a tab that has stale highlights or voltage filter, apply them
-            useEffect(() => {
-                if (activeTab === 'overflow') return;
-                if (staleHighlights.current.has(activeTab)) {
-                    applyHighlightsForTab(activeTab);
-                    staleHighlights.current.delete(activeTab);
-                }
-                if (staleVoltageFilter.current.has(activeTab)) {
-                    const container = activeTab === 'n' ? nSvgContainerRef.current
-                        : activeTab === 'n-1' ? n1SvgContainerRef.current
-                            : actionSvgContainerRef.current;
-                    const metaIndex = activeTab === 'n' ? nMetaIndex
-                        : activeTab === 'n-1' ? n1MetaIndex
-                            : actionMetaIndex;
-                    applyVoltageFilter(container, metaIndex);
-                    staleVoltageFilter.current.delete(activeTab);
-                }
-            }, [activeTab, applyHighlightsForTab, applyVoltageFilter, nMetaIndex, n1MetaIndex, actionMetaIndex]);
+            // Catch-up: removed — the deferred main effects above handle
+            // tab-switch catch-up via the stale tracking + rAF pattern.
 
             // Zoom to an element by computing its bounding box from metadata
             const zoomToElement = (targetId) => {
