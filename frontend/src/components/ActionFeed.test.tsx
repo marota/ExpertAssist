@@ -27,7 +27,7 @@ describe('ActionFeed', () => {
     
     const defaultProps = {
         actions: {} as Record<string, ActionDetail>,
-        actionScores: {} as Record<string, any>,
+        actionScores: {} as Record<string, Record<string, unknown>>,
         linesOverloaded: [] as string[],
         selectedActionId: null,
         selectedActionIds: new Set<string>(),
