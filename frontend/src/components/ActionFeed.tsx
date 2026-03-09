@@ -22,6 +22,13 @@ interface ActionFeedProps {
     monitoringFactor: number;
     manuallyAddedIds: Set<string>;
     onVlDoubleClick?: (actionId: string, vlName: string) => void;
+    minLineReconnections: number;
+    minCloseCoupling: number;
+    minOpenCoupling: number;
+    minLineDisconnections: number;
+    nPrioritizedActions: number;
+    ignoreReconnections: boolean;
+    onOpenSettings?: (tab?: 'recommender' | 'configurations') => void;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -43,6 +50,13 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     monitoringFactor,
     manuallyAddedIds,
     onVlDoubleClick,
+    minLineReconnections,
+    minCloseCoupling,
+    minOpenCoupling,
+    minLineDisconnections,
+    nPrioritizedActions,
+    ignoreReconnections,
+    onOpenSettings,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -162,6 +176,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 max_rho: result.max_rho,
                 max_rho_line: result.max_rho_line,
                 is_rho_reduction: result.is_rho_reduction,
+                non_convergence: result.non_convergence,
             };
             onManualActionAdded(actionId, detail, result.lines_overloaded || []);
             setSearchOpen(false);
@@ -235,6 +250,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
     const renderActionList = (entries: [string, ActionDetail][]) => {
         return entries.map(([id, details], index) => {
+            if (!details) return null;
             const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
             const severity = details.max_rho != null
                 ? (details.max_rho > monitoringFactor ? 'red' as const : details.max_rho > (monitoringFactor - 0.05) ? 'orange' as const : 'green' as const)
@@ -244,20 +260,24 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 orange: { border: '#f0ad4e', badgeBg: '#fff3cd', badgeText: '#856404', label: 'Solved \u2014 low margin' },
                 red: { border: '#dc3545', badgeBg: '#f8d7da', badgeText: '#721c24', label: details.is_rho_reduction ? 'Still overloaded' : 'No reduction' },
             };
-            const sc = severityColors[severity];
+            const sc = details.non_convergence
+                ? { border: '#dc3545', badgeBg: '#dc3545', badgeText: '#fff', label: 'divergent' }
+                : severityColors[severity];
             const isSelected = selectedActionId === id;
-            return (
-                <div key={id} style={{
-                    background: isSelected ? '#e7f1ff' : 'white',
-                    border: '1px solid #ddd',
-                    borderRadius: '8px',
-                    padding: '10px',
-                    marginBottom: '10px',
-                    boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
-                    borderLeft: `5px solid ${isSelected ? '#007bff' : sc.border}`,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                }} onClick={() => onActionSelect(id)}>
+             return (
+                 <div key={id} 
+                    data-testid={`action-card-${id}`}
+                    style={{
+                     background: details.non_convergence ? '#fff5f5' : (isSelected ? '#e7f1ff' : 'white'),
+                     border: details.non_convergence ? '1px solid #dc3545' : '1px solid #ddd',
+                     borderRadius: '8px',
+                     padding: '10px',
+                     marginBottom: '10px',
+                     boxShadow: isSelected ? '0 0 0 2px rgba(0,123,255,0.3), 0 2px 8px rgba(0,0,0,0.15)' : '0 2px 4px rgba(0,0,0,0.1)',
+                     borderLeft: `5px solid ${isSelected ? '#007bff' : sc.border}`,
+                     cursor: 'pointer',
+                     transition: 'all 0.15s ease',
+                 }} onClick={() => onActionSelect(id)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h4 style={{ margin: 0, fontSize: '14px', color: isSelected ? '#0056b3' : undefined }}>
                             #{index + 1} {'\u2014'} {id}
@@ -274,7 +294,14 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         </div>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', margin: '4px 0 5px' }}>
-                        <p style={{ fontSize: '13px', margin: 0, flex: 1 }}>{details.description_unitaire}</p>
+                        <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '13px', margin: 0 }}>{details.description_unitaire}</p>
+                            {details.non_convergence && (
+                                <div style={{ fontSize: '11px', color: '#9a3412', backgroundColor: '#fff8f1', padding: '2px 6px', borderRadius: '4px', marginTop: '4px', border: '1px solid #ffedd5', display: 'inline-block' }}>
+                                    ⚠️ LoadFlow failure: {details.non_convergence}
+                                </div>
+                            )}
+                        </div>
                         {(() => {
                             const badgeBtn = (name: string, bg: string, color: string, title: string) => (
                                 <button key={name}
@@ -296,12 +323,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     {vlName}
                                 </button>
                             );
-                            const lineNames = edgesByEquipmentId
+                            const lineNames = (edgesByEquipmentId
                                 ? getActionTargetLines(details, id, edgesByEquipmentId)
                                 : Array.from(new Set([
                                     ...Object.keys(details.action_topology?.lines_ex_bus || {}),
                                     ...Object.keys(details.action_topology?.lines_or_bus || {}),
-                                ]));
+                                ]))) || [];
                             if (lineNames.length > 0) return (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
                                     {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name}`))}
@@ -454,7 +481,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 Scored Actions
                                             </div>
                                             {Array.from(new Set(scoredActionsList.map(item => item.type))).map(type => {
-                                                const typeData = (actionScores?.[type] || {}) as { scores?: Record<string, number>; params?: Record<string, Record<string, unknown>> };
+                                                const typeData = (actionScores?.[type] || {}) as {
+                                                    scores?: Record<string, number>;
+                                                    params?: Record<string, Record<string, unknown>>;
+                                                    non_convergence?: Record<string, string | null>;
+                                                };
                                                 const scoresKeys = Object.keys(typeData.scores || {});
                                                 const paramsKeys = Object.keys(typeData.params || {});
                                                 const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some((k: string) => scoresKeys.includes(k));
@@ -503,7 +534,13 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                             }}>
                                                                             <td style={{ padding: '4px 6px', fontWeight: 600, display: 'flex', alignItems: 'center' }}>
                                                                                 {item.actionId}
-                                                                                {isComputed && <span style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px', opacity: 0.8 }}>computed</span>}
+                                                                                {isComputed && (
+                                                                                    actions[item.actionId]?.non_convergence ? (
+                                                                                        <span data-testid={`badge-divergent-${item.actionId}`} style={{ marginLeft: '4px', background: '#dc3545', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }} title={actions[item.actionId].non_convergence || undefined}>divergent</span>
+                                                                                    ) : (
+                                                                                        <span data-testid={`badge-computed-${item.actionId}`} style={{ marginLeft: '4px', background: '#28a745', color: '#fff', padding: '2px 4px', borderRadius: '4px', fontSize: '9px', opacity: 0.8 }}>computed</span>
+                                                                                    )
+                                                                                )}
                                                                                 {isPerActionParams && typeData.params?.[item.actionId] && (
                                                                                     <span
                                                                                         style={{ color: '#6c757d', fontSize: '12px', cursor: 'help', marginLeft: '6px' }}
@@ -511,6 +548,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                         onMouseEnter={(e) => showTooltip(e, (
                                                                                             <>
                                                                                                 <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
+                                                                                                {typeData.non_convergence?.[item.actionId] && (
+                                                                                                    <div style={{ color: '#ffc107', fontWeight: 600, marginBottom: '4px', padding: '2px 4px', border: '1px solid #ffc107', borderRadius: '4px' }}>
+                                                                                                        ⚠️ Non-convergence: {typeData.non_convergence[item.actionId]}
+                                                                                                    </div>
+                                                                                                )}
                                                                                                 {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
                                                                                                     <div key={k}>
                                                                                                         <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
@@ -550,6 +592,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredActions.map(a => (
                                         <div
                                             key={a.id}
+                                            data-testid={`action-card-${a.id}`}
                                             onClick={() => handleAddAction(a.id)}
                                             style={{
                                                 padding: '6px 10px',
@@ -627,9 +670,46 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 {suggestedTab === 'prioritized' && (
                     prioritizedEntries.length > 0 ? renderActionList(prioritizedEntries) : (
                         !analysisLoading ? (
-                            <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0', textAlign: 'center' }}>
-                                {Object.keys(actions).length > 0 ? 'No suggested actions available.' : 'Run analysis to get action suggestions.'}
-                            </p>
+                            <div style={{ textAlign: 'center' }}>
+                                <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0' }}>
+                                    {Object.keys(actions).length > 0 ? 'No suggested actions available.' : 'Run analysis to get action suggestions.'}
+                                </p>
+                                {Object.keys(actions).length === 0 && (
+                                    <div style={{
+                                        marginTop: '10px',
+                                        padding: '10px',
+                                        background: '#fff3cd',
+                                        border: '1px solid #ffeeba',
+                                        borderRadius: '6px',
+                                        fontSize: '12px',
+                                        color: '#856404',
+                                        textAlign: 'left'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div style={{ fontWeight: 'bold' }}>Recommender Settings:</div>
+                                            {onOpenSettings && (
+                                                <button
+                                                    onClick={() => onOpenSettings('recommender')}
+                                                    style={{
+                                                        background: 'none',
+                                                        border: 'none',
+                                                        color: '#0056b3',
+                                                        textDecoration: 'underline',
+                                                        cursor: 'pointer',
+                                                        padding: '0',
+                                                        fontSize: '11px'
+                                                    }}
+                                                >
+                                                    Change in settings
+                                                </button>
+                                            )}
+                                        </div>
+                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco</div>
+                                        <div>• Maximum suggestions: {nPrioritizedActions}</div>
+                                        <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
+                                    </div>
+                                )}
+                            </div>
                         ) : null
                     )
                 )}

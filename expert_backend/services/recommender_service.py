@@ -64,6 +64,18 @@ class RecommenderService:
             rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw is not None else None
             max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
 
+            non_convergence = action_data.get("non_convergence")
+            if not non_convergence:
+                obs = action_data.get("observation")
+                if obs:
+                    info = getattr(obs, "_last_info", {})
+                    exc = info.get("exception")
+                    if exc:
+                        if isinstance(exc, list):
+                            non_convergence = "; ".join([str(e) for e in exc])
+                        else:
+                            non_convergence = str(exc)
+
             enriched_actions[action_id] = {
                 "description_unitaire": action_data.get("description_unitaire") or "No description available",
                 "rho_before": sanitize_for_json(rho_before),
@@ -71,6 +83,7 @@ class RecommenderService:
                 "max_rho": sanitize_for_json(max_rho),
                 "max_rho_line": action_data.get("max_rho_line", ""),
                 "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
+                "non_convergence": non_convergence,
             }
 
             # Extract topology from the underlying action object
@@ -731,6 +744,19 @@ class RecommenderService:
         diagram = self._generate_diagram(network, voltage_level_ids=voltage_level_ids, depth=depth)
         diagram["action_id"] = action_id
 
+        # Capture convergence status for the map banner
+        info_action = getattr(obs, '_last_info', {})
+        sim_exception = info_action.get("exception")
+        diagram["lf_converged"] = not bool(sim_exception)
+        non_convergence = None
+        if sim_exception:
+            if isinstance(sim_exception, list):
+                non_convergence = "; ".join([str(e) for e in sim_exception])
+            else:
+                non_convergence = str(sim_exception)
+        diagram["lf_status"] = non_convergence if non_convergence else "CONVERGED"
+        diagram["non_convergence"] = non_convergence
+
         # Always include flow deltas so mode switching is instant on the frontend
         try:
             # Get Action flows
@@ -790,6 +816,19 @@ class RecommenderService:
             "action_id": action_id,
             "voltage_level_id": voltage_level_id,
         }
+
+        # Capture convergence status for the SLD
+        info_action = getattr(obs, '_last_info', {})
+        sim_exception = info_action.get("exception")
+        result["lf_converged"] = not bool(sim_exception)
+        non_convergence = None
+        if sim_exception:
+            if isinstance(sim_exception, list):
+                non_convergence = "; ".join([str(e) for e in sim_exception])
+            else:
+                non_convergence = str(sim_exception)
+        result["lf_status"] = non_convergence if non_convergence else "CONVERGED"
+        result["non_convergence"] = non_convergence
         
         try:
             # We already have action flows from the network
@@ -1436,6 +1475,15 @@ class RecommenderService:
                 valid_line_names = np.array(obs_simu_action.name_line)[care_mask]
                 max_rho_line = valid_line_names[np.argmax(rhos_of_interest)]
 
+        # Capture non-convergence reason
+        sim_exception = info_action.get("exception")
+        non_convergence = None
+        if sim_exception:
+            if isinstance(sim_exception, list):
+                non_convergence = "; ".join([str(e) for e in sim_exception])
+            else:
+                non_convergence = str(sim_exception)
+
         # Store the observation so get_action_variant_diagram can generate the NAD
         if not info_action["exception"] and obs_simu_action is not None:
             if self._last_result is None:
@@ -1458,7 +1506,8 @@ class RecommenderService:
                 "rho_after": rho_after,
                 "max_rho": max_rho,
                 "max_rho_line": max_rho_line,
-                "is_rho_reduction": is_rho_reduction
+                "is_rho_reduction": is_rho_reduction,
+                "non_convergence": non_convergence
             }
 
         return {
@@ -1469,6 +1518,7 @@ class RecommenderService:
             "max_rho": sanitize_for_json(max_rho),
             "max_rho_line": max_rho_line,
             "is_rho_reduction": is_rho_reduction,
+            "non_convergence": non_convergence,
             "lines_overloaded": sanitize_for_json(lines_overloaded_names),
         }
 
