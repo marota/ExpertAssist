@@ -1,0 +1,155 @@
+import pytest
+from unittest.mock import MagicMock, patch
+from expert_backend.services.recommender_service import RecommenderService
+from expert_op4grid_recommender import config
+import numpy as np
+
+class TestRecommenderNonConvergence:
+    def setup_method(self):
+        self.service = RecommenderService()
+        self.service._last_result = {"prioritized_actions": {}}
+        # Create a dummy observation class that mimics the expected structure
+        class MockObs:
+            def __init__(self, converged=True, exception=None):
+                self._last_info = {"exception": exception}
+                self.rho = np.array([0.1])
+                self.name_line = ["LINE_1"]
+                self.converged = converged
+                self._variant_id = "some_variant"
+                self._network_manager = MagicMock()
+            
+            def simulate(self, *args, **kwargs):
+                return MagicMock(), None, None, self._last_info
+
+        self.MockObs = MockObs
+
+    def test_enrich_actions_captures_non_convergence_from_obs(self):
+        """Verify that _enrich_actions extracts non-convergence from the observation's _last_info."""
+        mock_obs = self.MockObs(converged=False, exception="Matrix is singular")
+        
+        prioritized = {
+            "action_1": {
+                "observation": mock_obs,
+                "description_unitaire": "Test Action",
+                "rho_before": [1.0],
+                "rho_after": [1.1],
+                "max_rho": 1.1,
+                "max_rho_line": "LINE_1"
+            }
+        }
+        
+        enriched = self.service._enrich_actions(prioritized)
+        assert enriched["action_1"]["non_convergence"] == "Matrix is singular"
+
+    def test_enrich_actions_handles_list_exception(self):
+        """Verify that _enrich_actions handles list of exceptions."""
+        mock_obs = self.MockObs(converged=False, exception=["Error 1", "Error 2"])
+        
+        prioritized = {
+            "action_1": {
+                "observation": mock_obs,
+                "description_unitaire": "Test Action"
+            }
+        }
+        
+        enriched = self.service._enrich_actions(prioritized)
+        assert enriched["action_1"]["non_convergence"] == "Error 1; Error 2"
+
+    @patch("expert_backend.services.recommender_service.config")
+    def test_simulate_manual_action_returns_non_convergence(self, mock_config):
+        """Verify that simulate_manual_action captures and returns non-convergence info."""
+        mock_config.MONITORING_FACTOR_THERMAL_LIMITS = 0.95
+        mock_config.PYPOWSYBL_FAST_MODE = False
+        
+        mock_env = MagicMock()
+        self.service._simulation_env = mock_env
+        
+        # Mocking the network variant logic
+        mock_nm = mock_env.network_manager
+        mock_n = mock_nm.network
+        mock_n.get_working_variant_id.return_value = "base"
+        
+        mock_obs_n1 = self.MockObs(converged=True)
+        mock_info = {"exception": "Load flow diverged"}
+        
+        # Define a mock action that has the expected attributes
+        mock_action = MagicMock()
+        for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus"):
+            setattr(mock_action, field, {})
+
+        with patch.object(self.service, "_get_base_network"), \
+             patch.object(self.service, "_get_n_variant"), \
+             patch.object(self.service, "_get_n1_variant"), \
+             patch.object(mock_env, "get_obs", side_effect=[MagicMock(), mock_obs_n1]), \
+             patch.object(mock_obs_n1, "simulate", return_value=(MagicMock(), None, None, mock_info)), \
+             patch.object(mock_env, "action_space", return_value=mock_action), \
+             patch.object(self.service, "_get_monitoring_parameters", return_value=(set(["LINE_1"]), set(["LINE_1"]))), \
+             patch.object(self.service, "_compute_deltas"), \
+             patch.dict(self.service._dict_action if self.service._dict_action is not None else {}, {"act_1": {"content": {}}}, clear=True):
+            
+            # Ensure _dict_action is not None for the patch.dict to work if it was None
+            if self.service._dict_action is None:
+                self.service._dict_action = {"act_1": {"content": {}}}
+            
+            result = self.service.simulate_manual_action("act_1", "line_1")
+            assert result["non_convergence"] == "Load flow diverged"
+
+    def test_diagram_payload_includes_convergence_info(self):
+        """Verify that get_action_variant_diagram includes convergence status in its response."""
+        mock_obs = self.MockObs(converged=False, exception="Divergence detected")
+        self.service._last_result = {
+            "prioritized_actions": {
+                "act_1": {
+                    "observation": mock_obs,
+                    "non_convergence": "Divergence detected"
+                }
+            }
+        }
+        
+        with patch("expert_backend.services.recommender_service.enrich_actions_lazy"), \
+             patch.object(self.service, "_generate_diagram") as mock_gen, \
+             patch.object(self.service, "_get_network_flows"), \
+             patch.object(self.service, "_get_asset_flows"), \
+             patch.object(self.service, "_get_n1_flows"), \
+             patch.object(self.service, "_get_base_network"), \
+             patch.object(self.service, "_get_n1_variant"), \
+             patch.object(self.service, "_compute_deltas") as mock_deltas:
+            
+            mock_gen.return_value = {"svg": "<svg></svg>", "metadata": {}}
+            mock_deltas.return_value = {"flow_deltas": {}, "reactive_flow_deltas": {}, "asset_deltas": {}}
+            
+            payload = self.service.get_action_variant_diagram("act_1")
+            assert payload["lf_converged"] is False
+            assert payload["non_convergence"] == "Divergence detected"
+
+    def test_sld_payload_includes_convergence_info(self):
+        """Verify that get_action_variant_sld includes convergence status in its response."""
+        mock_obs = self.MockObs(converged=False, exception="Divergence detected")
+        self.service._last_result = {
+            "prioritized_actions": {
+                "act_1": {
+                    "observation": mock_obs,
+                    "non_convergence": "Divergence detected"
+                }
+            }
+        }
+        
+        # SLD needs to mock network.get_single_line_diagram
+        mock_nm = mock_obs._network_manager
+        mock_n = mock_nm.network
+        mock_n.get_single_line_diagram.return_value = MagicMock()
+
+        with patch.object(self.service, "_extract_sld_svg_and_metadata") as mock_extract, \
+             patch.object(self.service, "_get_network_flows"), \
+             patch.object(self.service, "_get_asset_flows"), \
+             patch.object(self.service, "_get_n1_flows"), \
+             patch.object(self.service, "_get_base_network"), \
+             patch.object(self.service, "_get_n1_variant"), \
+             patch.object(self.service, "_compute_deltas") as mock_deltas:
+            
+            mock_extract.return_value = ("<svg></svg>", {})
+            mock_deltas.return_value = {"flow_deltas": {}, "reactive_flow_deltas": {}}
+            
+            payload = self.service.get_action_variant_sld("act_1", "Substation A")
+            assert payload["lf_converged"] is False
+            assert payload["non_convergence"] == "Divergence detected"
