@@ -7,7 +7,7 @@ import pytest
 from pathlib import Path
 
 # Add project root to sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Add Expert_op4grid_recommender local dev dir
 expert_op4_path = Path("/home/marotant/dev/Expert_op4grid_recommender")
@@ -31,14 +31,13 @@ Traceability Images for this test:
 
 @pytest.fixture(scope="module")
 def scenario_data():
-    project_root = Path(__file__).parent.parent
-    baseline_path = project_root / "tests" / "baseline_scenario.json"
+    baseline_path = Path(__file__).parent / "baseline_scenario.json"
     with open(baseline_path, "r") as f:
         return json.load(f)
 
 @pytest.fixture(scope="module")
 def analysis_results(scenario_data):
-    project_root = Path(__file__).parent.parent
+    project_root = Path(__file__).parent.parent.parent
     network_path = project_root / "data" / "bare_env_small_grid_test"
     action_file_path = project_root / "data" / "action_space" / "reduced_model_actions_test.json"
     contingency = scenario_data["contingency"]
@@ -56,12 +55,14 @@ def analysis_results(scenario_data):
             self.monitoring_factor = 0.95
             self.pre_existing_overload_threshold = 0.02
             self.lines_monitoring_path = None
+            self.do_visualization = False
 
-    recommender_service.update_config(Settings(network_path, action_file_path))
-
-    # Import network_service and load the network
+    # Load the network BEFORE updating config, so that self.network is available
+    # for enrich_actions_lazy called inside update_config.
     from expert_backend.services.network_service import network_service
     network_service.load_network(str(network_path))
+
+    recommender_service.update_config(Settings(network_path, action_file_path))
 
     # Run analysis once for the contingency
     iterator = recommender_service.run_analysis(contingency)
@@ -247,7 +248,7 @@ def test_action_simulation_consistency(scenario_data, analysis_results):
     from expert_op4grid_recommender.environment_pypowsybl import setup_environment_configs_pypowsybl
     from expert_op4grid_recommender.main import simulate_contingency_pypowsybl
     
-    project_root = Path(__file__).parent.parent
+    project_root = Path(__file__).parent.parent.parent
     env_folder = project_root / "data"
     env_name = "bare_env_small_grid_test"
     

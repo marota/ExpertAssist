@@ -1,0 +1,56 @@
+import json
+import pytest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+import os
+
+# Define a fake generator for the mocked service
+def fake_step2_gen(*args, **kwargs):
+    yield {"type": "pdf", "pdf_path": "/tmp/test_overflow.pdf"}
+    yield {
+        "type": "result",
+        "actions": {},
+        "action_scores": {},
+        "lines_overloaded": ["LINE_1"],
+        "pre_existing_overloads": [],
+        "message": "Analysis completed",
+        "dc_fallback": False
+    }
+
+def test_early_pdf_reporting():
+    """Verify that 'pdf' event is sent before 'result' event in /api/run-analysis-step2."""
+    
+    # Mock the recommender_service in main.py
+    with patch("expert_backend.main.recommender_service") as mock_rs:
+        from expert_backend.main import app
+        client = TestClient(app)
+        
+        mock_rs.run_analysis_step2.side_effect = fake_step2_gen
+
+        # Call the endpoint
+        response = client.post(
+            "/api/run-analysis-step2",
+            json={
+                "selected_overloads": ["LINE_1"],
+                "all_overloads": ["LINE_1", "LINE_2"],
+                "monitor_deselected": True,
+            }
+        )
+        
+        assert response.status_code == 200
+        
+        # Parse NDJSON lines
+        lines = [line for line in response.text.strip().split("\n") if line.strip()]
+        
+        # If it failed with 1 line, let's see why
+        if len(lines) != 2:
+            print(f"Response content: {response.text}")
+            
+        assert len(lines) == 2
+        
+        event1 = json.loads(lines[0])
+        event2 = json.loads(lines[1])
+        
+        assert event1["type"] == "pdf"
+        assert "pdf_url" in event1
+        assert event2["type"] == "result"

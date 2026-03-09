@@ -1,10 +1,14 @@
 import expert_op4grid_recommender
 from expert_op4grid_recommender import config
-from expert_op4grid_recommender.main import Backend, run_analysis, run_analysis_step1, run_analysis_step2
+from expert_op4grid_recommender.main import (
+    Backend, run_analysis, run_analysis_step1, run_analysis_step2,
+    run_analysis_step2_graph, run_analysis_step2_discovery
+)
 from expert_op4grid_recommender.data_loader import load_actions, enrich_actions_lazy
 from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 import os
 import glob
+import time
 from pathlib import Path
 import numpy as np
 
@@ -12,6 +16,8 @@ def sanitize_for_json(obj):
     if isinstance(obj, (np.integer, int)):
         return int(obj)
     elif isinstance(obj, (np.floating, float)):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
         return float(obj)
     elif isinstance(obj, np.ndarray):
         return sanitize_for_json(obj.tolist())
@@ -30,7 +36,7 @@ def sanitize_for_json(obj):
                     return sanitize_for_json(d)
                 return str(obj)
             return sanitize_for_json(vars(obj))
-        except TypeError:
+        except (TypeError, ValueError):
             return str(obj)
 
 class RecommenderService:
@@ -43,6 +49,43 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
         self._analysis_context = None
+
+    def _enrich_actions(self, prioritized_actions_dict):
+        """Helper to convert raw prioritized actions into enriched dict for JSON response."""
+        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
+        enriched_actions = {}
+        
+        for action_id, action_data in prioritized_actions_dict.items():
+            rho_before_raw = action_data.get("rho_before")
+            rho_after_raw = action_data.get("rho_after")
+            max_rho_raw = action_data.get("max_rho")
+
+            rho_before = [r * monitoring_factor for r in rho_before_raw] if rho_before_raw is not None else None
+            rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw is not None else None
+            max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
+
+            enriched_actions[action_id] = {
+                "description_unitaire": action_data.get("description_unitaire") or "No description available",
+                "rho_before": sanitize_for_json(rho_before),
+                "rho_after": sanitize_for_json(rho_after),
+                "max_rho": sanitize_for_json(max_rho),
+                "max_rho_line": action_data.get("max_rho_line", ""),
+                "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
+            }
+
+            # Extract topology from the underlying action object
+            action_obj = action_data.get("action")
+            if action_obj is not None:
+                topo = {}
+                # pypowsybl Actions use these fields
+                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "substations", "switches"):
+                    val = getattr(action_obj, field, None)
+                    if val is None and isinstance(action_obj, dict):
+                        val = action_obj.get(field)
+                    topo[field] = sanitize_for_json(val) if val else {}
+                enriched_actions[action_id]["action_topology"] = topo
+                
+        return enriched_actions
 
     def update_config(self, settings):
         # Update the global config of the package
@@ -130,7 +173,7 @@ class RecommenderService:
             print("Action dictionary already loaded, skipping reload.")
 
         # Inject missing config parameter and redirect output
-        config.DO_VISUALIZATION = True
+        config.DO_VISUALIZATION = getattr(settings, 'do_visualization', True)
         # Don't check all actions
         config.CHECK_ACTION_SIMULATION = False
 
@@ -194,6 +237,7 @@ class RecommenderService:
             raise ValueError("Analysis context not found. Run step 1 first.")
         
         context = self._analysis_context
+        analysis_start_time = time.time()
         
         # Filter overloads in context based on user selection
         all_names = context["lines_overloaded_names"]
@@ -232,58 +276,32 @@ class RecommenderService:
         else:
             print(f"[Step2] monitor_deselected={monitor_deselected}, all_overloads={all_overloads} -> NOT filtering lines_we_care_about")
 
-        results = run_analysis_step2(context)
-        self._last_result = results # Store for diagram generation
+        # Part 1: Graph generation and PDF
+        context = run_analysis_step2_graph(context)
         
-        # Yield PDF event (graph is generated in Step 2)
-        yield {"type": "pdf", "pdf_path": self._get_latest_pdf_path()}
+        # Yield PDF event (graph is generated in Step 2 Part 1)
+        yield {"type": "pdf", "pdf_path": self._get_latest_pdf_path(analysis_start_time)}
+        
+        # Part 2: Action discovery
+        results = run_analysis_step2_discovery(context)
+        self._last_result = results # Store for diagram generation
 
         # Build enriched actions the same way as run_analysis - with monitoring_factor applied and topology
-        monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
-        enriched_actions = {}
-        for action_id, action_data in results["prioritized_actions"].items():
-            rho_before_raw = action_data.get("rho_before")
-            rho_after_raw = action_data.get("rho_after")
-            max_rho_raw = action_data.get("max_rho")
-
-            rho_before = [r * monitoring_factor for r in rho_before_raw] if rho_before_raw is not None else None
-            rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw is not None else None
-            max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
-
-            enriched_actions[action_id] = {
-                "description_unitaire": action_data.get("description_unitaire") or "No description available",
-                "rho_before": sanitize_for_json(rho_before),
-                "rho_after": sanitize_for_json(rho_after),
-                "max_rho": sanitize_for_json(max_rho),
-                "max_rho_line": action_data.get("max_rho_line", ""),
-                "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
-            }
-
-            # Extract topology from the underlying action object
-            action_obj = action_data.get("action")
-            if action_obj is not None:
-                topo = {}
-                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus"):
-                    val = getattr(action_obj, field, None)
-                    if val is None and isinstance(action_obj, dict):
-                        val = action_obj.get(field)
-                    topo[field] = sanitize_for_json(val) if val else {}
-                enriched_actions[action_id]["action_topology"] = topo
+        enriched_actions = self._enrich_actions(results["prioritized_actions"])
 
         # Yield result
-        yield {
+        yield sanitize_for_json({
             "type": "result",
             "actions": enriched_actions,
-            "action_scores": sanitize_for_json(results["action_scores"]),
+            "action_scores": results["action_scores"],
             "lines_overloaded": results["lines_overloaded_names"],
             "pre_existing_overloads": results.get("pre_existing_overloads", []),
             "message": "Analysis completed",
             "dc_fallback": False,
-        }
+        })
 
     def run_analysis(self, disconnected_element: str):
         import io
-        import time
         import threading
         from contextlib import redirect_stdout
 
@@ -405,35 +423,7 @@ class RecommenderService:
 
             monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
 
-            enriched_actions = {}
-            for action_id, action_data in prioritized.items():
-                rho_before_raw = action_data.get("rho_before")
-                rho_after_raw = action_data.get("rho_after")
-                max_rho_raw = action_data.get("max_rho")
-                
-                rho_before = [r * monitoring_factor for r in rho_before_raw] if rho_before_raw else None
-                rho_after = [r * monitoring_factor for r in rho_after_raw] if rho_after_raw else None
-                max_rho = (max_rho_raw * monitoring_factor) if max_rho_raw is not None else None
-
-                enriched_actions[action_id] = {
-                    "description_unitaire": action_data.get("description_unitaire") or "No description available",
-                    "rho_before": sanitize_for_json(rho_before),
-                    "rho_after": sanitize_for_json(rho_after),
-                    "max_rho": sanitize_for_json(max_rho),
-                    "max_rho_line": action_data.get("max_rho_line", ""),
-                    "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
-                }
-
-                # Extract topology from the underlying action object
-                action_obj = action_data.get("action")
-                if action_obj is not None:
-                    topo = {}
-                    for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus"):
-                        val = getattr(action_obj, field, None)
-                        if val is None and isinstance(action_obj, dict):
-                            val = action_obj.get(field)
-                        topo[field] = sanitize_for_json(val) if val else {}
-                    enriched_actions[action_id]["action_topology"] = topo
+            enriched_actions = self._enrich_actions(prioritized)
 
         from expert_backend.services.network_service import network_service
         total_branches = len(network_service.get_disconnectable_elements())
@@ -447,15 +437,15 @@ class RecommenderService:
         else:
             analysis_message = info_msg
 
-        yield {
+        yield sanitize_for_json({
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
             "actions": enriched_actions,
             "action_scores": action_scores,
-            "lines_overloaded": sanitize_for_json(lines_overloaded),
+            "lines_overloaded": lines_overloaded,
             "message": analysis_message,
             "dc_fallback": dc_fallback_used
-        }
+        })
 
     def _run_ac_with_fallback(self, network, params):
         import pypowsybl.loadflow as lf
