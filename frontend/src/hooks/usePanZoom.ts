@@ -131,16 +131,19 @@ export const usePanZoom = (
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialViewBox]);
 
+    // Sync DOM viewBox BEFORE paint when tab becomes active — prevents
+    // one frame of stale viewBox on tab switch.
+    useLayoutEffect(() => {
+        if (!active || !viewBoxRef.current) return;
+        applyViewBox(viewBoxRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active]);
+
     // Stable event registration — re-registers when active tab changes
     // OR when the diagram loads (initialViewBox changes).
     useEffect(() => {
         const el = svgRef.current;
         if (!el || !active) return;
-
-        // Re-apply saved viewBox to the DOM when becoming active again
-        if (viewBoxRef.current) {
-            applyViewBox(viewBoxRef.current);
-        }
 
         // Get (or cache) the screen CTM
         const getCTM = (): DOMMatrix | null => {

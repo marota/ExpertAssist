@@ -711,7 +711,8 @@ function App() {
   }, [activeTab, actionPZ, nPZ, n1PZ, actionDiagram, nDiagram, n1Diagram, originalViewBox]);
 
   // ===== Tab Synchronization =====
-  useEffect(() => {
+  // useLayoutEffect so the target tab's viewBox is correct BEFORE the browser paints.
+  useLayoutEffect(() => {
     const prevTab = prevTabRef.current;
     prevTabRef.current = activeTab;
 

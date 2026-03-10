@@ -14,26 +14,8 @@
     height: 100%;
 }
 
-/* Keep lines/paths visible at any zoom level without breaking fills/colors */
-.svg-container svg path,
-.svg-container svg line,
-.svg-container svg polyline,
-.svg-container svg rect {
-    vector-effect: non-scaling-stroke;
-}
-
-/* During active pan/zoom interaction, disable non-scaling-stroke and
-   pointer-events on all SVG children. non-scaling-stroke forces the
-   browser to recalculate screen-space stroke widths for every element
-   on each viewBox change — disabling it during interaction eliminates
-   the main source of lag on large grids with thousands of elements.
-   pointer-events: none skips expensive hit-testing during drag/zoom. */
-.svg-container.svg-interacting svg path,
-.svg-container.svg-interacting svg line,
-.svg-container.svg-interacting svg polyline,
-.svg-container.svg-interacting svg rect {
-    vector-effect: initial !important;
-}
+/* During active pan/zoom interaction disable pointer-events on all SVG
+   children to skip expensive hit-testing during drag/zoom. */
 
 .svg-container.svg-interacting svg * {
     pointer-events: none !important;

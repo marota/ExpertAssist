@@ -118,14 +118,6 @@
             height: 100%;
         }
 
-        /* Keep lines/paths visible at any zoom level without breaking fills/colors */
-        .svg-container svg path,
-        .svg-container svg line,
-        .svg-container svg polyline,
-        .svg-container svg rect {
-            vector-effect: non-scaling-stroke;
-        }
-
         .error {
             color: red;
             margin-top: 5px;
@@ -558,6 +550,14 @@
                 commitViewBox(); // Sync to React state on drag end
             };
 
+            // Sync DOM viewBox before paint when this tab becomes active.
+            // useLayoutEffect fires before the browser paints, so the SVG
+            // displays the correct zoom state on the very first frame.
+            useLayoutEffect(() => {
+                if (!active || !viewBoxRef.current) return;
+                applyViewBox(viewBoxRef.current);
+            }, [active]);
+
             // Stable event registration — re-registers when active tab changes
             // OR when the diagram loads (initialViewBox changes). This handles the
             // case where the tab becomes active before the SVG is loaded (e.g. N-1
@@ -565,14 +565,6 @@
             useEffect(() => {
                 const el = svgRef.current;
                 if (!el || !active) return;
-
-                // Re-apply saved viewBox to the DOM when becoming active again
-                // (e.g. returning from the overflow tab). The container stays
-                // mounted so the ref is valid, but the SVG viewBox attribute may
-                // need refreshing after being hidden.
-                if (viewBoxRef.current) {
-                    applyViewBox(viewBoxRef.current);
-                }
 
                 el.addEventListener('wheel', handleWheel, { passive: false });
                 el.addEventListener('mousedown', handleMouseDown);
@@ -2192,7 +2184,7 @@
             // the zoom/pan state so all diagram tabs show the same region.
             // When returning from the overflow tab, each tab keeps its own
             // saved zoom state.
-            useEffect(() => {
+            useLayoutEffect(() => {
                 try {
                     const prevTab = prevTabRef.current;
                     prevTabRef.current = activeTab;
