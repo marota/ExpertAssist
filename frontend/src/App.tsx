@@ -92,6 +92,7 @@ function App() {
       setActiveTab('n');
       setVlOverlay(null);
       setSelectedBranch('');
+      committedBranchRef.current = '';
       setSelectedActionIds(new Set());
       setManuallyAddedIds(new Set());
       setRejectedActionIds(new Set());
@@ -233,44 +234,8 @@ function App() {
     lastZoomState.current = { query: '', branch: '' };
   }, []);
 
-  // Handle branch selection with confirmation when analysis state exists
-  // Only prompt for confirmation when the user picks a valid branch from the list
-  const handleBranchChange = useCallback((newBranch: string) => {
-    if (newBranch === selectedBranch) return;
-    // Allow clearing the input freely
-    if (!newBranch) {
-      setSelectedBranch('');
-      return;
-    }
-    // Only intercept when a valid branch is selected (not while typing partial text)
-    const isValidBranch = branches.includes(newBranch);
-    if (isValidBranch && hasAnalysisState()) {
-      setConfirmDialog({ type: 'contingency', pendingBranch: newBranch });
-    } else {
-      setSelectedBranch(newBranch);
-    }
-  }, [selectedBranch, branches, hasAnalysisState]);
-
-  // Handle Load Study with confirmation when analysis state exists
-  const handleLoadStudyClick = useCallback(() => {
-    if (hasAnalysisState()) {
-      setConfirmDialog({ type: 'loadStudy' });
-    } else {
-      handleLoadConfig();
-    }
-  }, [hasAnalysisState, handleLoadConfig]);
-
-  // Confirm the pending action from the dialog
-  const handleConfirmDialog = useCallback(() => {
-    if (!confirmDialog) return;
-    if (confirmDialog.type === 'contingency') {
-      clearContingencyState();
-      setSelectedBranch(confirmDialog.pendingBranch || '');
-    } else {
-      handleLoadConfig();
-    }
-    setConfirmDialog(null);
-  }, [confirmDialog, clearContingencyState, handleLoadConfig]);
+  // Ref to track the branch for which N-1 was last fetched (the "committed" branch)
+  const committedBranchRef = useRef('');
 
   // ===== Config Loading =====
   const handleLoadConfig = useCallback(async () => {
@@ -289,6 +254,7 @@ function App() {
     setActiveTab('n');
     setVlOverlay(null);
     setSelectedBranch('');
+    committedBranchRef.current = '';
     setInspectQuery('');
     lastZoomState.current = { query: '', branch: '' };
     setShowMonitoringWarning(false); // Clear warning on new config load
@@ -344,6 +310,28 @@ function App() {
     }
   }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
 
+  // Handle Load Study with confirmation when analysis state exists
+  const handleLoadStudyClick = useCallback(() => {
+    if (hasAnalysisState()) {
+      setConfirmDialog({ type: 'loadStudy' });
+    } else {
+      handleLoadConfig();
+    }
+  }, [hasAnalysisState, handleLoadConfig]);
+
+  // Confirm the pending action from the dialog
+  const handleConfirmDialog = useCallback(() => {
+    if (!confirmDialog) return;
+    if (confirmDialog.type === 'contingency') {
+      clearContingencyState();
+      committedBranchRef.current = confirmDialog.pendingBranch || '';
+      setSelectedBranch(confirmDialog.pendingBranch || '');
+    } else {
+      handleLoadConfig();
+    }
+    setConfirmDialog(null);
+  }, [confirmDialog, clearContingencyState, handleLoadConfig]);
+
   const fetchBaseDiagram = async (vlCount: number) => {
     try {
       const res = await api.getNetworkDiagram();
@@ -356,14 +344,32 @@ function App() {
   };
 
   // ===== N-1 Diagram Fetching =====
+  // Uses committedBranchRef to detect actual branch changes vs. re-selections.
+  // When the user picks a new valid branch while analysis state exists, show a
+  // confirmation dialog instead of fetching immediately.
   useEffect(() => {
     if (!selectedBranch) {
       setN1Diagram(null);
+      // Only clear the committed branch when there's no analysis state to protect
+      if (!hasAnalysisState()) {
+        committedBranchRef.current = '';
+      }
       return;
     }
     if (branches.length > 0 && !branches.includes(selectedBranch)) {
       return;
     }
+
+    // Valid branch selected — check if we need confirmation before switching
+    if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
+      // Show confirmation dialog and revert the input to the committed branch
+      setConfirmDialog({ type: 'contingency', pendingBranch: selectedBranch });
+      setSelectedBranch(committedBranchRef.current);
+      return;
+    }
+
+    // Commit this branch and fetch the N-1 diagram
+    committedBranchRef.current = selectedBranch;
 
     const fetchN1 = async () => {
       setN1Loading(true);
@@ -380,6 +386,7 @@ function App() {
       }
     };
     fetchN1();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranch, branches, voltageLevels.length]);
 
   // ===== Analysis =====
@@ -1303,7 +1310,7 @@ function App() {
               <input
                 list="contingencies"
                 value={selectedBranch}
-                onChange={e => handleBranchChange(e.target.value)}
+                onChange={e => setSelectedBranch(e.target.value)}
                 placeholder="Search line/bus..."
                 style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
               />
