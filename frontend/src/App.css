@@ -14,6 +14,17 @@
     height: 100%;
 }
 
+/* Keep strokes at constant screen-pixel width regardless of viewBox zoom.
+   Without this, lines become invisible at full zoom-out and extremely thick
+   when zoomed in, causing both visual loss of pypowsybl native colors and
+   expensive rendering / zoom lag on large grids. */
+.svg-container svg path,
+.svg-container svg line,
+.svg-container svg polyline,
+.svg-container svg rect {
+    vector-effect: non-scaling-stroke;
+}
+
 /* During active pan/zoom interaction disable pointer-events on all SVG
    children to skip expensive hit-testing during drag/zoom. */
 

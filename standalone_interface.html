@@ -111,11 +111,27 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
+            /* CSS containment: tells the browser this subtree's layout/paint is
+               independent of the rest of the page, reducing work during viewBox
+               changes and tab switches */
+            contain: layout style paint;
         }
 
         .svg-container svg {
             width: 100%;
             height: 100%;
+        }
+
+        /* Keep lines/paths visible at any zoom level — without this,
+           strokes scale with the viewBox making them invisible at full
+           zoom-out and extremely thick when zoomed in, which also
+           causes expensive rendering and zoom lag on large grids.
+           Native pypowsybl SVG colors are preserved. */
+        .svg-container svg path,
+        .svg-container svg line,
+        .svg-container svg polyline,
+        .svg-container svg rect {
+            vector-effect: non-scaling-stroke;
         }
 
         .error {
