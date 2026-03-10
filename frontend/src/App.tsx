@@ -447,7 +447,8 @@ function App() {
         }
       }
       return {
-        ...pendingAnalysisResult,
+        ...prev,                   // keep existing fields (pdf_url, etc.)
+        ...pendingAnalysisResult,  // overlay with analysis result
         actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
       };
     });

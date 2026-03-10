@@ -183,6 +183,91 @@ describe('VisualizationPanel', () => {
         expect(screen.getByText('Processing Analysis...')).toBeInTheDocument();
     });
 
+    it('keeps overflow tab visible when result has pdf_url and activeTab is overflow', () => {
+        const result: AnalysisResult = {
+            pdf_path: '/tmp/graph.pdf',
+            pdf_url: '/results/pdf/graph.pdf',
+            actions: { act_1: { description_unitaire: 'Test', rho_before: [1.0], rho_after: [0.8], max_rho: 0.8, max_rho_line: 'L1', is_rho_reduction: true } },
+            lines_overloaded: ['L1'],
+            message: 'Done',
+            dc_fallback: false,
+        };
+        render(<VisualizationPanel {...createDefaultProps({ result, activeTab: 'overflow' })} />);
+
+        // Overflow tab button should be visible
+        expect(screen.getByText('Overflow Analysis')).toBeInTheDocument();
+        // iframe should render the PDF
+        const iframe = document.querySelector('iframe[title="Overflow Graph"]');
+        expect(iframe).toBeInTheDocument();
+        expect(iframe?.getAttribute('src')).toContain('/results/pdf/graph.pdf');
+    });
+
+    it('does not show overflow tab when result has no pdf_url', () => {
+        const result: AnalysisResult = {
+            pdf_path: null,
+            pdf_url: null,
+            actions: { act_1: { description_unitaire: 'Test', rho_before: [1.0], rho_after: [0.8], max_rho: 0.8, max_rho_line: 'L1', is_rho_reduction: true } },
+            lines_overloaded: ['L1'],
+            message: 'Done',
+            dc_fallback: false,
+        };
+        render(<VisualizationPanel {...createDefaultProps({ result })} />);
+        expect(screen.queryByText('Overflow Analysis')).not.toBeInTheDocument();
+    });
+
+    it('overflow tab remains when result is updated but pdf_url is preserved', () => {
+        const result1: AnalysisResult = {
+            pdf_path: '/tmp/graph.pdf',
+            pdf_url: '/results/pdf/graph.pdf',
+            actions: {},
+            lines_overloaded: [],
+            message: 'Done',
+            dc_fallback: false,
+        };
+        const { rerender } = render(<VisualizationPanel {...createDefaultProps({ result: result1, activeTab: 'overflow' })} />);
+        expect(screen.getByText('Overflow Analysis')).toBeInTheDocument();
+
+        // Simulate what happens after handleDisplayPrioritizedActions with the fix:
+        // result is updated with new actions but pdf_url is preserved via ...prev spread
+        const result2: AnalysisResult = {
+            ...result1,
+            actions: { act_1: { description_unitaire: 'New', rho_before: [1.0], rho_after: [0.8], max_rho: 0.8, max_rho_line: 'L1', is_rho_reduction: true } },
+        };
+        rerender(<VisualizationPanel {...createDefaultProps({ result: result2, activeTab: 'overflow' })} />);
+
+        // Overflow tab should still be visible
+        expect(screen.getByText('Overflow Analysis')).toBeInTheDocument();
+        const iframe = document.querySelector('iframe[title="Overflow Graph"]');
+        expect(iframe).toBeInTheDocument();
+    });
+
+    it('overflow tab disappears when result loses pdf_url (regression scenario)', () => {
+        const result1: AnalysisResult = {
+            pdf_path: '/tmp/graph.pdf',
+            pdf_url: '/results/pdf/graph.pdf',
+            actions: {},
+            lines_overloaded: [],
+            message: 'Done',
+            dc_fallback: false,
+        };
+        const { rerender } = render(<VisualizationPanel {...createDefaultProps({ result: result1, activeTab: 'overflow' })} />);
+        expect(screen.getByText('Overflow Analysis')).toBeInTheDocument();
+
+        // If pdf_url were lost (the bug), overflow tab would disappear
+        const resultNoPdf: AnalysisResult = {
+            pdf_path: null,
+            pdf_url: null,
+            actions: { act_1: { description_unitaire: 'New', rho_before: [1.0], rho_after: [0.8], max_rho: 0.8, max_rho_line: 'L1', is_rho_reduction: true } },
+            lines_overloaded: [],
+            message: 'Done',
+            dc_fallback: false,
+        };
+        rerender(<VisualizationPanel {...createDefaultProps({ result: resultNoPdf, activeTab: 'overflow' })} />);
+
+        // Without pdf_url, overflow tab should be gone
+        expect(screen.queryByText('Overflow Analysis')).not.toBeInTheDocument();
+    });
+
     describe('SLD Overlay Delta Class Cleanup', () => {
         it('clears sld-delta-text-* classes from the rendered SVG', () => {
             const svgContent = '<svg><text id="test-text" class="sld-delta-text-positive some-other-class">100</text></svg>';
