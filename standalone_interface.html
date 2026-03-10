@@ -1080,6 +1080,7 @@
                 setActiveTab('n');
                 setVlOverlay(null);
                 setSelectedBranch('');
+                committedBranchRef.current = '';
                 setAnalysisRan(false);
                 setManualActionIds(new Set());
                 setManuallyAddedIds(new Set());
@@ -1208,6 +1209,7 @@
             const lastViewStateN = useRef(null); // { zoom, pan: {x, y} }
             const lastViewStateN1 = useRef(null); // { zoom, pan: {x, y} }
             const lastZoomState = useRef({ query: '', branch: '' }); // Tracks last auto-zoom triggers
+            const committedBranchRef = useRef(''); // Last confirmed contingency branch
             // Captured viewBox to re-apply after the action diagram loads
             // (the tab-switch sync fires before the SVG exists, then
             // usePanZoom resets to the diagram's native viewBox).
@@ -1239,6 +1241,7 @@
                 setActiveTab('n');
                 setVlOverlay(null);
                 setSelectedBranch('');
+                committedBranchRef.current = '';
                 setAnalysisRan(false);
                 setPendingAnalysisResult(null);
                 setManualActionIds(new Set());
@@ -1381,10 +1384,39 @@
                 } catch (err) { console.error('Failed to fetch diagram:', err); }
             };
 
+            // Check if there is any analysis state that would be lost on contingency change
+            const hasAnalysisState = () => {
+                return !!(result || pendingAnalysisResult || selectedActionId || actionDiagram || manuallyAddedIds.size > 0 || manualActionIds.size > 0 || rejectedActionIds.size > 0);
+            };
+
+            // Clear all contingency-related analysis state (preserves network/config)
+            const clearContingencyState = () => {
+                setResult(null);
+                setPendingAnalysisResult(null);
+                setSelectedActionId(null);
+                setManualActionIds(new Set());
+                setManuallyAddedIds(new Set());
+                setRejectedActionIds(new Set());
+                setActionDiagram(null);
+                setN1Diagram(null);
+                setActiveTab('n');
+                setVlOverlay(null);
+                setAnalysisRan(false);
+                setError('');
+                setInfoMessage('');
+                setInspectQuery('');
+                setDismissedSelectedWarning(false);
+                setDismissedRejectedWarning(false);
+                setDismissedRecommenderWarning(false);
+                lastZoomState.current = { query: '', branch: '' };
+            };
+
             // Fetch N-1 Diagram when contingency is selected (ONLY if valid branch)
+            // When switching contingency with existing analysis state, prompt for confirmation.
             useEffect(() => {
                 if (!selectedBranch) {
                     setN1Diagram(null);
+                    committedBranchRef.current = '';
                     return;
                 }
 
@@ -1392,6 +1424,20 @@
                 if (branches.length > 0 && !branches.includes(selectedBranch)) {
                     return;
                 }
+
+                // Valid branch selected — check if we need confirmation before switching
+                if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
+                    if (!window.confirm("Changing contingency will clear all previous analysis results, manual simulations, and action selections. The network state will be preserved.\n\nDo you want to continue?")) {
+                        // User cancelled — revert input to the committed branch
+                        setSelectedBranch(committedBranchRef.current);
+                        return;
+                    }
+                    // User confirmed — clear analysis state
+                    clearContingencyState();
+                }
+
+                // Commit this branch and fetch the N-1 diagram
+                committedBranchRef.current = selectedBranch;
 
                 const fetchN1 = async () => {
                     setN1Loading(true);
