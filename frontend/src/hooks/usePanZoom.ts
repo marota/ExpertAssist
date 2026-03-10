@@ -100,6 +100,8 @@ export const usePanZoom = (
     // Cache SVG element when container content changes.
     // Also hide text immediately on large grids to prevent a flash
     // of unreadable text before the first applyViewBox call.
+    // Runs only when a new diagram loads (initialViewBox changes),
+    // NOT on every render — otherwise it blocks paint on tab switch.
     useLayoutEffect(() => {
         if (svgRef.current) {
             svgElRef.current = svgRef.current.querySelector('svg');
@@ -114,7 +116,8 @@ export const usePanZoom = (
         } else {
             svgElRef.current = null;
         }
-    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialViewBox]);
 
     // Sync from initialViewBox (diagram load or programmatic reset)
     useEffect(() => {
@@ -128,16 +131,19 @@ export const usePanZoom = (
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialViewBox]);
 
+    // Sync DOM viewBox BEFORE paint when tab becomes active — prevents
+    // one frame of stale viewBox on tab switch.
+    useLayoutEffect(() => {
+        if (!active || !viewBoxRef.current) return;
+        applyViewBox(viewBoxRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active]);
+
     // Stable event registration — re-registers when active tab changes
     // OR when the diagram loads (initialViewBox changes).
     useEffect(() => {
         const el = svgRef.current;
         if (!el || !active) return;
-
-        // Re-apply saved viewBox to the DOM when becoming active again
-        if (viewBoxRef.current) {
-            applyViewBox(viewBoxRef.current);
-        }
 
         // Get (or cache) the screen CTM
         const getCTM = (): DOMMatrix | null => {

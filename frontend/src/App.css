@@ -14,7 +14,10 @@
     height: 100%;
 }
 
-/* Keep lines/paths visible at any zoom level without breaking fills/colors */
+/* Keep strokes at constant screen-pixel width regardless of viewBox zoom.
+   Without this, lines become invisible at full zoom-out and extremely thick
+   when zoomed in, causing both visual loss of pypowsybl native colors and
+   expensive rendering / zoom lag on large grids. */
 .svg-container svg path,
 .svg-container svg line,
 .svg-container svg polyline,
@@ -22,18 +25,8 @@
     vector-effect: non-scaling-stroke;
 }
 
-/* During active pan/zoom interaction, disable non-scaling-stroke and
-   pointer-events on all SVG children. non-scaling-stroke forces the
-   browser to recalculate screen-space stroke widths for every element
-   on each viewBox change — disabling it during interaction eliminates
-   the main source of lag on large grids with thousands of elements.
-   pointer-events: none skips expensive hit-testing during drag/zoom. */
-.svg-container.svg-interacting svg path,
-.svg-container.svg-interacting svg line,
-.svg-container.svg-interacting svg polyline,
-.svg-container.svg-interacting svg rect {
-    vector-effect: initial !important;
-}
+/* During active pan/zoom interaction disable pointer-events on all SVG
+   children to skip expensive hit-testing during drag/zoom. */
 
 .svg-container.svg-interacting svg * {
     pointer-events: none !important;
