@@ -108,6 +108,18 @@ export const api = {
         );
         return response.data.path;
     },
+    saveSession: async (params: {
+        session_name: string;
+        json_content: string;
+        pdf_path: string | null;
+        output_folder_path: string;
+    }): Promise<{ session_folder: string }> => {
+        const response = await axios.post<{ session_folder: string }>(
+            `${API_BASE_URL}/api/save-session`,
+            params
+        );
+        return response.data;
+    },
     getNSld: async (voltageLevelId: string): Promise<{ svg: string; sld_metadata: string | null; voltage_level_id: string }> => {
         const response = await axios.post<{ svg: string; sld_metadata: string | null; voltage_level_id: string }>(
             `${API_BASE_URL}/api/n-sld`,

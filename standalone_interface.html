@@ -989,6 +989,7 @@
         function App() {
             const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
             const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
+            const [outputFolderPath, setOutputFolderPath] = useState(localStorage.getItem('outputFolderPath') || '');
             const [linesMonitoringPath, setLinesMonitoringPath] = useState(localStorage.getItem('linesMonitoringPath') || '');
             const initialMountRef = useRef(true);
 
@@ -1017,21 +1018,27 @@
             const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
 
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [settingsTab, setSettingsTab] = useState('recommender');
+            const [settingsTab, setSettingsTab] = useState('paths');
             const [settingsBackup, setSettingsBackup] = useState(null);
             const [analysisLoading, setAnalysisLoading] = useState(false);
             const [analysisRan, setAnalysisRan] = useState(false);
             const [manualActionIds, setManualActionIds] = useState(new Set());
             const [manuallyAddedIds, setManuallyAddedIds] = useState(new Set());
             const [rejectedActionIds, setRejectedActionIds] = useState(new Set());
+            // Tracks every action ID ever returned by the recommender — separate from manuallyAddedIds
+            // so an action can be both is_suggested AND is_manually_simulated.
+            const [suggestedByRecommenderIds, setSuggestedByRecommenderIds] = useState(new Set());
             const [suggestedTab, setSuggestedTab] = useState('prioritized');
             const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
             const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
             const [dismissedRecommenderWarning, setDismissedRecommenderWarning] = useState(false);
             const [pendingAnalysisResult, setPendingAnalysisResult] = useState(null);
 
-            const handleOpenSettings = (tab = 'recommender') => {
+            const handleOpenSettings = (tab = 'paths') => {
                 setSettingsBackup({
+                    networkPath,
+                    actionPath,
+                    outputFolderPath,
                     minLineReconnections,
                     minCloseCoupling,
                     minOpenCoupling,
@@ -1049,6 +1056,9 @@
 
             const handleCloseSettings = () => {
                 if (settingsBackup) {
+                    if (settingsBackup.networkPath !== undefined) setNetworkPath(settingsBackup.networkPath);
+                    if (settingsBackup.actionPath !== undefined) setActionPath(settingsBackup.actionPath);
+                    if (settingsBackup.outputFolderPath !== undefined) setOutputFolderPath(settingsBackup.outputFolderPath);
                     setMinLineReconnections(settingsBackup.minLineReconnections);
                     setMinCloseCoupling(settingsBackup.minCloseCoupling);
                     setMinOpenCoupling(settingsBackup.minOpenCoupling);
@@ -1076,7 +1086,7 @@
                 setOriginalViewBox(null);
                 setResult(null); setPendingAnalysisResult(null);
                 setSelectedActionId(null);
-                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set());
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
                 setAnalysisLoading(false); setAnalysisRan(false);
                 setSelectedOverloads(new Set()); setMonitorDeselected(false);
                 setActiveTab('n'); setActionViewMode('network');
@@ -1113,6 +1123,9 @@
                     }
 
                     setSettingsBackup({
+                        networkPath,
+                        actionPath,
+                        outputFolderPath,
                         minLineReconnections,
                         minCloseCoupling,
                         minOpenCoupling,
@@ -1213,6 +1226,7 @@
 
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
             useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
+            useEffect(() => { localStorage.setItem('outputFolderPath', outputFolderPath); }, [outputFolderPath]);
             useEffect(() => { localStorage.setItem('linesMonitoringPath', linesMonitoringPath); }, [linesMonitoringPath]);
             useEffect(() => { localStorage.setItem('ignoreReconnections', ignoreReconnections); }, [ignoreReconnections]);
             useEffect(() => { localStorage.setItem('pypowsyblFastMode', pypowsyblFastMode); }, [pypowsyblFastMode]);
@@ -1239,7 +1253,7 @@
                 // Analysis
                 setResult(null); setPendingAnalysisResult(null);
                 setSelectedActionId(null);
-                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set());
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
                 setAnalysisLoading(false); setAnalysisRan(false);
                 // Analysis flow
                 setSelectedOverloads(new Set()); setMonitorDeselected(false);
@@ -1398,6 +1412,7 @@
                 setManualActionIds(new Set());
                 setManuallyAddedIds(new Set());
                 setRejectedActionIds(new Set());
+                setSuggestedByRecommenderIds(new Set());
                 setActionDiagram(null);
                 setN1Diagram(null);
                 setActiveTab('n');
@@ -1469,10 +1484,99 @@
                 }
             }, [n1Diagram]);
 
+            const handleSaveSession = async () => {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const contingencyLabel = selectedBranch ? `_${selectedBranch.replace(/[^a-zA-Z0-9_-]/g, '_')}` : '';
+                const sessionName = `expertassist_session${contingencyLabel}_${ts}`;
+
+                // Build the session JSON (same structure as the React app)
+                const session = {
+                    saved_at: new Date().toISOString(),
+                    configuration: {
+                        network_path: networkPath,
+                        action_file_path: actionPath,
+                        min_line_reconnections: minLineReconnections,
+                        min_close_coupling: minCloseCoupling,
+                        min_open_coupling: minOpenCoupling,
+                        min_line_disconnections: minLineDisconnections,
+                        n_prioritized_actions: nPrioritizedActions,
+                        lines_monitoring_path: linesMonitoringPath,
+                        monitoring_factor: monitoringFactor,
+                        pre_existing_overload_threshold: preExistingOverloadThreshold,
+                        ignore_reconnections: ignoreReconnections,
+                        pypowsybl_fast_mode: pypowsyblFastMode,
+                    },
+                    contingency: {
+                        disconnected_element: selectedBranch,
+                        selected_overloads: Array.from(selectedOverloads),
+                        monitor_deselected: monitorDeselected,
+                    },
+                    overloads: {
+                        n_overloads: nDiagram?.lines_overloaded ?? [],
+                        n1_overloads: n1Diagram?.lines_overloaded ?? [],
+                        resolved_overloads: result?.lines_overloaded ?? [],
+                    },
+                    overflow_graph: result?.pdf_url
+                        ? { pdf_url: result.pdf_url, pdf_path: result.pdf_path ?? null }
+                        : null,
+                    analysis: result
+                        ? {
+                            message: result.message,
+                            dc_fallback: result.dc_fallback,
+                            action_scores: result.action_scores,
+                            actions: Object.fromEntries(
+                                Object.entries(result.actions || {}).map(([id, detail]) => [
+                                    id,
+                                    {
+                                        description_unitaire: detail.description_unitaire,
+                                        rho_before: detail.rho_before,
+                                        rho_after: detail.rho_after,
+                                        max_rho: detail.max_rho,
+                                        max_rho_line: detail.max_rho_line,
+                                        is_rho_reduction: detail.is_rho_reduction,
+                                        non_convergence: detail.non_convergence,
+                                        action_topology: detail.action_topology,
+                                        status: {
+                                            is_selected: manualActionIds.has(id),
+                                            is_suggested: suggestedByRecommenderIds.has(id),
+                                            is_rejected: rejectedActionIds.has(id),
+                                            is_manually_simulated: manuallyAddedIds.has(id),
+                                        },
+                                    },
+                                ])
+                            ),
+                        }
+                        : null,
+                };
+
+                if (outputFolderPath) {
+                    try {
+                        const res = await axios.post(API_BASE + '/api/save-session', {
+                            session_name: sessionName,
+                            json_content: JSON.stringify(session, null, 2),
+                            pdf_path: result?.pdf_path ?? null,
+                            output_folder_path: outputFolderPath,
+                        });
+                        setInfoMessage(`Session saved to: ${res.data.session_folder}`);
+                    } catch (err) {
+                        setError('Failed to save session: ' + (err.response?.data?.detail || err.message));
+                    }
+                } else {
+                    // Fallback: browser download of JSON
+                    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${sessionName}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            };
+
             const handleRunAnalysis = async () => {
                 if (!selectedBranch) return;
-                setAnalysisLoading(true); 
-                setError(''); 
+                setAnalysisLoading(true);
+                setError('');
                 setInfoMessage('');
                 setAnalysisRan(false);
                 setPendingAnalysisResult(null);
@@ -1561,6 +1665,7 @@
                                     for (const id in actionsWithFlags) {
                                         actionsWithFlags[id].is_manual = false;
                                     }
+                                    setSuggestedByRecommenderIds(prev => new Set([...prev, ...Object.keys(actionsWithFlags)]));
                                     setPendingAnalysisResult({ ...event, actions: actionsWithFlags });
                                     if (event.message) setInfoMessage(event.message);
                                 }
@@ -3159,15 +3264,16 @@
                                 <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📂</button>
                             </div>
                         </div>
-                        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <label>Action File Path</label>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                                <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-                                <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📄</button>
-                            </div>
-                        </div>
                         <button onClick={handleLoadConfig} disabled={configLoading} style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                             {configLoading ? '⏳ Loading...' : '🔄 Load Study'}
+                        </button>
+                        <button
+                            onClick={handleSaveSession}
+                            disabled={!result && !selectedBranch}
+                            style={{ padding: '6px 14px', background: (!result && !selectedBranch) ? '#95a5a6' : '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: (!result && !selectedBranch) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            title="Save session results to JSON"
+                        >
+                            💾 Save Results
                         </button>
                         <button onClick={handleOpenSettings} style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">&#9881;</button>
                     </header>
@@ -3187,6 +3293,17 @@
                                     <h3 style={{ margin: 0, borderBottom: '1px solid #eee', paddingBottom: '10px' }}>Recommender Settings</h3>
 
                                     <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
+                                        <button
+                                            onClick={() => setSettingsTab('paths')}
+                                            style={{
+                                                flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                                                border: 'none', borderBottom: settingsTab === 'paths' ? '2px solid #3498db' : 'none',
+                                                fontWeight: settingsTab === 'paths' ? 'bold' : 'normal',
+                                                color: settingsTab === 'paths' ? '#3498db' : '#555'
+                                            }}
+                                        >
+                                            Paths
+                                        </button>
                                         <button
                                             onClick={() => setSettingsTab('recommender')}
                                             style={{
@@ -3210,6 +3327,34 @@
                                             Configurations
                                         </button>
                                     </div>
+
+                                    {settingsTab === 'paths' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Network File Path</label>
+                                                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Synchronized with the banner field</div>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📂</button>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Action Dictionary File Path</label>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📄</button>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Output Folder Path</label>
+                                                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Session folders (JSON + PDF) are saved here. Leave empty to download JSON to browser.</div>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={outputFolderPath} onChange={e => setOutputFolderPath(e.target.value)} placeholder="e.g. /home/user/sessions" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('dir', setOutputFolderPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📂</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {settingsTab === 'recommender' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>

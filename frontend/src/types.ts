@@ -122,11 +122,17 @@ export interface MetadataIndex {
 export type TabId = 'n' | 'n-1' | 'action' | 'overflow';
 
 export interface SettingsBackup {
+    // Paths tab (new)
+    networkPath?: string;
+    actionPath?: string;
+    outputFolderPath?: string;
+    // Recommender tab
     minLineReconnections: number;
     minCloseCoupling: number;
     minOpenCoupling: number;
     minLineDisconnections: number;
     nPrioritizedActions: number;
+    // Configurations tab
     linesMonitoringPath: string;
     monitoringFactor: number;
     preExistingOverloadThreshold: number;

@@ -59,6 +59,12 @@ class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
 
+class SaveSessionRequest(BaseModel):
+    session_name: str
+    json_content: str
+    pdf_path: str | None = None
+    output_folder_path: str
+
 last_network_path = None
 
 @app.post("/api/config")
@@ -146,6 +152,38 @@ if path:
     except Exception as e:
         print(f"Error picking path: {e}")
         return {"path": "", "error": str(e)}
+
+@app.post("/api/save-session")
+def save_session(request: SaveSessionRequest):
+    """
+    Saves a session folder to the configured output directory.
+    Creates <output_folder_path>/<session_name>/ and writes:
+      - session.json  (the analysis snapshot)
+      - <overflow>.pdf (copy of the overflow graph PDF, if pdf_path is provided)
+    Returns the absolute path of the created session folder.
+    """
+    import shutil
+
+    if not request.output_folder_path:
+        raise HTTPException(status_code=400, detail="output_folder_path is required")
+
+    session_dir = os.path.join(request.output_folder_path, request.session_name)
+    try:
+        os.makedirs(session_dir, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"Cannot create session directory: {e}")
+
+    # Write JSON snapshot
+    json_file = os.path.join(session_dir, "session.json")
+    with open(json_file, "w", encoding="utf-8") as f:
+        f.write(request.json_content)
+
+    # Copy overflow PDF if available
+    if request.pdf_path and os.path.isfile(request.pdf_path):
+        pdf_dest = os.path.join(session_dir, os.path.basename(request.pdf_path))
+        shutil.copy2(request.pdf_path, pdf_dest)
+
+    return {"session_folder": session_dir}
 
 from fastapi.responses import StreamingResponse
 import json

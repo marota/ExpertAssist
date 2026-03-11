@@ -2,24 +2,72 @@
 
 ## Overview
 
-The **💾 Save Results** button lets operators export the full state of a Co-Study4Grid analysis session as a structured JSON file. The file captures every input, output, and user decision made during the session, making sessions reproducible, auditable, and shareable.
+The **💾 Save Results** button exports the full state of a Co-Study4Grid analysis session. It saves:
+
+- **`session.json`** — all inputs, outputs, and user decisions for the session
+- **`<overflow>.pdf`** — a copy of the overflow graph PDF (when an analysis has been run)
+
+Both files are written to a **session folder** named `expertassist_session_<contingency>_<timestamp>/` inside the configured **Output Folder Path**. If no output folder is configured, the JSON is downloaded directly to the browser (PDF cannot be saved in that case).
+
+---
+
+## Setup: Configure the Output Folder
+
+Open **⚙ Settings → Paths** and set the **Output Folder Path**:
+
+```
+Settings → ⚙ gear icon → Paths tab → Output Folder Path
+```
+
+This is the only path that is settings-only (not shown in the banner). Use the 📂 picker button or type the path directly.
+
+> **Without an output folder:** The Save Results button falls back to a browser JSON download only.
+
+---
+
+## Banner Changes
+
+The banner now shows **only the Network Path** field. The action dictionary path and output folder are configured exclusively from **Settings → Paths** tab:
+
+| Location | Fields |
+|---|---|
+| Banner | Network Path (input + picker), Load Study, Save Results, ⚙ Settings |
+| Settings → **Paths** | Network Path *(synced with banner)*, Action Dictionary File Path, Output Folder Path |
+| Settings → **Recommender** | Algorithm parameters |
+| Settings → **Configurations** | Monitoring, threshold, fast mode |
 
 ---
 
 ## How to Use
 
-1. Load a study (click **🔄 Load Study**).
-2. Select a contingency in the **🎯 Select Contingency** box.
-3. Optionally run analysis, select/reject actions, and simulate manual actions.
-4. Click **💾 Save Results** in the header.
+1. Open **Settings → Paths** and configure Action Dictionary File Path and Output Folder Path.
+2. Load a study (click **🔄 Load Study**).
+3. Select a contingency in the **🎯 Select Contingency** box.
+4. Optionally run analysis, select/reject actions, and simulate manual actions.
+5. Click **💾 Save Results** in the header.
 
-The browser downloads a file named:
+The button is **disabled** until at least a contingency is selected.
+
+### Output with Output Folder configured
+
+A session folder is created:
 
 ```
-expertassist_session_<contingency>_<timestamp>.json
+<output_folder_path>/
+  expertassist_session_LINE_XYZ_2026-03-11T14-23-05/
+    session.json
+    overflow_abc123.pdf   ← copy of the overflow graph
 ```
 
-The button is **disabled** until at least a contingency is selected (there is nothing meaningful to export beforehand).
+A confirmation message is shown in the info bar: `Session saved to: <folder_path>`.
+
+### Output without Output Folder (browser download fallback)
+
+The browser downloads:
+
+```
+expertassist_session_LINE_XYZ_2026-03-11T14-23-05.json
+```
 
 ---
 
@@ -161,9 +209,33 @@ Each action entry mirrors the `ActionDetail` type plus a `status` object:
 
 ## Implementation Details
 
+### Backend (`expert_backend/main.py`)
+
+`POST /api/save-session` accepts:
+
+| Field | Type | Description |
+|---|---|---|
+| `session_name` | `str` | Folder name to create inside `output_folder_path` |
+| `json_content` | `str` | Serialised `session.json` content |
+| `pdf_path` | `str \| null` | Absolute backend path to the overflow PDF to copy |
+| `output_folder_path` | `str` | Absolute path to the parent output directory |
+
+It creates `<output_folder_path>/<session_name>/`, writes `session.json`, and copies the PDF (if the file exists at `pdf_path`). Returns `{ "session_folder": "<absolute_path>" }`.
+
 ### Frontend (`App.tsx`, `utils/sessionUtils.ts`)
 
-The button calls `handleSaveResults`, which delegates to the pure function `buildSessionResult(input: SessionInput)` in `utils/sessionUtils.ts`. This separation keeps the JSON-building logic isolated from React state and makes it directly testable.
+`handleSaveResults` (async) calls `buildSessionResult` to build the JSON, then:
+
+1. **If `outputFolderPath` is set:** calls `api.saveSession(...)` → backend saves both files → shows info message with the folder path.
+2. **If `outputFolderPath` is empty:** falls back to browser download of the JSON blob only.
+
+`buildSessionResult(input: SessionInput)` is a pure function in `utils/sessionUtils.ts`. It keeps the JSON-building logic isolated from React state and directly testable.
+
+#### `outputFolderPath` state
+
+- Initialized from `localStorage.getItem('outputFolderPath')`.
+- Backed up in `settingsBackup` so Cancel reverts it.
+- Cleared on Load Study and Apply Settings.
 
 #### `suggestedByRecommenderIds` state
 
@@ -176,9 +248,17 @@ setSuggestedByRecommenderIds(prev => new Set([...prev, ...Object.keys(actionsWit
 - **Why a separate set?** Using `!manuallyAddedIds.has(id)` (the old approach) would incorrectly mark an action as "not suggested" if the user happened to manually simulate it before the recommender returned it.
 - **Cleared on:** contingency change, Load Study, Apply Settings — the same events that reset all other analysis state.
 
-#### Download mechanism
+### Settings panel — Paths tab
 
-`buildSessionResult` returns a plain `SessionResult` object. `handleSaveResults` serialises it with `JSON.stringify(..., null, 2)`, wraps it in a `Blob`, creates an object URL, and programmatically clicks an `<a>` element to trigger the browser download.
+The "Paths" tab (new, first tab) contains:
+
+| Field | Notes |
+|---|---|
+| **Network File Path** | Same state as the banner input — changes here are reflected there |
+| **Action Dictionary File Path** | Removed from banner; settings-only |
+| **Output Folder Path** | New field; empty = browser download fallback |
+
+All three are backed up on settings open and restored on Cancel.
 
 ---
 

@@ -22,6 +22,9 @@ function App() {
   const [actionPath, setActionPath] = useState(
     localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json'
   );
+  const [outputFolderPath, setOutputFolderPath] = useState(
+    localStorage.getItem('outputFolderPath') || ''
+  );
   const [branches, setBranches] = useState<string[]>([]);
   const [voltageLevels, setVoltageLevels] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState('');
@@ -43,7 +46,7 @@ function App() {
   const [ignoreReconnections, setIgnoreReconnections] = useState<boolean>(false);
   const [pypowsyblFastMode, setPypowsyblFastMode] = useState<boolean>(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations'>('recommender');
+  const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations' | 'paths'>('recommender');
   const [settingsBackup, setSettingsBackup] = useState<SettingsBackup | null>(null);
 
   // Confirmation dialog state for contingency change / load study
@@ -51,6 +54,9 @@ function App() {
 
   const handleOpenSettings = useCallback(() => {
     setSettingsBackup({
+      networkPath,
+      actionPath,
+      outputFolderPath,
       minLineReconnections,
       minCloseCoupling,
       minOpenCoupling,
@@ -63,10 +69,13 @@ function App() {
       pypowsyblFastMode
     });
     setIsSettingsOpen(true);
-  }, [minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
+  }, [networkPath, actionPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
 
   const handleCloseSettings = useCallback(() => {
     if (settingsBackup) {
+      if (settingsBackup.networkPath !== undefined) setNetworkPath(settingsBackup.networkPath);
+      if (settingsBackup.actionPath !== undefined) setActionPath(settingsBackup.actionPath);
+      if (settingsBackup.outputFolderPath !== undefined) setOutputFolderPath(settingsBackup.outputFolderPath);
       setMinLineReconnections(settingsBackup.minLineReconnections);
       setMinCloseCoupling(settingsBackup.minCloseCoupling);
       setMinOpenCoupling(settingsBackup.minOpenCoupling);
@@ -136,6 +145,9 @@ function App() {
       }
 
       setSettingsBackup({
+        networkPath,
+        actionPath,
+        outputFolderPath,
         minLineReconnections,
         minCloseCoupling,
         minOpenCoupling,
@@ -152,7 +164,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
+  }, [networkPath, actionPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
 
   const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
     try {
@@ -224,6 +236,7 @@ function App() {
   // Persist paths to localStorage
   useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
   useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
+  useEffect(() => { localStorage.setItem('outputFolderPath', outputFolderPath); }, [outputFolderPath]);
 
   // ===== Contingency Change Confirmation Helpers =====
   // Check if there is any analysis state that would be lost on contingency change
@@ -680,7 +693,7 @@ function App() {
   }, []);
 
   // ===== Save Results =====
-  const handleSaveResults = useCallback(() => {
+  const handleSaveResults = useCallback(async () => {
     const session = buildSessionResult({
       networkPath, actionPath,
       minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections,
@@ -693,18 +706,37 @@ function App() {
       selectedActionIds, rejectedActionIds, manuallyAddedIds, suggestedByRecommenderIds,
     });
 
-    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const contingencyLabel = selectedBranch ? `_${selectedBranch.replace(/[^a-zA-Z0-9_-]/g, '_')}` : '';
-    a.download = `expertassist_session${contingencyLabel}_${ts}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const sessionName = `expertassist_session${contingencyLabel}_${ts}`;
+
+    if (outputFolderPath) {
+      // Save session folder (JSON + PDF copy) via backend
+      try {
+        const res = await api.saveSession({
+          session_name: sessionName,
+          json_content: JSON.stringify(session, null, 2),
+          pdf_path: result?.pdf_path ?? null,
+          output_folder_path: outputFolderPath,
+        });
+        setInfoMessage(`Session saved to: ${res.session_folder}`);
+      } catch (err: unknown) {
+        const e = err as { response?: { data?: { detail?: string } }; message?: string };
+        setError('Failed to save session: ' + (e.response?.data?.detail || e.message));
+      }
+    } else {
+      // Fallback: browser download of JSON (no output folder configured)
+      const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sessionName}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   }, [
     result, selectedActionIds, manuallyAddedIds, rejectedActionIds, suggestedByRecommenderIds,
-    networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling,
+    networkPath, actionPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling,
     minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor,
     preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
     selectedBranch, selectedOverloads, monitorDeselected,
@@ -1218,22 +1250,6 @@ function App() {
           </div>
         </div>
 
-        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Action File Path</label>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <input
-              type="text" value={actionPath} onChange={e => setActionPath(e.target.value)}
-              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
-            />
-            <button
-              onClick={() => pickSettingsPath('file', setActionPath)}
-              style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}
-            >
-              📄
-            </button>
-          </div>
-        </div>
-
         <button
           onClick={handleLoadStudyClick} disabled={configLoading}
           style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
@@ -1279,6 +1295,17 @@ function App() {
           }}>
             <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
               <button
+                onClick={() => setSettingsTab('paths')}
+                style={{
+                  flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                  border: 'none', borderBottom: settingsTab === 'paths' ? '2px solid #3498db' : 'none',
+                  fontWeight: settingsTab === 'paths' ? 'bold' : 'normal',
+                  color: settingsTab === 'paths' ? '#3498db' : '#555'
+                }}
+              >
+                Paths
+              </button>
+              <button
                 onClick={() => setSettingsTab('recommender')}
                 style={{
                   flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
@@ -1301,6 +1328,34 @@ function App() {
                 Configurations
               </button>
             </div>
+
+            {settingsTab === 'paths' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Network File Path</label>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Synchronized with the banner field</div>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <button onClick={() => pickSettingsPath('dir', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📂</button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Action Dictionary File Path</label>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <button onClick={() => pickSettingsPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📄</button>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Output Folder Path</label>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Session folders (JSON + PDF) are saved here. Leave empty to download JSON to browser.</div>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <input type="text" value={outputFolderPath} onChange={e => setOutputFolderPath(e.target.value)} placeholder="e.g. /home/user/sessions" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                    <button onClick={() => pickSettingsPath('dir', setOutputFolderPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📂</button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {settingsTab === 'recommender' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
