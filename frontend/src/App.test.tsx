@@ -345,3 +345,235 @@ describe('Load Study Confirmation', () => {
     expect(mockApi.updateConfig).not.toHaveBeenCalled();
   });
 });
+
+describe('Full State Reset on Load Study', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('clears branch selection after Load Study with no prior analysis state', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
+
+    mockApi.updateConfig.mockClear();
+    mockApi.getBranches.mockClear();
+
+    const loadBtn = screen.getByText('🔄 Load Study');
+    await act(async () => {
+      await userEvent.click(loadBtn);
+    });
+
+    // No dialog — no analysis state
+    expect(screen.queryByText('Reload Study?')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(mockApi.getBranches).toHaveBeenCalled();
+    });
+
+    // Branch input should be cleared
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('');
+  });
+
+  it('clears branch selection after confirming Load Study with analysis state', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
+
+    mockApi.updateConfig.mockClear();
+    mockApi.getBranches.mockClear();
+
+    const loadBtn = screen.getByText('🔄 Load Study');
+    await act(async () => {
+      await userEvent.click(loadBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Reload Study?')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Confirm'));
+    });
+
+    expect(screen.queryByText('Reload Study?')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(mockApi.getBranches).toHaveBeenCalled();
+    });
+
+    // Branch input must be cleared after reset
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('');
+  });
+
+  it('re-fetches branches after Load Study reset', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+
+    mockApi.getBranches.mockClear();
+
+    const loadBtn = screen.getByText('🔄 Load Study');
+    await act(async () => {
+      await userEvent.click(loadBtn);
+    });
+
+    await waitFor(() => {
+      expect(mockApi.getBranches).toHaveBeenCalled();
+    });
+  });
+
+  it('preserves configuration paths across Load Study reset', async () => {
+    await renderAndLoadStudy();
+
+    const firstCallArgs = mockApi.updateConfig.mock.calls[0][0];
+    expect(firstCallArgs.network_path).toBeTruthy();
+    expect(firstCallArgs.action_file_path).toBeTruthy();
+
+    mockApi.updateConfig.mockClear();
+
+    const loadBtn = screen.getByText('🔄 Load Study');
+    await act(async () => {
+      await userEvent.click(loadBtn);
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    const secondCallArgs = mockApi.updateConfig.mock.calls[0][0];
+    expect(secondCallArgs.network_path).toBe(firstCallArgs.network_path);
+    expect(secondCallArgs.action_file_path).toBe(firstCallArgs.action_file_path);
+  });
+});
+
+describe('Full State Reset on Apply Settings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  async function openSettings() {
+    const settingsBtn = screen.getByTitle('Settings');
+    await act(async () => {
+      await userEvent.click(settingsBtn);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply')).toBeInTheDocument();
+    });
+  }
+
+  it('clears branch selection after Apply Settings', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
+
+    mockApi.updateConfig.mockClear();
+
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('');
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+  });
+
+  it('clears branch and analysis state after Apply Settings with analysis state', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
+
+    mockApi.updateConfig.mockClear();
+
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('');
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+  });
+
+  it('closes settings modal after Apply Settings', async () => {
+    await renderAndLoadStudy();
+    await openSettings();
+
+    expect(screen.getByText('Apply')).toBeInTheDocument();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+  });
+
+  it('calls updateConfig with current settings values after Apply Settings', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.updateConfig.mockClear();
+
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    const callArgs = mockApi.updateConfig.mock.calls[0][0];
+    expect(callArgs).toHaveProperty('min_line_reconnections');
+    expect(callArgs).toHaveProperty('monitoring_factor');
+    expect(callArgs).toHaveProperty('n_prioritized_actions');
+  });
+
+  it('does not re-fetch branches after Apply Settings', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.getBranches.mockClear();
+    mockApi.updateConfig.mockClear();
+
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+
+    // Apply Settings does NOT re-fetch branches (unlike Load Study)
+    expect(mockApi.getBranches).not.toHaveBeenCalled();
+  });
+});
