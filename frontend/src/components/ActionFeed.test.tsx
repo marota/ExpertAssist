@@ -49,10 +49,15 @@ describe('ActionFeed', () => {
         minCloseCoupling: 3,
         minOpenCoupling: 2,
         minLineDisconnections: 3,
+        minPst: 1,
         nPrioritizedActions: 10,
         ignoreReconnections: false,
         pendingAnalysisResult: null as AnalysisResult | null,
+        onOpenSettings: vi.fn(),
+        actionDictFileName: null as string | null,
+        actionDictStats: null as { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null,
     };
+
 
     it('renders "Scored Actions" heading when search is opened and actions are present', async () => {
         const actionId = 'act_1';
@@ -92,7 +97,8 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.queryByText('Suggested Action')).not.toBeInTheDocument();
-        expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
+        // Processing indicator is now only under Suggested Actions tab, not top-level
+        expect(screen.queryByText('⚙️ Processing analysis...')).not.toBeInTheDocument();
     });
 
     it('shows manual actions while analysis is loading', () => {
@@ -117,7 +123,8 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.getByText('Manual Action')).toBeInTheDocument();
-        expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
+        // Processing indicator moved to Suggested Actions only; not duplicated at top
+        expect(screen.queryByText('⚙️ Processing analysis...')).not.toBeInTheDocument();
     });
 
     it('shows display prioritized actions button when pending results exist and loading is false', () => {
@@ -377,5 +384,74 @@ describe('ActionFeed', () => {
         
         expect(screen.queryByText('disco_pst_branch')).not.toBeInTheDocument();
         expect(screen.getByText('All actions already added')).toBeInTheDocument();
+    });
+    it('shows action dict stats warning when actionDictFileName and actionDictStats are provided', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        expect(screen.getByText(/actions.json/)).toBeInTheDocument();
+        expect(screen.getByText(/Reco:/)).toBeInTheDocument();
+        expect(screen.getByText(/Disco:/)).toBeInTheDocument();
+        expect(screen.getByText(/PST:/)).toBeInTheDocument();
+        expect(screen.getByText(/Open coupling:/)).toBeInTheDocument();
+        expect(screen.getByText(/Close coupling:/)).toBeInTheDocument();
+    });
+
+    it('dismisses action dict stats warning when close button is clicked', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        fireEvent.click(screen.getByTitle('Dismiss'));
+        expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
+    });
+
+    it('hides action dict warning while analysis is loading', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            analysisLoading: true,
+        };
+        render(<ActionFeed {...props} />);
+        expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
+    });
+
+    it('includes minPst in the recommender settings warning', () => {
+        const props = {
+            ...defaultProps,
+            minPst: 2,
+            minLineReconnections: 3,
+            minLineDisconnections: 4,
+        };
+        render(<ActionFeed {...props} />);
+        // The recommender settings warning appears when no analysis has been run
+        expect(screen.getByText(/2 PST/)).toBeInTheDocument();
+    });
+
+    it('shows change in settings link in action dict warning calling paths tab', () => {
+        const onOpenSettings = vi.fn();
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            onOpenSettings,
+        };
+        render(<ActionFeed {...props} />);
+
+        // "Change in settings" button in the action dict warning
+        const changeLinks = screen.getAllByText('Change in settings');
+        // Click the first one (action dict warning)
+        fireEvent.click(changeLinks[0]);
+        expect(onOpenSettings).toHaveBeenCalledWith('paths');
     });
 });

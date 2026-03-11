@@ -31,6 +31,7 @@ class ConfigRequest(BaseModel):
     min_close_coupling: float = 3.0
     min_open_coupling: float = 2.0
     min_line_disconnections: float = 3.0
+    min_pst: float = 1.0
     n_prioritized_actions: int = 10
     lines_monitoring_path: str | None = None
     monitoring_factor: float = 0.95
@@ -88,12 +89,31 @@ def update_config(config: ConfigRequest):
             monitored_lines = len(network_service.get_monitored_elements())
         else:
             monitored_lines = getattr(recommender_config, 'MONITORED_LINES_COUNT', total_lines)
-            
+
+        # Compute action dictionary statistics
+        import os as _os
+        action_dict = recommender_service._dict_action or {}
+        action_file_name = _os.path.basename(config.action_file_path)
+        n_reco = sum(1 for k in action_dict if k.lower().startswith('reco_'))
+        n_disco = sum(1 for k in action_dict if k.lower().startswith('disco_'))
+        n_pst = sum(1 for k in action_dict if 'pst' in k.lower() and not k.lower().startswith('reco_') and not k.lower().startswith('disco_'))
+        n_open_coupling = sum(1 for k in action_dict if 'open_coupling' in k.lower())
+        n_close_coupling = sum(1 for k in action_dict if 'close_coupling' in k.lower())
+
         return {
             "status": "success", 
             "message": "Configuration updated and network loaded",
             "total_lines_count": total_lines,
-            "monitored_lines_count": monitored_lines
+            "monitored_lines_count": monitored_lines,
+            "action_dict_file_name": action_file_name,
+            "action_dict_stats": {
+                "reco": n_reco,
+                "disco": n_disco,
+                "pst": n_pst,
+                "open_coupling": n_open_coupling,
+                "close_coupling": n_close_coupling,
+                "total": len(action_dict)
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -29,8 +29,11 @@ interface ActionFeedProps {
     minOpenCoupling: number;
     minLineDisconnections: number;
     nPrioritizedActions: number;
+    minPst: number;
     ignoreReconnections: boolean;
-    onOpenSettings?: (tab?: 'recommender' | 'configurations') => void;
+    onOpenSettings?: (tab?: 'recommender' | 'configurations' | 'paths') => void;
+    actionDictFileName?: string | null;
+    actionDictStats?: { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -58,9 +61,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     minCloseCoupling,
     minOpenCoupling,
     minLineDisconnections,
+    minPst,
     nPrioritizedActions,
     ignoreReconnections,
     onOpenSettings,
+    actionDictFileName,
+    actionDictStats,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -75,6 +81,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [suggestedTab, setSuggestedTab] = useState<'prioritized' | 'rejected'>('prioritized');
     const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
     const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
+    const [showActionDictWarning, setShowActionDictWarning] = useState(true);
 
     const showTooltip = (e: React.MouseEvent, content: React.ReactNode) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -670,6 +677,30 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     </div>
                 )}
             </div>
+            {/* Action Dict Info Warning */}
+            {showActionDictWarning && !simulating && !analysisLoading && actionDictFileName && actionDictStats && (
+                <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                    gap: '8px', padding: '8px 10px',
+                    background: '#e8f4fd', border: '1px solid #b8d9f5',
+                    borderRadius: '6px', marginBottom: '10px', fontSize: '12px', color: '#1a5276'
+                }}>
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600, marginBottom: '4px' }}>ℹ️ Action dictionary: <code style={{ fontFamily: 'monospace', background: '#d6eaf8', padding: '1px 4px', borderRadius: '3px' }}>{actionDictFileName}</code></div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+                            <span>🔄 Reco: <strong>{actionDictStats.reco}</strong></span>
+                            <span>⛔ Disco: <strong>{actionDictStats.disco}</strong></span>
+                            <span>📐 PST: <strong>{actionDictStats.pst}</strong></span>
+                            <span>🔓 Open coupling: <strong>{actionDictStats.open_coupling}</strong></span>
+                            <span>🔒 Close coupling: <strong>{actionDictStats.close_coupling}</strong></span>
+                        </div>
+                        {onOpenSettings && (
+                            <button onClick={() => onOpenSettings('paths')} style={{ background: 'none', border: 'none', color: '#0056b3', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change in settings</button>
+                        )}
+                    </div>
+                    <button onClick={() => setShowActionDictWarning(false)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '16px', lineHeight: 1, color: '#1a5276' }} title="Dismiss">✕</button>
+                </div>
+            )}
             <div style={{ marginBottom: '15px' }}>
                 <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '4px', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
                     Selected Actions
@@ -706,16 +737,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 </div>
 
 
-                {/* Loading indicator shown below existing cards during analysis */}
-                {analysisLoading && (
-                    <div style={{
-                        textAlign: 'center', padding: '12px', color: '#856404',
-                        background: '#fff3cd', fontSize: '13px', fontWeight: 600,
-                        borderRadius: '8px', margin: '8px 0',
-                    }}>
-                        ⚙️ Processing analysis...
-                    </div>
-                )}
+                {/* Processing indicator during analysis - removed duplicate, keeping one under Suggested Actions */}
+
  
                 {/* Display prioritized actions button inside Suggested Actions section */}
                 {pendingAnalysisResult && !analysisLoading && (
@@ -779,7 +802,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 </button>
                                             )}
                                         </div>
-                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco</div>
+                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST</div>
                                         <div>• Maximum suggestions: {nPrioritizedActions}</div>
                                         <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
                                     </div>

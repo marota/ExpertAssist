@@ -134,6 +134,8 @@ class RecommenderService:
             config.IGNORE_RECONNECTIONS = settings.ignore_reconnections
         if hasattr(settings, 'pypowsybl_fast_mode') and settings.pypowsybl_fast_mode is not None:
             config.PYPOWSYBL_FAST_MODE = settings.pypowsybl_fast_mode
+        if hasattr(settings, 'min_pst') and settings.min_pst is not None:
+            config.MIN_PST = settings.min_pst
         
         # New layout file path
         if hasattr(settings, 'layout_path') and settings.layout_path:

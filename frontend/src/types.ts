@@ -5,6 +5,7 @@ export interface ConfigRequest {
     min_close_coupling: number;
     min_open_coupling: number;
     min_line_disconnections: number;
+    min_pst?: number;
     n_prioritized_actions: number;
     lines_monitoring_path?: string;
     monitoring_factor: number;

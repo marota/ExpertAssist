@@ -41,6 +41,9 @@ function App() {
   const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState<number>(0.02);
   const [ignoreReconnections, setIgnoreReconnections] = useState<boolean>(false);
   const [pypowsyblFastMode, setPypowsyblFastMode] = useState<boolean>(true);
+  const [minPst, setMinPst] = useState<number>(1.0);
+  const [actionDictFileName, setActionDictFileName] = useState<string | null>(null);
+  const [actionDictStats, setActionDictStats] = useState<{ reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations' | 'paths'>('paths');
   const [settingsBackup, setSettingsBackup] = useState<SettingsBackup | null>(null);
@@ -207,6 +210,7 @@ function App() {
         min_close_coupling: minCloseCoupling,
         min_open_coupling: minOpenCoupling,
         min_line_disconnections: minLineDisconnections,
+        min_pst: minPst,
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
         monitoring_factor: monitoringFactor,
@@ -222,6 +226,9 @@ function App() {
           setShowMonitoringWarning(true);
         }
       }
+      if (configRes?.action_dict_file_name) setActionDictFileName(configRes.action_dict_file_name);
+      if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats);
+
 
       // Fetch study-related data (branches, nominal voltages etc.)
       const [branchesList, vlRes, nomVRes] = await Promise.all([
@@ -362,6 +369,7 @@ function App() {
         min_close_coupling: minCloseCoupling,
         min_open_coupling: minOpenCoupling,
         min_line_disconnections: minLineDisconnections,
+        min_pst: minPst,
         n_prioritized_actions: nPrioritizedActions,
         lines_monitoring_path: linesMonitoringPath,
         monitoring_factor: monitoringFactor,
@@ -377,6 +385,9 @@ function App() {
           setShowMonitoringWarning(true);
         }
       }
+      if (configRes?.action_dict_file_name) setActionDictFileName(configRes.action_dict_file_name);
+      if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats);
+
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
         api.getBranches(),
@@ -1427,6 +1438,10 @@ function App() {
                   <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min PST Actions</label>
+                  <input type="number" step="0.1" value={minPst} onChange={e => setMinPst(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
                   <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
                 </div>
@@ -1572,8 +1587,12 @@ function App() {
               minCloseCoupling={minCloseCoupling}
               minOpenCoupling={minOpenCoupling}
               minLineDisconnections={minLineDisconnections}
+              minPst={minPst}
               nPrioritizedActions={nPrioritizedActions}
               ignoreReconnections={ignoreReconnections}
+              actionDictFileName={actionDictFileName}
+              actionDictStats={actionDictStats}
+              onOpenSettings={handleOpenSettings}
             />
           </div>
         </div>
