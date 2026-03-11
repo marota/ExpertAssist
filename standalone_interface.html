@@ -1105,6 +1105,27 @@
                 lastViewStateN.current = null; lastViewStateN1.current = null;
                 lastZoomState.current = { query: '', branch: '' };
 
+                if (!networkPath || !actionPath) {
+                    setSettingsBackup({
+                        networkPath,
+                        actionPath,
+                        layoutPath,
+                        outputFolderPath,
+                        minLineReconnections,
+                        minCloseCoupling,
+                        minOpenCoupling,
+                        minLineDisconnections,
+                        nPrioritizedActions,
+                        linesMonitoringPath,
+                        monitoringFactor,
+                        preExistingOverloadThreshold,
+                        ignoreReconnections,
+                        pypowsyblFastMode
+                    });
+                    setIsSettingsOpen(false);
+                    return;
+                }
+
                 try {
                     const configRes = await axios.post(API_BASE + '/api/config', {
                         network_path: networkPath,

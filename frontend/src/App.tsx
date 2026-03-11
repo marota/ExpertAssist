@@ -202,6 +202,27 @@ function App() {
       actionSyncSourceRef.current = null;
       setShowMonitoringWarning(false);
 
+      if (!networkPath || !actionPath) {
+        setSettingsBackup({
+          networkPath,
+          actionPath,
+          layoutPath,
+          outputFolderPath,
+          minLineReconnections,
+          minCloseCoupling,
+          minOpenCoupling,
+          minLineDisconnections,
+          nPrioritizedActions,
+          linesMonitoringPath,
+          monitoringFactor,
+          preExistingOverloadThreshold,
+          ignoreReconnections,
+          pypowsyblFastMode,
+        });
+        setIsSettingsOpen(false);
+        return;
+      }
+
       const configRes = await api.updateConfig({
         network_path: networkPath,
         action_file_path: actionPath,
