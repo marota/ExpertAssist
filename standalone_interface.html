@@ -1070,28 +1070,23 @@
                     }
                 }
 
-                // Clear previous results to ensure consistency with new settings BEFORE fetching
-                setResult(null);
-                setPendingAnalysisResult(null);
-                setNDiagram(null);
-                setN1Diagram(null);
-                setActionDiagram(null);
+                // ── Clear ALL state for a full reset (same as handleLoadConfig) ──
+                setError(''); setInfoMessage('');
+                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
+                setOriginalViewBox(null);
+                setResult(null); setPendingAnalysisResult(null);
                 setSelectedActionId(null);
-                setActiveTab('n');
-                setVlOverlay(null);
-                setSelectedBranch('');
-                committedBranchRef.current = '';
-                setAnalysisRan(false);
-                setManualActionIds(new Set());
-                setManuallyAddedIds(new Set());
-                setRejectedActionIds(new Set());
-                setError('');
-                setInfoMessage('');
-                setDismissedSelectedWarning(false);
-                setDismissedRejectedWarning(false);
-                setDismissedRecommenderWarning(false);
-                setShowMonitoringWarning(false);
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set());
+                setAnalysisLoading(false); setAnalysisRan(false);
+                setSelectedOverloads(new Set()); setMonitorDeselected(false);
+                setActiveTab('n'); setActionViewMode('network');
+                setVlOverlay(null); setN1Loading(false);
+                setSelectedBranch(''); committedBranchRef.current = '';
                 setInspectQuery('');
+                setShowMonitoringWarning(false);
+                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
+                lastViewStateN.current = null; lastViewStateN1.current = null;
+                lastZoomState.current = { query: '', branch: '' };
 
                 try {
                     const configRes = await axios.post(API_BASE + '/api/config', {
@@ -1235,24 +1230,30 @@
                         return;
                     }
                 }
-                setConfigLoading(true); setError(''); setInfoMessage(''); setShowMonitoringWarning(false);
-                setNDiagram(null); setN1Diagram(null); setResult(null);
-                setSelectedActionId(null); setActionDiagram(null);
-                setActiveTab('n');
-                setVlOverlay(null);
-                setSelectedBranch('');
-                committedBranchRef.current = '';
-                setAnalysisRan(false);
-                setPendingAnalysisResult(null);
-                setManualActionIds(new Set());
-                setManuallyAddedIds(new Set());
-                setRejectedActionIds(new Set());
-                setDismissedSelectedWarning(false);
-                setDismissedRejectedWarning(false);
-                setDismissedRecommenderWarning(false);
+                // ── Clear ALL state for a full reset ──
+                setConfigLoading(true);
+                setError(''); setInfoMessage('');
+                // Diagrams
+                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
+                setOriginalViewBox(null);
+                // Analysis
+                setResult(null); setPendingAnalysisResult(null);
+                setSelectedActionId(null);
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set());
+                setAnalysisLoading(false); setAnalysisRan(false);
+                // Analysis flow
+                setSelectedOverloads(new Set()); setMonitorDeselected(false);
+                // Visualization
+                setActiveTab('n'); setActionViewMode('network');
+                setVlOverlay(null); setN1Loading(false);
+                // Branch / contingency
+                setSelectedBranch(''); committedBranchRef.current = '';
                 setInspectQuery('');
-                lastViewStateN.current = null; // Reset view state on new config
-                lastViewStateN1.current = null;
+                // Warnings
+                setShowMonitoringWarning(false);
+                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
+                // Refs
+                lastViewStateN.current = null; lastViewStateN1.current = null;
                 lastZoomState.current = { query: '', branch: '' };
 
                 try {

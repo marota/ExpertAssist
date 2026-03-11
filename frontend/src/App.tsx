@@ -82,24 +82,33 @@ function App() {
 
   const handleApplySettings = useCallback(async () => {
     try {
-      // Clear previous results to ensure consistency with new settings BEFORE fetching
-      setResult(null);
-      setPendingAnalysisResult(null);
+      // ── Clear ALL state for a full reset (same as handleLoadConfig) ──
+      setError('');
+      setInfoMessage('');
       setNDiagram(null);
       setN1Diagram(null);
       setActionDiagram(null);
+      setOriginalViewBox(null);
+      setResult(null);
+      setPendingAnalysisResult(null);
       setSelectedActionId(null);
-      setActiveTab('n');
-      setVlOverlay(null);
-      setSelectedBranch('');
-      committedBranchRef.current = '';
       setSelectedActionIds(new Set());
       setManuallyAddedIds(new Set());
       setRejectedActionIds(new Set());
-      setError('');
-      setInfoMessage('');
+      setAnalysisLoading(false);
+      setSelectedOverloads(new Set());
+      setMonitorDeselected(false);
+      setActiveTab('n');
+      setActionViewMode('network');
+      setVlOverlay(null);
+      setN1Loading(false);
+      setActionDiagramLoading(false);
+      setSelectedBranch('');
+      committedBranchRef.current = '';
       setInspectQuery('');
-      setShowMonitoringWarning(false); // Clear warning on new settings application
+      lastZoomState.current = { query: '', branch: '' };
+      actionSyncSourceRef.current = null;
+      setShowMonitoringWarning(false);
 
       const configRes = await api.updateConfig({
         network_path: networkPath,
@@ -240,24 +249,41 @@ function App() {
   // ===== Config Loading =====
   const handleLoadConfig = useCallback(async () => {
     setConfigLoading(true);
+    // ── Clear ALL state for a full reset ──
+    // Errors & messages
     setError('');
     setInfoMessage('');
+    // Diagrams
     setNDiagram(null);
     setN1Diagram(null);
+    setActionDiagram(null);
+    setOriginalViewBox(null);
+    // Analysis
     setResult(null);
     setPendingAnalysisResult(null);
     setSelectedActionId(null);
     setSelectedActionIds(new Set());
     setManuallyAddedIds(new Set());
     setRejectedActionIds(new Set());
-    setActionDiagram(null);
+    setAnalysisLoading(false);
+    // Analysis flow
+    setSelectedOverloads(new Set());
+    setMonitorDeselected(false);
+    // Visualization
     setActiveTab('n');
+    setActionViewMode('network');
     setVlOverlay(null);
+    setN1Loading(false);
+    setActionDiagramLoading(false);
+    // Branch / contingency
     setSelectedBranch('');
     committedBranchRef.current = '';
     setInspectQuery('');
+    // Refs
     lastZoomState.current = { query: '', branch: '' };
-    setShowMonitoringWarning(false); // Clear warning on new config load
+    actionSyncSourceRef.current = null;
+    // Warnings
+    setShowMonitoringWarning(false);
 
     try {
       const configRes = await api.updateConfig({

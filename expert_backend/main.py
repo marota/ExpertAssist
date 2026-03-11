@@ -65,10 +65,12 @@ last_network_path = None
 def update_config(config: ConfigRequest):
     global last_network_path
     try:
-        # Load network first to verify path and get branches
-        if config.network_path != last_network_path:
-            network_service.load_network(config.network_path)
-            last_network_path = config.network_path
+        # Always reload network and reset recommender caches to ensure clean state.
+        # Even if the path is the same, previous analyses may have modified the
+        # in-memory network or left stale simulation environments.
+        recommender_service.reset()
+        network_service.load_network(config.network_path)
+        last_network_path = config.network_path
         # Update recommender config
         recommender_service.update_config(config)
         

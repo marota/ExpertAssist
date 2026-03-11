@@ -50,6 +50,17 @@ class RecommenderService:
         self._dict_action = None
         self._analysis_context = None
 
+    def reset(self):
+        """Clear all cached analysis state. Called when loading a new study."""
+        self._last_result = None
+        self._is_running = False
+        self._generator = None
+        self._base_network = None
+        self._simulation_env = None
+        self._last_disconnected_element = None
+        self._dict_action = None
+        self._analysis_context = None
+
     def _enrich_actions(self, prioritized_actions_dict):
         """Helper to convert raw prioritized actions into enriched dict for JSON response."""
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
