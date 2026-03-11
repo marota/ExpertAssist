@@ -102,7 +102,7 @@ class RecommenderService:
             if action_obj is not None:
                 topo = {}
                 # pypowsybl Actions use these fields
-                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "substations", "switches"):
+                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
                     val = getattr(action_obj, field, None)
                     if val is None and isinstance(action_obj, dict):
                         val = action_obj.get(field)
@@ -134,6 +134,14 @@ class RecommenderService:
             config.IGNORE_RECONNECTIONS = settings.ignore_reconnections
         if hasattr(settings, 'pypowsybl_fast_mode') and settings.pypowsybl_fast_mode is not None:
             config.PYPOWSYBL_FAST_MODE = settings.pypowsybl_fast_mode
+        if hasattr(settings, 'min_pst') and settings.min_pst is not None:
+            config.MIN_PST = settings.min_pst
+        
+        # New layout file path
+        if hasattr(settings, 'layout_path') and settings.layout_path:
+            config.LAYOUT_FILE_PATH = Path(settings.layout_path)
+        else:
+            config.LAYOUT_FILE_PATH = None
 
         # Force the requested global flags
         config.MAX_RHO_BOTH_EXTREMITIES = True
@@ -495,13 +503,21 @@ class RecommenderService:
 
         import pypowsybl as pp
 
-        network_file = config.ENV_PATH / "grid.xiidm"
-        if not network_file.exists():
-            xiidm_files = list(config.ENV_PATH.glob("*.xiidm"))
-            if xiidm_files:
-                network_file = xiidm_files[0]
+        network_file = config.ENV_PATH
+        if network_file.is_dir():
+            files = [f for f in network_file.iterdir() if f.suffix.lower() in ['.xiidm', '.iidm', '.xml']]
+            if files:
+                network_file = files[0]
             else:
-                raise FileNotFoundError(f"No .xiidm file found in {config.ENV_PATH}")
+                # Also check in grid/ subfolder
+                grid_folder = network_file / "grid"
+                if grid_folder.is_dir():
+                    files = [f for f in grid_folder.iterdir() if f.suffix.lower() in ['.xiidm', '.iidm', '.xml']]
+                    if files:
+                        network_file = files[0]
+
+        if not network_file.exists():
+            raise FileNotFoundError(f"Network file not found: {network_file}")
         
         n = pp.network.load(str(network_file))
         # Convenience method not in pypowsybl API: return line IDs as a list
@@ -592,8 +608,8 @@ class RecommenderService:
         import pandas as pd
         import json
 
-        layout_file = config.ENV_PATH / "grid_layout.json"
-        if layout_file.exists():
+        layout_file = getattr(config, 'LAYOUT_FILE_PATH', None)
+        if layout_file and layout_file.exists():
             try:
                 with open(layout_file, 'r') as f:
                     layout_data = json.load(f)

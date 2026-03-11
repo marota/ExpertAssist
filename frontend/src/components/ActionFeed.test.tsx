@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 
 // Mocking dependencies
 vi.mock('../api', () => ({
@@ -20,6 +21,7 @@ vi.mock('../utils/svgUtils', () => ({
 }));
 
 import ActionFeed from './ActionFeed';
+import { api } from '../api';
 import type { ActionDetail, AnalysisResult } from '../types';
 
 describe('ActionFeed', () => {
@@ -48,10 +50,15 @@ describe('ActionFeed', () => {
         minCloseCoupling: 3,
         minOpenCoupling: 2,
         minLineDisconnections: 3,
+        minPst: 1,
         nPrioritizedActions: 10,
         ignoreReconnections: false,
         pendingAnalysisResult: null as AnalysisResult | null,
+        onOpenSettings: vi.fn(),
+        actionDictFileName: null as string | null,
+        actionDictStats: null as { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null,
     };
+
 
     it('renders "Scored Actions" heading when search is opened and actions are present', async () => {
         const actionId = 'act_1';
@@ -91,6 +98,7 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.queryByText('Suggested Action')).not.toBeInTheDocument();
+        // Processing indicator is now visible during analysis
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
     });
 
@@ -116,6 +124,7 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.getByText('Manual Action')).toBeInTheDocument();
+        // Processing indicator is visible even when viewing selected actions
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
     });
 
@@ -262,5 +271,211 @@ describe('ActionFeed', () => {
         const badIndex = cardTexts.findIndex(t => t?.includes('Bad Action'));
         
         expect(goodIndex).toBeLessThan(badIndex);
+    });
+
+    it('filters PST actions based on the PST checkbox', async () => {
+        const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
+        const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
+        
+        // Mock API to return both actions
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
+
+        render(<ActionFeed {...defaultProps} />);
+        
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        
+        // Both should be visible initially (PST filter is true by default)
+        expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
+        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+        
+        // Find and click the PST checkbox to uncheck it
+        const pstCheckbox = screen.getByLabelText('PST');
+        fireEvent.click(pstCheckbox);
+        
+        // PST action should be hidden, regular action should remain
+        expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
+        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+        
+        // Check it again
+        fireEvent.click(pstCheckbox);
+        expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
+    });
+
+    it('hides PST actions matching search query when PST filter is unchecked', async () => {
+        const pstAction = { id: 'pst_tap_up', description: 'PST action' };
+        
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction]);
+
+        render(<ActionFeed {...defaultProps} />);
+        
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        
+        // Uncheck PST filter
+        const pstCheckbox = screen.getByLabelText('PST');
+        fireEvent.click(pstCheckbox);
+        
+        // Type "pst" in search
+        const searchInput = screen.getByPlaceholderText(/Search action/);
+        fireEvent.change(searchInput, { target: { value: 'pst' } });
+        
+        // Wait for loading to finish if it hasn't already
+        await waitFor(() => {
+            expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
+        });
+
+        // PST action should NOT be visible even if it matches search query
+        expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
+        expect(screen.getByText('No matching actions')).toBeInTheDocument();
+    });
+
+    it('shows ONLY PST actions when only PST filter is checked', async () => {
+        const pstAction = { id: 'pst_1', description: 'PST action' };
+        const discoAction = { id: 'abc', description: 'Ouverture de ligne' }; // Should be recognized as disco
+        const unknownAction = { id: 'xyz', description: 'Some unknown action' };
+        
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, discoAction, unknownAction]);
+
+        render(<ActionFeed {...defaultProps} />);
+        
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        
+        // Uncheck everything except PST
+        fireEvent.click(screen.getByLabelText('Disconnections'));
+        fireEvent.click(screen.getByLabelText('Reconnections'));
+        fireEvent.click(screen.getByLabelText('Open coupling'));
+        fireEvent.click(screen.getByLabelText('Close coupling'));
+        
+        // PST should be visible
+        expect(await screen.findByText('pst_1')).toBeInTheDocument();
+        
+        // Disco and Unknown should NOT be visible
+        expect(screen.queryByText('abc')).not.toBeInTheDocument();
+        expect(screen.queryByText('xyz')).not.toBeInTheDocument();
+    });
+
+    it('hides disconnections on PST branches when Disconnections filter is off but PST is on', async () => {
+        const pstDiscoAction = { 
+            id: 'disco_pst_branch', 
+            description: 'Ouverture de la branche PST',
+            type: 'pst_tap_change' // Simulating backend tagging it as PST
+        };
+        
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstDiscoAction]);
+
+        render(<ActionFeed {...defaultProps} />);
+        
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        
+        // Ensure Disconnections is unchecked, PST is checked
+        const discoCheckbox = screen.getByLabelText('Disconnections') as HTMLInputElement;
+        if (discoCheckbox.checked) fireEvent.click(discoCheckbox);
+        
+        const pstCheckbox = screen.getByLabelText('PST') as HTMLInputElement;
+        if (!pstCheckbox.checked) fireEvent.click(pstCheckbox);
+        
+        // PST branch disco should NOT be visible because it's a disconnection
+        // even if it has "pst" in id/type
+        await waitFor(() => {
+            expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
+        });
+        
+        expect(screen.queryByText('disco_pst_branch')).not.toBeInTheDocument();
+        expect(screen.getByText('All actions already added')).toBeInTheDocument();
+    });
+    it('shows action dict stats warning when actionDictFileName and actionDictStats are provided', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        expect(screen.getByText(/actions.json/)).toBeInTheDocument();
+        expect(screen.getByText(/Reco:/)).toBeInTheDocument();
+        expect(screen.getByText(/Disco:/)).toBeInTheDocument();
+        expect(screen.getByText(/PST:/)).toBeInTheDocument();
+        expect(screen.getByText(/Open coupling:/)).toBeInTheDocument();
+        expect(screen.getByText(/Close coupling:/)).toBeInTheDocument();
+    });
+
+    it('dismisses action dict stats warning when close button is clicked', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        fireEvent.click(screen.getByTitle('Dismiss'));
+        expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
+    });
+
+    it('shows action dict warning while analysis is loading with yellow theme', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            analysisLoading: true,
+        };
+        render(<ActionFeed {...props} />);
+        // Timing fix: it should appear at the same time as other user warnings (even during analysis)
+        const warning = screen.getByText(/Action dictionary/);
+        expect(warning).toBeInTheDocument();
+        // Check yellow theme
+        const parent = warning.closest('div[style*="background"]') as HTMLDivElement;
+        if (parent) {
+            expect(parent.style.background).toContain('rgb(255, 243, 205)'); // #fff3cd
+            expect(parent.style.border).toContain('rgb(255, 238, 186)'); // #ffeeba
+            expect(parent.style.color).toContain('rgb(133, 100, 4)'); // #856404
+        }
+    });
+
+    it('shows yellow pulsing processing banner during analysisLoading', () => {
+        const props = {
+            ...defaultProps,
+            analysisLoading: true,
+        };
+        render(<ActionFeed {...props} />);
+        
+        const banner = screen.getByText('⚙️ Processing analysis...');
+        expect(banner).toBeInTheDocument();
+        expect(banner.style.background).toContain('rgb(255, 243, 205)'); // #fff3cd
+        expect(banner.style.color).toContain('rgb(133, 100, 4)'); // #856404
+        expect(banner.style.animation).toContain('pulse');
+    });
+
+    it('includes minPst in the recommender settings warning', () => {
+        const props = {
+            ...defaultProps,
+            minPst: 2,
+            minLineReconnections: 3,
+            minLineDisconnections: 4,
+        };
+        render(<ActionFeed {...props} />);
+        // The recommender settings warning appears when no analysis has been run
+        expect(screen.getByText(/2 PST/)).toBeInTheDocument();
+    });
+
+    it('shows change in settings link in action dict warning calling paths tab', () => {
+        const onOpenSettings = vi.fn();
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            onOpenSettings,
+        };
+        render(<ActionFeed {...props} />);
+
+        // "Change in settings" button in the action dict warning
+        const changeLinks = screen.getAllByText('Change in settings');
+        // Click the first one (action dict warning)
+        fireEvent.click(changeLinks[0]);
+        expect(onOpenSettings).toHaveBeenCalledWith('paths');
     });
 });
