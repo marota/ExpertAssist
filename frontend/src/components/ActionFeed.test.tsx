@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 
 // Mocking dependencies
 vi.mock('../api', () => ({
@@ -49,10 +50,15 @@ describe('ActionFeed', () => {
         minCloseCoupling: 3,
         minOpenCoupling: 2,
         minLineDisconnections: 3,
+        minPst: 1,
         nPrioritizedActions: 10,
         ignoreReconnections: false,
         pendingAnalysisResult: null as AnalysisResult | null,
+        onOpenSettings: vi.fn(),
+        actionDictFileName: null as string | null,
+        actionDictStats: null as { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null,
     };
+
 
     it('renders "Scored Actions" heading when search is opened and actions are present', async () => {
         const actionId = 'act_1';
@@ -92,6 +98,7 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.queryByText('Suggested Action')).not.toBeInTheDocument();
+        // Processing indicator is now visible during analysis
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
     });
 
@@ -117,6 +124,7 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
         
         expect(screen.getByText('Manual Action')).toBeInTheDocument();
+        // Processing indicator is visible even when viewing selected actions
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
     });
 
@@ -377,5 +385,97 @@ describe('ActionFeed', () => {
         
         expect(screen.queryByText('disco_pst_branch')).not.toBeInTheDocument();
         expect(screen.getByText('All actions already added')).toBeInTheDocument();
+    });
+    it('shows action dict stats warning when actionDictFileName and actionDictStats are provided', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        expect(screen.getByText(/actions.json/)).toBeInTheDocument();
+        expect(screen.getByText(/Reco:/)).toBeInTheDocument();
+        expect(screen.getByText(/Disco:/)).toBeInTheDocument();
+        expect(screen.getByText(/PST:/)).toBeInTheDocument();
+        expect(screen.getByText(/Open coupling:/)).toBeInTheDocument();
+        expect(screen.getByText(/Close coupling:/)).toBeInTheDocument();
+    });
+
+    it('dismisses action dict stats warning when close button is clicked', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+        };
+        render(<ActionFeed {...props} />);
+        
+        expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
+        fireEvent.click(screen.getByTitle('Dismiss'));
+        expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
+    });
+
+    it('shows action dict warning while analysis is loading with yellow theme', () => {
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            analysisLoading: true,
+        };
+        render(<ActionFeed {...props} />);
+        // Timing fix: it should appear at the same time as other user warnings (even during analysis)
+        const warning = screen.getByText(/Action dictionary/);
+        expect(warning).toBeInTheDocument();
+        // Check yellow theme
+        const parent = warning.closest('div[style*="background"]') as HTMLDivElement;
+        if (parent) {
+            expect(parent.style.background).toContain('rgb(255, 243, 205)'); // #fff3cd
+            expect(parent.style.border).toContain('rgb(255, 238, 186)'); // #ffeeba
+            expect(parent.style.color).toContain('rgb(133, 100, 4)'); // #856404
+        }
+    });
+
+    it('shows yellow pulsing processing banner during analysisLoading', () => {
+        const props = {
+            ...defaultProps,
+            analysisLoading: true,
+        };
+        render(<ActionFeed {...props} />);
+        
+        const banner = screen.getByText('⚙️ Processing analysis...');
+        expect(banner).toBeInTheDocument();
+        expect(banner.style.background).toContain('rgb(255, 243, 205)'); // #fff3cd
+        expect(banner.style.color).toContain('rgb(133, 100, 4)'); // #856404
+        expect(banner.style.animation).toContain('pulse');
+    });
+
+    it('includes minPst in the recommender settings warning', () => {
+        const props = {
+            ...defaultProps,
+            minPst: 2,
+            minLineReconnections: 3,
+            minLineDisconnections: 4,
+        };
+        render(<ActionFeed {...props} />);
+        // The recommender settings warning appears when no analysis has been run
+        expect(screen.getByText(/2 PST/)).toBeInTheDocument();
+    });
+
+    it('shows change in settings link in action dict warning calling paths tab', () => {
+        const onOpenSettings = vi.fn();
+        const props = {
+            ...defaultProps,
+            actionDictFileName: 'actions.json',
+            actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
+            onOpenSettings,
+        };
+        render(<ActionFeed {...props} />);
+
+        // "Change in settings" button in the action dict warning
+        const changeLinks = screen.getAllByText('Change in settings');
+        // Click the first one (action dict warning)
+        fireEvent.click(changeLinks[0]);
+        expect(onOpenSettings).toHaveBeenCalledWith('paths');
     });
 });

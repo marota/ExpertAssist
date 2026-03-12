@@ -987,15 +987,16 @@
         };
 
         function App() {
-            const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
-            const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
-            const [linesMonitoringPath, setLinesMonitoringPath] = useState(localStorage.getItem('linesMonitoringPath') || '');
-            const initialMountRef = useRef(true);
-
             const [branches, setBranches] = useState([]);
             const [voltageLevels, setVoltageLevels] = useState([]);
+            const initialMountRef = useRef(true);
 
             // Nominal voltage filter state
+            const [networkPath, setNetworkPath] = useState(localStorage.getItem('networkPath') || '');
+            const [actionPath, setActionPath] = useState(localStorage.getItem('actionPath') || '');
+            const [layoutPath, setLayoutPath] = useState(localStorage.getItem('layoutPath') || '');
+            const [outputFolderPath, setOutputFolderPath] = useState(localStorage.getItem('outputFolderPath') || '');
+            const [linesMonitoringPath, setLinesMonitoringPath] = useState(localStorage.getItem('linesMonitoringPath') || '');
             const [nominalVoltageMap, setNominalVoltageMap] = useState({});  // {vl_id: kv}
             const [uniqueVoltages, setUniqueVoltages] = useState([]);       // sorted [kv1, kv2, ...]
             const [voltageRange, setVoltageRange] = useState([0, 400]);     // [minKv, maxKv] cursor positions
@@ -1007,6 +1008,7 @@
             const [minCloseCoupling, setMinCloseCoupling] = useState(3.0);
             const [minOpenCoupling, setMinOpenCoupling] = useState(2.0);
             const [minLineDisconnections, setMinLineDisconnections] = useState(3.0);
+            const [minPst, setMinPst] = useState(1.0);
             const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
             const [monitoringFactor, setMonitoringFactor] = useState(0.95);
             const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState(0.02);
@@ -1015,23 +1017,34 @@
             const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
             const [totalLinesCount, setTotalLinesCount] = useState(0);
             const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
+            const [actionDictFileName, setActionDictFileName] = useState(null);
+            const [actionDictStats, setActionDictStats] = useState(null);
+            const [showActionDictWarning, setShowActionDictWarning] = useState(true);
+
 
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-            const [settingsTab, setSettingsTab] = useState('recommender');
+            const [settingsTab, setSettingsTab] = useState('paths');
             const [settingsBackup, setSettingsBackup] = useState(null);
             const [analysisLoading, setAnalysisLoading] = useState(false);
             const [analysisRan, setAnalysisRan] = useState(false);
             const [manualActionIds, setManualActionIds] = useState(new Set());
             const [manuallyAddedIds, setManuallyAddedIds] = useState(new Set());
             const [rejectedActionIds, setRejectedActionIds] = useState(new Set());
+            // Tracks every action ID ever returned by the recommender — separate from manuallyAddedIds
+            // so an action can be both is_suggested AND is_manually_simulated.
+            const [suggestedByRecommenderIds, setSuggestedByRecommenderIds] = useState(new Set());
             const [suggestedTab, setSuggestedTab] = useState('prioritized');
             const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
             const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
             const [dismissedRecommenderWarning, setDismissedRecommenderWarning] = useState(false);
             const [pendingAnalysisResult, setPendingAnalysisResult] = useState(null);
 
-            const handleOpenSettings = (tab = 'recommender') => {
+            const handleOpenSettings = (tab = 'paths') => {
                 setSettingsBackup({
+                    networkPath,
+                    actionPath,
+                    layoutPath,
+                    outputFolderPath,
                     minLineReconnections,
                     minCloseCoupling,
                     minOpenCoupling,
@@ -1043,12 +1056,16 @@
                     ignoreReconnections,
                     pypowsyblFastMode
                 });
-                setSettingsTab(tab);
+                setSettingsTab('paths');
                 setIsSettingsOpen(true);
             };
 
             const handleCloseSettings = () => {
                 if (settingsBackup) {
+                    if (settingsBackup.networkPath !== undefined) setNetworkPath(settingsBackup.networkPath);
+                    if (settingsBackup.actionPath !== undefined) setActionPath(settingsBackup.actionPath);
+                    if (settingsBackup.layoutPath !== undefined) setLayoutPath(settingsBackup.layoutPath);
+                    if (settingsBackup.outputFolderPath !== undefined) setOutputFolderPath(settingsBackup.outputFolderPath);
                     setMinLineReconnections(settingsBackup.minLineReconnections);
                     setMinCloseCoupling(settingsBackup.minCloseCoupling);
                     setMinOpenCoupling(settingsBackup.minOpenCoupling);
@@ -1070,33 +1087,50 @@
                     }
                 }
 
-                // Clear previous results to ensure consistency with new settings BEFORE fetching
-                setResult(null);
-                setPendingAnalysisResult(null);
-                setNDiagram(null);
-                setN1Diagram(null);
-                setActionDiagram(null);
+                // ── Clear ALL state for a full reset (same as handleLoadConfig) ──
+                setError(''); setInfoMessage('');
+                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
+                setOriginalViewBox(null);
+                setResult(null); setPendingAnalysisResult(null);
                 setSelectedActionId(null);
-                setActiveTab('n');
-                setVlOverlay(null);
-                setSelectedBranch('');
-                committedBranchRef.current = '';
-                setAnalysisRan(false);
-                setManualActionIds(new Set());
-                setManuallyAddedIds(new Set());
-                setRejectedActionIds(new Set());
-                setError('');
-                setInfoMessage('');
-                setDismissedSelectedWarning(false);
-                setDismissedRejectedWarning(false);
-                setDismissedRecommenderWarning(false);
-                setShowMonitoringWarning(false);
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
+                setAnalysisLoading(false); setAnalysisRan(false);
+                setSelectedOverloads(new Set()); setMonitorDeselected(false);
+                setActiveTab('n'); setActionViewMode('network');
+                setVlOverlay(null); setN1Loading(false);
+                setSelectedBranch(''); committedBranchRef.current = '';
                 setInspectQuery('');
+                setShowMonitoringWarning(false);
+                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
+                lastViewStateN.current = null; lastViewStateN1.current = null;
+                lastZoomState.current = { query: '', branch: '' };
+
+                if (!networkPath || !actionPath) {
+                    setSettingsBackup({
+                        networkPath,
+                        actionPath,
+                        layoutPath,
+                        outputFolderPath,
+                        minLineReconnections,
+                        minCloseCoupling,
+                        minOpenCoupling,
+                        minLineDisconnections,
+                        nPrioritizedActions,
+                        linesMonitoringPath,
+                        monitoringFactor,
+                        preExistingOverloadThreshold,
+                        ignoreReconnections,
+                        pypowsyblFastMode
+                    });
+                    setIsSettingsOpen(false);
+                    return;
+                }
 
                 try {
                     const configRes = await axios.post(API_BASE + '/api/config', {
                         network_path: networkPath,
                         action_file_path: actionPath,
+                        layout_path: layoutPath,
                         min_line_reconnections: minLineReconnections,
                         min_close_coupling: minCloseCoupling,
                         min_open_coupling: minOpenCoupling,
@@ -1117,7 +1151,33 @@
                         }
                     }
 
+                    // Fetch study-related data (branches, nominal voltages etc.)
+                    const [branchesRes, vlRes, nomVRes] = await Promise.all([
+                        axios.get(API_BASE + '/api/branches'),
+                        axios.get(API_BASE + '/api/voltage-levels'),
+                        axios.get(API_BASE + '/api/nominal-voltages')
+                    ]);
+
+                    setBranches(branchesRes.data.branches);
+                    setVoltageLevels(vlRes.data.voltage_levels);
+                    setSelectedBranch('');
+
+                    // Set up nominal voltage filter
+                    const nvMap = nomVRes.data.mapping;
+                    const uniqueKv = nomVRes.data.unique_kv;
+                    setNominalVoltageMap(nvMap);
+                    setUniqueVoltages(uniqueKv);
+                    if (uniqueKv.length > 0) {
+                        setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
+                    }
+
+                    fetchBaseDiagram(vlRes.data.voltage_levels.length);
+
                     setSettingsBackup({
+                        networkPath,
+                        actionPath,
+                        layoutPath,
+                        outputFolderPath,
                         minLineReconnections,
                         minCloseCoupling,
                         minOpenCoupling,
@@ -1139,6 +1199,15 @@
             const [error, setError] = useState('');
             const [result, setResult] = useState(null);
             const [infoMessage, setInfoMessage] = useState('');
+
+            useEffect(() => {
+                if (infoMessage) {
+                    const timer = setTimeout(() => {
+                        setInfoMessage('');
+                    }, 3000);
+                    return () => clearTimeout(timer);
+                }
+            }, [infoMessage]);
             const [inspectQuery, setInspectQuery] = useState('');
 
             // Analysis Flow State
@@ -1174,6 +1243,14 @@
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
             const [scoreTooltip, setScoreTooltip] = useState(null);
+            const [showPathWarning, setShowPathWarning] = useState(true);
+
+            // Hide warning as soon as a diagram is rendered
+            useEffect(() => {
+                if (nDiagram?.svg || n1Diagram?.svg || actionDiagram?.svg) {
+                    setShowPathWarning(false);
+                }
+            }, [nDiagram?.svg, n1Diagram?.svg, actionDiagram?.svg]);
 
             const showScoreTooltip = (e, content) => {
                 const rect = e.currentTarget.getBoundingClientRect();
@@ -1218,6 +1295,8 @@
 
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
             useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);
+            useEffect(() => { localStorage.setItem('layoutPath', layoutPath); }, [layoutPath]);
+            useEffect(() => { localStorage.setItem('outputFolderPath', outputFolderPath); }, [outputFolderPath]);
             useEffect(() => { localStorage.setItem('linesMonitoringPath', linesMonitoringPath); }, [linesMonitoringPath]);
             useEffect(() => { localStorage.setItem('ignoreReconnections', ignoreReconnections); }, [ignoreReconnections]);
             useEffect(() => { localStorage.setItem('pypowsyblFastMode', pypowsyblFastMode); }, [pypowsyblFastMode]);
@@ -1235,34 +1314,42 @@
                         return;
                     }
                 }
-                setConfigLoading(true); setError(''); setInfoMessage(''); setShowMonitoringWarning(false);
-                setNDiagram(null); setN1Diagram(null); setResult(null);
-                setSelectedActionId(null); setActionDiagram(null);
-                setActiveTab('n');
-                setVlOverlay(null);
-                setSelectedBranch('');
-                committedBranchRef.current = '';
-                setAnalysisRan(false);
-                setPendingAnalysisResult(null);
-                setManualActionIds(new Set());
-                setManuallyAddedIds(new Set());
-                setRejectedActionIds(new Set());
-                setDismissedSelectedWarning(false);
-                setDismissedRejectedWarning(false);
-                setDismissedRecommenderWarning(false);
+                // ── Clear ALL state for a full reset ──
+                setConfigLoading(true);
+                setError(''); setInfoMessage('');
+                // Diagrams
+                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
+                setOriginalViewBox(null);
+                // Analysis
+                setResult(null); setPendingAnalysisResult(null);
+                setSelectedActionId(null);
+                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
+                setAnalysisLoading(false); setAnalysisRan(false);
+                // Analysis flow
+                setSelectedOverloads(new Set()); setMonitorDeselected(false);
+                // Visualization
+                setActiveTab('n'); setActionViewMode('network');
+                setVlOverlay(null); setN1Loading(false);
+                // Branch / contingency
+                setSelectedBranch(''); committedBranchRef.current = '';
                 setInspectQuery('');
-                lastViewStateN.current = null; // Reset view state on new config
-                lastViewStateN1.current = null;
+                // Warnings
+                setShowMonitoringWarning(false);
+                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
+                // Refs
+                lastViewStateN.current = null; lastViewStateN1.current = null;
                 lastZoomState.current = { query: '', branch: '' };
 
                 try {
                     const configRes = await axios.post(API_BASE + '/api/config', {
                         network_path: networkPath,
                         action_file_path: actionPath,
+                        layout_path: layoutPath,
                         min_line_reconnections: minLineReconnections,
                         min_close_coupling: minCloseCoupling,
                         min_open_coupling: minOpenCoupling,
                         min_line_disconnections: minLineDisconnections,
+                        min_pst: minPst,
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
@@ -1271,6 +1358,7 @@
                         pypowsybl_fast_mode: pypowsyblFastMode
                     });
 
+
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
                         setMonitoredLinesCount(configRes.data.monitored_lines_count);
                         setTotalLinesCount(configRes.data.total_lines_count);
@@ -1278,6 +1366,8 @@
                             setShowMonitoringWarning(true);
                         }
                     }
+                    if (configRes.data?.action_dict_file_name) { setActionDictFileName(configRes.data.action_dict_file_name); setShowActionDictWarning(true); }
+                    if (configRes.data?.action_dict_stats) setActionDictStats(configRes.data.action_dict_stats);
 
                     const [branchesRes, vlRes, nomVRes] = await Promise.all([
                         axios.get(API_BASE + '/api/branches'),
@@ -1397,6 +1487,7 @@
                 setManualActionIds(new Set());
                 setManuallyAddedIds(new Set());
                 setRejectedActionIds(new Set());
+                setSuggestedByRecommenderIds(new Set());
                 setActionDiagram(null);
                 setN1Diagram(null);
                 setActiveTab('n');
@@ -1468,10 +1559,100 @@
                 }
             }, [n1Diagram]);
 
+            const handleSaveSession = async () => {
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const contingencyLabel = selectedBranch ? `_${selectedBranch.replace(/[^a-zA-Z0-9_-]/g, '_')}` : '';
+                const sessionName = `expertassist_session${contingencyLabel}_${ts}`;
+
+                // Build the session JSON (same structure as the React app)
+                const session = {
+                    saved_at: new Date().toISOString(),
+                    configuration: {
+                        network_path: networkPath,
+                        action_file_path: actionPath,
+                        min_line_reconnections: minLineReconnections,
+                        min_close_coupling: minCloseCoupling,
+                        min_open_coupling: minOpenCoupling,
+                        min_line_disconnections: minLineDisconnections,
+                        n_prioritized_actions: nPrioritizedActions,
+                        lines_monitoring_path: linesMonitoringPath,
+                        monitoring_factor: monitoringFactor,
+                        pre_existing_overload_threshold: preExistingOverloadThreshold,
+                        ignore_reconnections: ignoreReconnections,
+                        pypowsybl_fast_mode: pypowsyblFastMode,
+                    },
+                    contingency: {
+                        disconnected_element: selectedBranch,
+                        selected_overloads: Array.from(selectedOverloads),
+                        monitor_deselected: monitorDeselected,
+                    },
+                    overloads: {
+                        n_overloads: nDiagram?.lines_overloaded ?? [],
+                        n1_overloads: n1Diagram?.lines_overloaded ?? [],
+                        resolved_overloads: result?.lines_overloaded ?? [],
+                    },
+                    overflow_graph: result?.pdf_url
+                        ? { pdf_url: result.pdf_url, pdf_path: result.pdf_path ?? null }
+                        : null,
+                    analysis: result
+                        ? {
+                            message: result.message,
+                            dc_fallback: result.dc_fallback,
+                            action_scores: result.action_scores,
+                            actions: Object.fromEntries(
+                                Object.entries(result.actions || {}).map(([id, detail]) => [
+                                    id,
+                                    {
+                                        description_unitaire: detail.description_unitaire,
+                                        rho_before: detail.rho_before,
+                                        rho_after: detail.rho_after,
+                                        max_rho: detail.max_rho,
+                                        max_rho_line: detail.max_rho_line,
+                                        is_rho_reduction: detail.is_rho_reduction,
+                                        non_convergence: detail.non_convergence,
+                                        action_topology: detail.action_topology,
+                                        status: {
+                                            is_selected: manualActionIds.has(id),
+                                            is_suggested: suggestedByRecommenderIds.has(id),
+                                            is_rejected: rejectedActionIds.has(id),
+                                            is_manually_simulated: manuallyAddedIds.has(id),
+                                        },
+                                    },
+                                ])
+                            ),
+                        }
+                        : null,
+                };
+
+                if (outputFolderPath) {
+                    try {
+                        const res = await axios.post(API_BASE + '/api/save-session', {
+                            session_name: sessionName,
+                            json_content: JSON.stringify(session, null, 2),
+                            pdf_path: result?.pdf_path ?? null,
+                            output_folder_path: outputFolderPath,
+                        });
+                        const pdfMsg = res.data.pdf_copied ? " (including PDF)" : " (PDF not found)";
+                        setInfoMessage(`SUCCESS: Session saved to: ${res.data.session_folder}${pdfMsg}`);
+                    } catch (err) {
+                        setError('Failed to save session: ' + (err.response?.data?.detail || err.message));
+                    }
+                } else {
+                    // Fallback: browser download of JSON
+                    const blob = new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${sessionName}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                }
+            };
+
             const handleRunAnalysis = async () => {
                 if (!selectedBranch) return;
-                setAnalysisLoading(true); 
-                setError(''); 
+                setAnalysisLoading(true);
+                setError('');
                 setInfoMessage('');
                 setAnalysisRan(false);
                 setPendingAnalysisResult(null);
@@ -1551,7 +1732,11 @@
                             try {
                                 const event = JSON.parse(line);
                                 if (event.type === 'pdf') {
-                                    setResult(p => ({ ...(p || {}), pdf_url: event.pdf_url }));
+                                    setResult(p => ({ 
+                                        ...(p || {}), 
+                                        pdf_url: event.pdf_url,
+                                        pdf_path: event.pdf_path 
+                                    }));
                                     setActiveTab('overflow');
                                 }
                                 else if (event.type === 'result') {
@@ -1560,6 +1745,7 @@
                                     for (const id in actionsWithFlags) {
                                         actionsWithFlags[id].is_manual = false;
                                     }
+                                    setSuggestedByRecommenderIds(prev => new Set([...prev, ...Object.keys(actionsWithFlags)]));
                                     setPendingAnalysisResult({ ...event, actions: actionsWithFlags });
                                     if (event.message) setInfoMessage(event.message);
                                 }
@@ -2759,8 +2945,19 @@
                                         <iframe src={API_BASE + result.pdf_url} key={result.pdf_url} style={{ width: '100%', height: '100%', border: 'none' }} />
                                         : <iframe srcDoc={result.plot_html} style={{ width: '100%', height: '100%', border: 'none' }} />
                                 ) : (
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
-                                        {analysisLoading ? 'Processing Analysis...' : 'Run analysis to see overflow graph'}
+                                    <div style={{ 
+                                        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', 
+                                        color: analysisLoading ? '#856404' : '#999',
+                                        background: analysisLoading ? '#fff3cd' : 'white',
+                                        fontWeight: analysisLoading ? 600 : 'normal',
+                                        gap: '10px'
+                                    }}>
+                                        {analysisLoading ? (
+                                            <>
+                                                <span style={{ fontSize: '24px' }}>⚙️</span>
+                                                <span>Processing Analysis...</span>
+                                            </>
+                                        ) : 'Run analysis to see overflow graph'}
                                     </div>
                                 )}
                             </div>
@@ -3179,19 +3376,20 @@
                         <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
                             <label>Network Path</label>
                             <div style={{ display: 'flex', gap: '4px' }}>
-                                <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-                                <button onClick={() => pickPath('dir', setNetworkPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📂</button>
-                            </div>
-                        </div>
-                        <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <label>Action File Path</label>
-                            <div style={{ display: 'flex', gap: '4px' }}>
-                                <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-                                <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📄</button>
+                                <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} placeholder="load your grid xiidm file path" style={{ flex: 1, minWidth: 0 }} />
+                                <button onClick={() => pickPath('file', setNetworkPath)} style={{ padding: '4px 8px', background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>📄</button>
                             </div>
                         </div>
                         <button onClick={handleLoadConfig} disabled={configLoading} style={{ padding: '6px 14px', background: configLoading ? '#95a5a6' : '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: configLoading ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
                             {configLoading ? '⏳ Loading...' : '🔄 Load Study'}
+                        </button>
+                        <button
+                            onClick={handleSaveSession}
+                            disabled={!result && !selectedBranch}
+                            style={{ padding: '6px 14px', background: (!result && !selectedBranch) ? '#95a5a6' : '#8e44ad', color: 'white', border: 'none', borderRadius: '4px', cursor: (!result && !selectedBranch) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            title="Save session results to JSON"
+                        >
+                            💾 Save Results
                         </button>
                         <button onClick={handleOpenSettings} style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">&#9881;</button>
                     </header>
@@ -3211,6 +3409,17 @@
                                     <h3 style={{ margin: 0, borderBottom: '1px solid #eee', paddingBottom: '10px' }}>Recommender Settings</h3>
 
                                     <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
+                                        <button
+                                            onClick={() => setSettingsTab('paths')}
+                                            style={{
+                                                flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
+                                                border: 'none', borderBottom: settingsTab === 'paths' ? '2px solid #3498db' : 'none',
+                                                fontWeight: settingsTab === 'paths' ? 'bold' : 'normal',
+                                                color: settingsTab === 'paths' ? '#3498db' : '#555'
+                                            }}
+                                        >
+                                            Paths
+                                        </button>
                                         <button
                                             onClick={() => setSettingsTab('recommender')}
                                             style={{
@@ -3235,6 +3444,41 @@
                                         </button>
                                     </div>
 
+                                    {settingsTab === 'paths' && (
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Network File Path (.xiidm)</label>
+                                                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Synchronized with the banner field</div>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} placeholder="load your grid xiidm file path" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('file', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📄</button>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Action Dictionary File Path</label>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={actionPath} onChange={e => setActionPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('file', setActionPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📄</button>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Layout File Path (.json)</label>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={layoutPath} onChange={e => setLayoutPath(e.target.value)} style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('file', setLayoutPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📄</button>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Output Folder Path</label>
+                                                <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Session folders (JSON + PDF) are saved here. Leave empty to download JSON to browser.</div>
+                                                <div style={{ display: 'flex', gap: '5px' }}>
+                                                    <input type="text" value={outputFolderPath} onChange={e => setOutputFolderPath(e.target.value)} placeholder="e.g. /home/user/sessions" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <button onClick={() => pickPath('dir', setOutputFolderPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>📂</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {settingsTab === 'recommender' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3254,9 +3498,14 @@
                                                 <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min PST Actions</label>
+                                                <input type="number" step="0.1" value={minPst} onChange={e => setMinPst(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
                                                 <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px' }} />
                                             </div>
+
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '5px', padding: '8px', background: '#f8f9fa', borderRadius: '4px', border: '1px solid #eee' }}>
                                                 <label htmlFor="ignoreRecStandalone" style={{ fontWeight: 'bold', fontSize: '0.9rem', cursor: 'pointer' }}>Ignore Reconnections</label>
                                                 <input type="checkbox" id="ignoreRecStandalone" checked={ignoreReconnections} onChange={e => setIgnoreReconnections(e.target.checked)} style={{ width: '18px', height: '18px', cursor: 'pointer' }} />
@@ -3322,7 +3571,14 @@
                                     <button
                                         onClick={handleRunAnalysis}
                                         disabled={!selectedBranch || analysisLoading}
-                                        style={{ marginTop: '8px', width: '100%', padding: '8px', background: (!selectedBranch || analysisLoading) ? '#95a5a6' : '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                                        style={{ 
+                                            marginTop: '8px', width: '100%', padding: '8px', 
+                                            background: analysisLoading ? '#f1c40f' : (!selectedBranch ? '#95a5a6' : '#27ae60'), 
+                                            color: analysisLoading ? '#856404' : 'white', 
+                                            border: 'none', borderRadius: '4px', 
+                                            cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer', 
+                                            fontWeight: 'bold', fontSize: '0.85rem' 
+                                        }}
                                     >
                                         {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
                                     </button>
@@ -3685,13 +3941,31 @@
 
                             {/* View mode toggle - only visible when an action is selected */}
 
-                            {/* Processing indicator during analysis */}
-                            {analysisLoading && (
-                                <div style={{ padding: '12px', textAlign: 'center', color: '#856404', background: '#fff3cd', borderRadius: '8px', margin: '8px 0', fontSize: '13px', fontWeight: 600 }}>
-                                    ⚙️ Processing analysis...
+                            {/* Processing indicator during analysis - removed duplicate, keeping one under Suggested Actions */}
+
+
+                            {/* Action Dict Info Warning */}
+                            {showActionDictWarning && !simulatingActionId && !pendingAnalysisResult && Object.keys(result?.actions || {}).length === 0 && actionDictFileName && actionDictStats && (
+                                <div style={{ 
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', 
+                                    gap: '8px', padding: '8px 10px', 
+                                    background: '#fff3cd', border: '1px solid #ffeeba', 
+                                    borderRadius: '6px', marginBottom: '10px', fontSize: '12px', color: '#856404' 
+                                }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontWeight: 600, marginBottom: '4px' }}>ℹ️ Action dictionary: <code style={{ fontFamily: 'monospace', background: '#fcf3cf', padding: '1px 4px', borderRadius: '3px', border: '1px solid #f9e79f' }}>{actionDictFileName}</code></div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
+                                            <span>🔄 Reco: <strong>{actionDictStats.reco}</strong></span>
+                                            <span>⛔ Disco: <strong>{actionDictStats.disco}</strong></span>
+                                            <span>📐 PST: <strong>{actionDictStats.pst}</strong></span>
+                                            <span>🔓 Open coupling: <strong>{actionDictStats.open_coupling}</strong></span>
+                                            <span>🔒 Close coupling: <strong>{actionDictStats.close_coupling}</strong></span>
+                                        </div>
+                                        <button onClick={() => { setIsSettingsOpen(true); setSettingsTab('paths'); }} style={{ background: 'none', border: 'none', color: '#0056b3', textDecoration: 'underline', cursor: 'pointer', padding: 0, fontSize: '12px' }}>Change in settings</button>
+                                    </div>
+                                    <button onClick={() => setShowActionDictWarning(false)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '16px', lineHeight: 1, color: '#856404' }} title="Dismiss">✕</button>
                                 </div>
                             )}
-
                             <div style={{ marginBottom: '15px' }}>
                                 <h4 style={{ margin: '0 0 10px 0', fontSize: '14px', color: '#333', borderBottom: '1px solid #eee', paddingBottom: '4px', display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '8px' }}>
                                     Selected Actions
@@ -3752,7 +4026,19 @@
                                 </div>
 
                                     {analysisLoading && (
-                                        <div style={{ padding: '20px', textAlign: 'center', background: '#e9ecef', borderRadius: '8px', marginBottom: '10px', color: '#495057', fontWeight: 600, border: '1px solid #dee2e6' }}>
+                                        <div style={{ 
+                                            padding: '12px', 
+                                            background: '#fff3cd', 
+                                            border: '1px solid #ffeeba', 
+                                            borderRadius: '8px', 
+                                            marginBottom: '15px', 
+                                            textAlign: 'center', 
+                                            color: '#856404', 
+                                            fontWeight: 600, 
+                                            fontSize: '14px',
+                                            boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                                            animation: 'pulse 2s infinite ease-in-out'
+                                        }}>
                                             ⚙️ Processing analysis...
                                         </div>
                                     )}
@@ -3836,7 +4122,7 @@
                                                                 Change in settings
                                                             </button>
                                                         </div>
-                                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco</div>
+                                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST</div>
                                                         <div>• Maximum suggestions: {nPrioritizedActions}</div>
                                                         <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
                                                     </div>
@@ -3924,6 +4210,53 @@
 
                             </div>
                             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                                {/* Path Warning Banner */}
+                                {!nDiagram?.svg && !configLoading && showPathWarning && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '10px',
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                        zIndex: 150,
+                                        backgroundColor: '#fff3cd',
+                                        color: '#856404',
+                                        padding: '12px 20px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #ffeeba',
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: '8px',
+                                        maxWidth: '80%',
+                                        fontSize: '13px'
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                            <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span>⚠️</span> Configuration Paths
+                                            </div>
+                                            <button 
+                                                onClick={() => setShowPathWarning(false)}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '16px', color: '#856404' }}
+                                            >✕</button>
+                                        </div>
+                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            <strong>Layout Path:</strong> {layoutPath || 'Not set'}
+                                        </div>
+                                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            <strong>Output Folder:</strong> {networkPath ? networkPath.substring(0, networkPath.lastIndexOf('/')) : 'Not set'}
+                                        </div>
+                                        <div style={{ marginTop: '4px' }}>
+                                            <a 
+                                                href="#" 
+                                                onClick={(e) => { e.preventDefault(); setSettingsTab('paths'); setIsSettingsOpen(true); }}
+                                                style={{ color: '#0056b3', textDecoration: 'underline', fontWeight: 500 }}
+                                            >
+                                                Change in settings
+                                            </a>
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* View Mode Overlay */}
                                 {(activeTab !== 'overflow' && activeTab !== 'n' && (
                                     (activeTab === 'n-1' && !!n1Diagram?.svg) ||
@@ -3978,7 +4311,7 @@
                                         display: 'flex',
                                         flexDirection: 'column',
                                         gap: '6px',
-                                        nItems: 'flex-start',
+                                        alignItems: 'flex-start',
                                     }}>
                                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                             <button onClick={handleManualZoomIn} style={{
@@ -4043,6 +4376,19 @@
                         </div>
                     </div>
                     {error && <div style={{ position: 'fixed', bottom: 20, right: 20, background: '#e74c3c', color: 'white', padding: '10px 20px', borderRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>❌ {error}</div>}
+                    {infoMessage && (
+                        <div style={{
+                            position: 'fixed', bottom: 20, left: 20,
+                            background: infoMessage.startsWith('SUCCESS') ? '#27ae60' : '#3498db', 
+                            color: 'white',
+                            padding: '12px 24px', borderRadius: '4px',
+                            boxShadow: '0 4px 15px rgba(0,0,0,0.3)', zIndex: 1000,
+                            fontWeight: 'bold',
+                            border: '1px solid rgba(255,255,255,0.2)'
+                        }}>
+                            {infoMessage}
+                        </div>
+                    )}
                 </div >
             );
         }
