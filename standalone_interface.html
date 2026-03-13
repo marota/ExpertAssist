@@ -1294,6 +1294,18 @@
             // usePanZoom resets to the diagram's native viewBox).
             const actionSyncSourceRef = useRef(null);
 
+            // Prevent the browser from opening dropped files in a new tab globally.
+            // This must run at the window level — preventDefault() on the input alone
+            // is not enough because the browser fires its own drop handler independently.
+            useEffect(() => {
+                const suppress = (e) => { e.preventDefault(); };
+                window.addEventListener('dragover', suppress);
+                window.addEventListener('drop', suppress);
+                return () => {
+                    window.removeEventListener('dragover', suppress);
+                    window.removeEventListener('drop', suppress);
+                };
+            }, []);
 
             useEffect(() => { localStorage.setItem('networkPath', networkPath); }, [networkPath]);
             useEffect(() => { localStorage.setItem('actionPath', actionPath); }, [actionPath]);

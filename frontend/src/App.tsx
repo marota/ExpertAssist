@@ -125,6 +125,19 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [infoMessage]);
+
+  // Prevent the browser from opening dropped files in a new tab.
+  // preventDefault() on the input alone is insufficient — the browser fires
+  // its own drop handler at the window level independently.
+  useEffect(() => {
+    const suppress = (e: DragEvent) => e.preventDefault();
+    window.addEventListener('dragover', suppress);
+    window.addEventListener('drop', suppress);
+    return () => {
+      window.removeEventListener('dragover', suppress);
+      window.removeEventListener('drop', suppress);
+    };
+  }, []);
   
   // ===== Analysis Flow State =====
   const [selectedOverloads, setSelectedOverloads] = useState<Set<string>>(new Set());
