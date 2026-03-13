@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Body, Query
+from fastapi import FastAPI, HTTPException, Body, Query, UploadFile, File as FastAPIFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -463,6 +463,23 @@ def simulate_manual_action(request: ManualActionRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/upload-network")
+async def upload_network(file: UploadFile = FastAPIFile(...)):
+    """Upload a .xiidm network file, save it to an uploads/ directory, and return the saved absolute path."""
+    if not (file.filename or "").endswith('.xiidm'):
+        raise HTTPException(status_code=400, detail="Only .xiidm files are accepted")
+
+    uploads_dir = os.path.join(os.getcwd(), "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+
+    save_path = os.path.join(uploads_dir, file.filename)
+    content = await file.read()
+    with open(save_path, "wb") as f:
+        f.write(content)
+
+    return {"path": os.path.abspath(save_path)}
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -102,6 +102,16 @@ export const api = {
         );
         return response.data;
     },
+    uploadNetworkFile: async (file: File): Promise<string> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await axios.post<{ path: string }>(
+            `${API_BASE_URL}/api/upload-network`,
+            formData,
+            { headers: { 'Content-Type': 'multipart/form-data' } }
+        );
+        return response.data.path;
+    },
     pickPath: async (type: 'file' | 'dir'): Promise<string | null> => {
         const response = await axios.get<{ path: string | null }>(
             `${API_BASE_URL}/api/pick-path?type=${type}`

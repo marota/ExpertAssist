@@ -51,6 +51,10 @@ function App() {
   // Confirmation dialog state for contingency change / load study
   const [confirmDialog, setConfirmDialog] = useState<{ type: 'contingency' | 'loadStudy'; pendingBranch?: string } | null>(null);
 
+  // Drag-and-drop state for network file input
+  const [networkDragOver, setNetworkDragOver] = useState(false);
+  const [networkUploading, setNetworkUploading] = useState(false);
+
 
   const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
     try {
@@ -60,6 +64,37 @@ function App() {
       console.error('Failed to open file picker');
     }
   };
+
+  const handleNetworkDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setNetworkDragOver(true);
+  }, []);
+
+  const handleNetworkDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setNetworkDragOver(false);
+  }, []);
+
+  const handleNetworkDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setNetworkDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+    if (!file.name.endsWith('.xiidm')) {
+      setError('Only .xiidm files can be dropped here');
+      return;
+    }
+    setNetworkUploading(true);
+    try {
+      const savedPath = await api.uploadNetworkFile(file);
+      setNetworkPath(savedPath);
+    } catch {
+      setError('Failed to upload network file');
+    } finally {
+      setNetworkUploading(false);
+    }
+  }, []);
 
   // Nominal voltage filter state
   const [nominalVoltageMap, setNominalVoltageMap] = useState<Record<string, number>>({});
@@ -1322,11 +1357,26 @@ function App() {
 
         <div style={{ flex: '1 1 200px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <label style={{ fontSize: '0.7rem', opacity: 0.8, whiteSpace: 'nowrap' }}>Network Path</label>
-          <div style={{ display: 'flex', gap: '4px' }}>
+          <div
+            style={{ display: 'flex', gap: '4px' }}
+            onDragOver={handleNetworkDragOver}
+            onDragLeave={handleNetworkDragLeave}
+            onDrop={handleNetworkDrop}
+          >
             <input
-              type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)}
-              placeholder="load your grid xiidm file path"
-              style={{ flex: 1, minWidth: 0, padding: '5px 8px', border: '1px solid rgba(255,255,255,0.3)', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', color: 'white', fontSize: '0.8rem' }}
+              type="text" value={networkUploading ? 'Uploading...' : networkPath}
+              onChange={e => setNetworkPath(e.target.value)}
+              placeholder="load your grid xiidm file path — or drop a .xiidm file here"
+              readOnly={networkUploading}
+              style={{
+                flex: 1, minWidth: 0, padding: '5px 8px',
+                border: networkDragOver ? '1px solid #3498db' : '1px solid rgba(255,255,255,0.3)',
+                borderRadius: '4px',
+                background: networkDragOver ? 'rgba(52,152,219,0.25)' : 'rgba(255,255,255,0.1)',
+                color: 'white', fontSize: '0.8rem',
+                transition: 'border-color 0.15s, background 0.15s',
+                cursor: networkUploading ? 'wait' : 'text',
+              }}
             />
             <button
               onClick={() => pickSettingsPath('file', setNetworkPath)}
@@ -1423,9 +1473,28 @@ function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                   <label htmlFor="networkPathInput" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Network File Path (.xiidm)</label>
-                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Synchronized with the banner field</div>
-                  <div style={{ display: 'flex', gap: '5px' }}>
-                    <input id="networkPathInput" type="text" value={networkPath} onChange={e => setNetworkPath(e.target.value)} placeholder="load your grid xiidm file path" style={{ flex: 1, padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-3px' }}>Synchronized with the banner field — or drop a .xiidm file here</div>
+                  <div
+                    style={{ display: 'flex', gap: '5px' }}
+                    onDragOver={handleNetworkDragOver}
+                    onDragLeave={handleNetworkDragLeave}
+                    onDrop={handleNetworkDrop}
+                  >
+                    <input
+                      id="networkPathInput" type="text"
+                      value={networkUploading ? 'Uploading...' : networkPath}
+                      onChange={e => setNetworkPath(e.target.value)}
+                      placeholder="load your grid xiidm file path — or drop a .xiidm file here"
+                      readOnly={networkUploading}
+                      style={{
+                        flex: 1, padding: '8px',
+                        border: networkDragOver ? '2px solid #3498db' : '1px solid #ccc',
+                        borderRadius: '4px',
+                        background: networkDragOver ? '#eaf4fb' : undefined,
+                        transition: 'border-color 0.15s, background 0.15s',
+                        cursor: networkUploading ? 'wait' : 'text',
+                      }}
+                    />
                     <button onClick={() => pickSettingsPath('file', setNetworkPath)} style={{ padding: '8px', background: '#7f8c8d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', flexShrink: 0 }}>📄</button>
                   </div>
                 </div>
