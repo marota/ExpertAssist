@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ConfigRequest, AnalysisResult, BranchResponse, DiagramData, FlowDelta, AssetDelta } from './types';
+import type { ConfigRequest, AnalysisResult, BranchResponse, DiagramData, FlowDelta, AssetDelta, AvailableAction } from './types';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -79,8 +79,8 @@ export const api = {
         );
         return response.data;
     },
-    getAvailableActions: async (): Promise<{ id: string; description: string }[]> => {
-        const response = await axios.get<{ actions: { id: string; description: string }[] }>(
+    getAvailableActions: async (): Promise<AvailableAction[]> => {
+        const response = await axios.get<{ actions: AvailableAction[] }>(
             `${API_BASE_URL}/api/actions`
         );
         return response.data.actions;

@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 
 def sanitize_for_json(obj):
+    if isinstance(obj, bool):
+        return obj
     if isinstance(obj, (np.integer, int)):
         return int(obj)
     elif isinstance(obj, (np.floating, float)):

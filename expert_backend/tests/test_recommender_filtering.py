@@ -26,7 +26,7 @@ def test_run_analysis_filtering_combined_actions(recommender):
     recommender._get_element_max_currents = MagicMock(return_value={})
     
     # Mock network_service
-    with patch('expert_backend.services.recommender_service.network_service') as mock_ns:
+    with patch('expert_backend.services.network_service.network_service') as mock_ns:
         mock_ns.network = MagicMock()
         
         # Mock _enrich_actions

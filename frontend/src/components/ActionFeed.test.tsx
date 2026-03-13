@@ -6,6 +6,9 @@ import '@testing-library/jest-dom/vitest';
 vi.mock('../api', () => ({
     api: {
         getAvailableActions: vi.fn(async () => []),
+        simulateManualAction: vi.fn(),
+        getNetworkDiagram: vi.fn(),
+        computeSuperposition: vi.fn(),
     }
 }));
 
@@ -478,6 +481,65 @@ describe('ActionFeed', () => {
         fireEvent.click(changeLinks[0]);
         expect(onOpenSettings).toHaveBeenCalledWith('paths');
     });
+    it('awaits simulation before calling onManualActionAdded to prevent race conditions', async () => {
+        const actionId = 'act1';
+        const mockResult = {
+            description_unitaire: 'Description',
+            rho_before: [1.0],
+            rho_after: [0.8],
+            max_rho: 0.8,
+            max_rho_line: 'LINE_A',
+            is_rho_reduction: true,
+            lines_overloaded: []
+        };
+
+        vi.mocked(api.getAvailableActions).mockResolvedValue([{ id: 'act1', type: 'disco', description: 'desc' }]);
+
+        // Mock a slow simulation
+        let simulationFinished = false;
+        vi.mocked(api.simulateManualAction).mockImplementation(async () => {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            simulationFinished = true;
+            return mockResult as any;
+        });
+
+        const props = {
+            ...defaultProps,
+            disconnectedElement: 'contingency_A',
+        };
+        const { getByText, getByPlaceholderText } = render(<ActionFeed {...props} />);
+
+        // Open search and add action
+        fireEvent.click(getByText('+ Manual Selection'));
+
+        // Wait for actions to load
+        await waitFor(() => expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument());
+
+        const input = getByPlaceholderText('Search action by ID or description...');
+        fireEvent.change(input, { target: { value: 'act1' } });
+
+        const actionCard = await screen.findByTestId('action-card-act1');
+        fireEvent.click(actionCard);
+
+        // Verify it shows loading state
+        expect(screen.getByText('Simulating...')).toBeInTheDocument();
+
+        // At this point onManualActionAdded should NOT have been called yet
+        expect(defaultProps.onManualActionAdded).not.toHaveBeenCalled();
+
+        // Wait for simulation to finish
+        await waitFor(() => expect(simulationFinished).toBe(true));
+
+        // Now onManualActionAdded should have been called
+        await waitFor(() => {
+            expect(defaultProps.onManualActionAdded).toHaveBeenCalledWith(
+                actionId,
+                expect.objectContaining({ max_rho: 0.8 }),
+                []
+            );
+        });
+    });
+
     it('filters out combined actions that are marked as is_estimated', () => {
         const combinedId = 'act1+act2';
         const props = {
