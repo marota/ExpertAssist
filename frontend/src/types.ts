@@ -34,8 +34,23 @@ export interface ActionDetail {
     max_rho_line: string;
     is_rho_reduction: boolean;
     is_manual?: boolean;
+    is_estimated?: boolean;
     non_convergence?: string | null;
     action_topology?: ActionTopology;
+}
+
+export interface CombinedAction {
+    action1_id: string;
+    action2_id: string;
+    betas: number[];
+    p_or_combined: number[];
+    max_rho: number;
+    max_rho_line: string;
+    is_rho_reduction: boolean;
+    description: string;
+    rho_after: number[];
+    rho_before: number[];
+    error?: string;
 }
 
 export interface AnalysisResult {
@@ -44,6 +59,7 @@ export interface AnalysisResult {
     actions: Record<string, ActionDetail>;
     action_scores?: Record<string, Record<string, unknown>>;
     lines_overloaded: string[];
+    combined_actions?: Record<string, CombinedAction>;
     message: string;
     dc_fallback: boolean;
 }

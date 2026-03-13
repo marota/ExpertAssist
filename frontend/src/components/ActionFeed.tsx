@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult } from '../types';
 import { api } from '../api';
 import { getActionTargetVoltageLevel, getActionTargetLines } from '../utils/svgUtils';
+import CombinedActionsModal from './CombinedActionsModal';
 
 interface ActionFeedProps {
     actions: Record<string, ActionDetail>;
@@ -70,6 +71,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [combineModalOpen, setCombineModalOpen] = useState(false);
     const [availableActions, setAvailableActions] = useState<AvailableAction[]>([]);
     const [loadingActions, setLoadingActions] = useState(false);
     const [simulating, setSimulating] = useState<string | null>(null);
@@ -276,8 +278,18 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     };
 
     // Sort actions by max_rho ascending (matching standalone)
+    // Filter out combined actions that are only estimations (they will have '+' in ID but no rho_after yet)
     const sortedActionEntries = useMemo(() => {
-        return Object.entries(actions).sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
+        return Object.entries(actions)
+            .filter(([id, details]) => {
+                const isCombined = id.includes('+');
+                if (!isCombined) return true;
+                // Only show combined if it has been fully simulated (not just estimated)
+                // Simulated actions will NOT have the is_estimated flag set.
+                if (details.is_estimated) return false;
+                return details.rho_after && details.rho_after.length > 0;
+            })
+            .sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
     }, [actions]);
 
     const analysisActionIds = useMemo(() => {
@@ -449,6 +461,36 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             {/* Header with search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                 <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
+                <button
+                    onClick={() => setCombineModalOpen(true)}
+                    style={{
+                        background: '#17a2b8',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                    }}
+                >
+                    Combine
+                </button>
+                <button
+                    onClick={() => setCombineModalOpen(true)}
+                    style={{
+                        background: '#17a2b8',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                    }}
+                >
+                    Combine
+                </button>
                 <button
                     onClick={handleOpenSearch}
                     style={{
@@ -869,6 +911,15 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     {tooltip.content}
                 </div>
             )}
+
+            {/* Combined Actions Modal */}
+            <CombinedActionsModal
+                isOpen={combineModalOpen}
+                onClose={() => setCombineModalOpen(false)}
+                analysisResult={pendingAnalysisResult}
+                disconnectedElement={disconnectedElement}
+                onSimulateCombined={handleAddAction}
+            />
         </div>
     );
 };

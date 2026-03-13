@@ -102,6 +102,13 @@ export const api = {
         );
         return response.data;
     },
+    computeSuperposition: async (action1_id: string, action2_id: string, disconnectedElement: string): Promise<import('./types').CombinedAction> => {
+        const response = await axios.post(
+            `${API_BASE_URL}/api/compute-superposition`,
+            { action1_id, action2_id, disconnected_element: disconnectedElement }
+        );
+        return response.data;
+    },
     pickPath: async (type: 'file' | 'dir'): Promise<string | null> => {
         const response = await axios.get<{ path: string | null }>(
             `${API_BASE_URL}/api/pick-path?type=${type}`

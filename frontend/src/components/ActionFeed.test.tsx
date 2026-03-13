@@ -26,7 +26,7 @@ import type { ActionDetail, AnalysisResult } from '../types';
 
 describe('ActionFeed', () => {
     const emptyTopo = { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} };
-    
+
     const defaultProps = {
         actions: {} as Record<string, ActionDetail>,
         actionScores: {} as Record<string, Record<string, unknown>>,
@@ -72,7 +72,7 @@ describe('ActionFeed', () => {
             },
         };
         render(<ActionFeed {...props} />);
-        
+
         fireEvent.click(screen.getByText('+ Manual Selection'));
         expect(await screen.findByText('Scored Actions')).toBeInTheDocument();
     });
@@ -96,7 +96,7 @@ describe('ActionFeed', () => {
             analysisLoading: true,
         };
         render(<ActionFeed {...props} />);
-        
+
         expect(screen.queryByText('Suggested Action')).not.toBeInTheDocument();
         // Processing indicator is now visible during analysis
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
@@ -122,7 +122,7 @@ describe('ActionFeed', () => {
             analysisLoading: true,
         };
         render(<ActionFeed {...props} />);
-        
+
         expect(screen.getByText('Manual Action')).toBeInTheDocument();
         // Processing indicator is visible even when viewing selected actions
         expect(screen.getByText('⚙️ Processing analysis...')).toBeInTheDocument();
@@ -137,7 +137,7 @@ describe('ActionFeed', () => {
             } as unknown as AnalysisResult,
         };
         render(<ActionFeed {...props} />);
-        
+
         expect(screen.getByText(/Display 1 prioritized actions/)).toBeInTheDocument();
     });
 
@@ -152,7 +152,7 @@ describe('ActionFeed', () => {
             } as unknown as AnalysisResult,
         };
         render(<ActionFeed {...props} />);
-        
+
         fireEvent.click(screen.getByText(/Display 1 prioritized actions/));
         expect(onDisplay).toHaveBeenCalled();
     });
@@ -180,9 +180,9 @@ describe('ActionFeed', () => {
             }
         };
         render(<ActionFeed {...props} />);
-        
+
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         expect(await screen.findByTestId(`badge-computed-${actionId}`)).toBeInTheDocument();
         expect(screen.queryByTestId(`badge-divergent-${actionId}`)).not.toBeInTheDocument();
     });
@@ -211,9 +211,9 @@ describe('ActionFeed', () => {
             }
         };
         render(<ActionFeed {...props} />);
-        
+
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         expect(await screen.findByTestId(`badge-divergent-${actionId}`)).toBeInTheDocument();
         expect(screen.queryByTestId(`badge-computed-${actionId}`)).not.toBeInTheDocument();
     });
@@ -237,18 +237,18 @@ describe('ActionFeed', () => {
             selectedActionIds: new Set([actionId])
         };
         render(<ActionFeed {...props} />);
-        
+
         const card = screen.getByTestId(`action-card-${actionId}`);
-        
+
         // 1. Check Divergent Badge (red)
         const badge = screen.getByText('divergent');
         expect(badge.style.background).toContain('rgb(220, 53, 69)'); // #dc3545
-        
+
         // 2. Check Warning Box (orange)
         const warningBox = screen.getByText(/LoadFlow failure: Critical Error/);
         expect(warningBox.style.color).toContain('rgb(154, 52, 18)'); // #9a3412
         expect(warningBox.style.backgroundColor).toContain('rgb(255, 248, 241)'); // #fff8f1
-        
+
         // 3. Check Card Background (reddish)
         expect(card.style.background).toContain('rgb(255, 245, 245)');
     });
@@ -263,40 +263,40 @@ describe('ActionFeed', () => {
             selectedActionIds: new Set(['act_good', 'act_bad'])
         };
         render(<ActionFeed {...props} />);
-        
+
         const cards = screen.getAllByTestId(/action-card-/);
         const cardTexts = cards.map(el => el.textContent);
-        
+
         const goodIndex = cardTexts.findIndex(t => t?.includes('Good Action'));
         const badIndex = cardTexts.findIndex(t => t?.includes('Bad Action'));
-        
+
         expect(goodIndex).toBeLessThan(badIndex);
     });
 
     it('filters PST actions based on the PST checkbox', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
         const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
-        
+
         // Mock API to return both actions
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
 
         render(<ActionFeed {...defaultProps} />);
-        
+
         // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         // Both should be visible initially (PST filter is true by default)
         expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
         expect(screen.getByText('line_reco_1')).toBeInTheDocument();
-        
+
         // Find and click the PST checkbox to uncheck it
         const pstCheckbox = screen.getByLabelText('PST');
         fireEvent.click(pstCheckbox);
-        
+
         // PST action should be hidden, regular action should remain
         expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
         expect(screen.getByText('line_reco_1')).toBeInTheDocument();
-        
+
         // Check it again
         fireEvent.click(pstCheckbox);
         expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
@@ -304,22 +304,22 @@ describe('ActionFeed', () => {
 
     it('hides PST actions matching search query when PST filter is unchecked', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action' };
-        
+
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction]);
 
         render(<ActionFeed {...defaultProps} />);
-        
+
         // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         // Uncheck PST filter
         const pstCheckbox = screen.getByLabelText('PST');
         fireEvent.click(pstCheckbox);
-        
+
         // Type "pst" in search
         const searchInput = screen.getByPlaceholderText(/Search action/);
         fireEvent.change(searchInput, { target: { value: 'pst' } });
-        
+
         // Wait for loading to finish if it hasn't already
         await waitFor(() => {
             expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
@@ -334,55 +334,55 @@ describe('ActionFeed', () => {
         const pstAction = { id: 'pst_1', description: 'PST action' };
         const discoAction = { id: 'abc', description: 'Ouverture de ligne' }; // Should be recognized as disco
         const unknownAction = { id: 'xyz', description: 'Some unknown action' };
-        
+
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, discoAction, unknownAction]);
 
         render(<ActionFeed {...defaultProps} />);
-        
+
         // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         // Uncheck everything except PST
         fireEvent.click(screen.getByLabelText('Disconnections'));
         fireEvent.click(screen.getByLabelText('Reconnections'));
         fireEvent.click(screen.getByLabelText('Open coupling'));
         fireEvent.click(screen.getByLabelText('Close coupling'));
-        
+
         // PST should be visible
         expect(await screen.findByText('pst_1')).toBeInTheDocument();
-        
+
         // Disco and Unknown should NOT be visible
         expect(screen.queryByText('abc')).not.toBeInTheDocument();
         expect(screen.queryByText('xyz')).not.toBeInTheDocument();
     });
 
     it('hides disconnections on PST branches when Disconnections filter is off but PST is on', async () => {
-        const pstDiscoAction = { 
-            id: 'disco_pst_branch', 
+        const pstDiscoAction = {
+            id: 'disco_pst_branch',
             description: 'Ouverture de la branche PST',
             type: 'pst_tap_change' // Simulating backend tagging it as PST
         };
-        
+
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstDiscoAction]);
 
         render(<ActionFeed {...defaultProps} />);
-        
+
         // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
-        
+
         // Ensure Disconnections is unchecked, PST is checked
         const discoCheckbox = screen.getByLabelText('Disconnections') as HTMLInputElement;
         if (discoCheckbox.checked) fireEvent.click(discoCheckbox);
-        
+
         const pstCheckbox = screen.getByLabelText('PST') as HTMLInputElement;
         if (!pstCheckbox.checked) fireEvent.click(pstCheckbox);
-        
+
         // PST branch disco should NOT be visible because it's a disconnection
         // even if it has "pst" in id/type
         await waitFor(() => {
             expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
         });
-        
+
         expect(screen.queryByText('disco_pst_branch')).not.toBeInTheDocument();
         expect(screen.getByText('All actions already added')).toBeInTheDocument();
     });
@@ -393,7 +393,7 @@ describe('ActionFeed', () => {
             actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
         };
         render(<ActionFeed {...props} />);
-        
+
         expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
         expect(screen.getByText(/actions.json/)).toBeInTheDocument();
         expect(screen.getByText(/Reco:/)).toBeInTheDocument();
@@ -410,7 +410,7 @@ describe('ActionFeed', () => {
             actionDictStats: { reco: 3, disco: 5, pst: 2, open_coupling: 1, close_coupling: 1, total: 12 },
         };
         render(<ActionFeed {...props} />);
-        
+
         expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
         fireEvent.click(screen.getByTitle('Dismiss'));
         expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
@@ -442,7 +442,7 @@ describe('ActionFeed', () => {
             analysisLoading: true,
         };
         render(<ActionFeed {...props} />);
-        
+
         const banner = screen.getByText('⚙️ Processing analysis...');
         expect(banner).toBeInTheDocument();
         expect(banner.style.background).toContain('rgb(255, 243, 205)'); // #fff3cd
@@ -477,5 +477,52 @@ describe('ActionFeed', () => {
         // Click the first one (action dict warning)
         fireEvent.click(changeLinks[0]);
         expect(onOpenSettings).toHaveBeenCalledWith('paths');
+    });
+    it('filters out combined actions that are marked as is_estimated', () => {
+        const combinedId = 'act1+act2';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [combinedId]: {
+                    description_unitaire: 'Combined Action',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    is_estimated: true, // This should cause it to be filtered out
+                    action_topology: emptyTopo
+                }
+            },
+            selectedActionIds: new Set([combinedId]),
+            analysisLoading: false,
+        };
+        render(<ActionFeed {...props} />);
+
+        expect(screen.queryByText('Combined Action')).not.toBeInTheDocument();
+    });
+
+    it('shows combined actions that are NOT marked as is_estimated', () => {
+        const combinedId = 'act1+act2';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [combinedId]: {
+                    description_unitaire: 'Simulated Combined Action',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    is_estimated: false, // This should be shown
+                    action_topology: emptyTopo
+                }
+            },
+            selectedActionIds: new Set([combinedId]),
+            analysisLoading: false,
+        };
+        render(<ActionFeed {...props} />);
+
+        expect(screen.getByText('Simulated Combined Action')).toBeInTheDocument();
     });
 });

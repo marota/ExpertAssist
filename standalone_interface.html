@@ -395,6 +395,123 @@
             height: auto;
             display: block;
         }
+
+        /* Combined Actions Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 900px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            position: relative;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+        }
+
+        .modal-footer {
+            margin-top: 20px;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .action-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .action-table th, .action-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .action-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+
+        .action-table tr:hover {
+            background: #f1f8ff;
+        }
+
+        .action-table tr.selected {
+            background: #e7f1ff;
+        }
+
+        .beta-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: #e9ecef;
+            font-family: monospace;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .modal-tabs {
+            display: flex;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 15px;
+        }
+
+        .modal-tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-weight: bold;
+            color: #666;
+        }
+
+        .modal-tab.active {
+            border-bottom-color: #3498db;
+            color: #3498db;
+            background: #f8f9fa;
+        }
+
+        .metric-badge {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .metric-score {
+            background: #e1f5fe;
+            color: #01579b;
+        }
+
+        .metric-rho {
+            background: #fff3e0;
+            color: #e65100;
+        }
     </style>
 </head>
 
@@ -1038,6 +1155,14 @@
             const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
             const [dismissedRecommenderWarning, setDismissedRecommenderWarning] = useState(false);
             const [pendingAnalysisResult, setPendingAnalysisResult] = useState(null);
+
+            // Combined Actions state
+            const [isCombineModalOpen, setIsCombineModalOpen] = useState(false);
+            const [selectedCombineActionIds, setSelectedCombineActionIds] = useState([]);
+            const [superpositionResult, setSuperpositionResult] = useState(null);
+            const [isComputingSuperposition, setIsComputingSuperposition] = useState(false);
+            const [exploreFilter, setExploreFilter] = React.useState('all');
+            const [combineModalTab, setCombineModalTab] = useState('computed'); // 'computed' | 'explore'
 
             const handleOpenSettings = (tab = 'paths') => {
                 setSettingsBackup({
@@ -1776,10 +1901,21 @@
                             }
                         }
                     }
+                    const combinedActionsData = {};
+                    if (pendingAnalysisResult?.combined_actions) {
+                        for (const [id, data] of Object.entries(pendingAnalysisResult.combined_actions)) {
+                            combinedActionsData[id] = {
+                                ...data,
+                                is_manual: false,
+                                is_precomputed: true,
+                                description_unitaire: data.description || `Combination of ${data.action1_id} and ${data.action2_id}`
+                            };
+                        }
+                    }
                     return {
-                        ...prev,                   // keep existing fields (pdf_url, etc.)
-                        ...pendingAnalysisResult,  // overlay with analysis result
-                        actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
+                        ...prev,
+                        ...pendingAnalysisResult,
+                        actions: { ...pendingAnalysisResult.actions, ...combinedActionsData, ...manualActionsData },
                     };
                 });
                 setPendingAnalysisResult(null);
@@ -2306,33 +2442,143 @@
 
             const handleAddManualAction = async (actionId) => {
                 if (!selectedBranch) { setSearchError('Run an analysis first'); return; }
+                console.log('[handleAddManualAction] Starting simulation for:', actionId);
                 setSimulatingActionId(actionId);
                 setSearchError('');
-
-                // Start fetching the action diagram in parallel with the simulation.
-                // The diagram API is independent of the simulation result.
-                const diagramPromise = axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId })
-                    .then(res => {
-                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
-                        return { ...res.data, svg, originalViewBox: viewBox };
-                    })
-                    .catch(() => null);
 
                 try {
                     const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
                         action_id: actionId,
                         disconnected_element: selectedBranch
                     });
+                    console.log('[handleAddManualAction] Simulation result received:', res.data);
                     const detail = res.data;
+                    
                     // Track this as a manually added action
                     setManualActionIds(prev => new Set([...prev, actionId]));
                     setManuallyAddedIds(prev => new Set([...prev, actionId]));
+                    
+                    const isCombined = actionId.includes('+');
+
                     // Merge into result
                     setResult(prev => {
                         const base = prev || { actions: {}, lines_overloaded: [] };
                         return {
                             ...base,
                             lines_overloaded: (base.lines_overloaded && base.lines_overloaded.length > 0) ? base.lines_overloaded : (detail.lines_overloaded || []),
+                            actions: {
+                                ...(base.actions || {}),
+                                [actionId]: {
+                                    ...(base.actions?.[actionId] || {}), // Keep existing betas/estimations if present
+                                    description_unitaire: detail.description_unitaire || (isCombined ? `Combination action results` : ''),
+                                    rho_before: detail.rho_before,
+                                    rho_after: detail.rho_after,
+                                    max_rho: detail.max_rho,
+                                    max_rho_line: detail.max_rho_line,
+                                    is_rho_reduction: detail.is_rho_reduction,
+                                    is_manual: true,
+                                    is_estimated: false, // CRITICAL: It is now simulated
+                                    is_precomputed: isCombined ? true : (base.actions?.[actionId]?.is_precomputed || false)
+                                }
+                            }
+                        };
+                    });
+                    setSearchOpen(false);
+                    setSearchQuery('');
+
+                    // Fetch the action diagram AFTER simulation completes (ensures post-action state is ready)
+                    try {
+                        const diagRes = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
+                        const { svg, viewBox } = processSvg(diagRes.data.svg, voltageLevels.length);
+                        const prefetched = { ...diagRes.data, svg, originalViewBox: viewBox };
+                        
+                        actionSyncSourceRef.current =
+                            (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
+                            || n1PZ.viewBox || nPZ.viewBox;
+                        setSelectedActionId(actionId);
+                        setActiveTab('action');
+                        setActionDiagram(prefetched);
+                    } catch (diagErr) {
+                        console.error('Failed to fetch action variant diagram:', diagErr);
+                        handleActionSelect(actionId); // Fallback to normal selection logic
+                    }
+                } catch (err) {
+                    console.error('Simulation failed:', err);
+                    setSearchError(err?.response?.data?.detail || 'Simulation failed');
+                } finally {
+                    setSimulatingActionId(null);
+                }
+            };
+
+            const handleOpenCombineModal = () => {
+                setSelectedCombineActionIds([]);
+                setSuperpositionResult(null);
+                setCombineModalTab('computed');
+                setIsCombineModalOpen(true);
+            };
+
+            const toggleActionSelection = (actionId) => {
+                setSelectedCombineActionIds(prev => {
+                    if (prev.includes(actionId)) {
+                        return prev.filter(id => id !== actionId);
+                    }
+                    if (prev.length >= 2) return prev;
+                    return [...prev, actionId];
+                });
+            };
+
+            // Removed auto-compute. User will click explicit Estimate button.
+
+            const handleComputeSuperposition = async () => {
+                if (selectedCombineActionIds.length !== 2) return;
+                setIsComputingSuperposition(true);
+                try {
+                    const res = await axios.post(API_BASE + '/api/compute-superposition', {
+                        action1_id: selectedCombineActionIds[0],
+                        action2_id: selectedCombineActionIds[1],
+                        disconnected_element: selectedBranch
+                    });
+                    const combinedId = selectedCombineActionIds.join('+');
+                    setSuperpositionResult(res.data);
+                    
+                    // Feed the first tab with estimated result
+                    setResult(prev => {
+                        if (!prev) return prev;
+                        return {
+                            ...prev,
+                            actions: {
+                                ...prev.actions,
+                                [combinedId]: {
+                                    ...res.data,
+                                    is_manual: true,
+                                    is_estimated: true,
+                                    description_unitaire: `[ESTIMATED] Combination of ${selectedCombineActionIds.join(' and ')}`
+                                }
+                            }
+                        };
+                    });
+                } catch (err) {
+                    const errMsg = err.response?.data?.detail || err.message || JSON.stringify(err);
+                    setError('Failed to compute superposition: ' + errMsg);
+                } finally {
+                    setIsComputingSuperposition(false);
+                }
+            };
+
+            const handleSimulateUnitaryFromModal = async (actionId) => {
+                setSimulatingActionId(actionId);
+                try {
+                    const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                        action_id: actionId,
+                        disconnected_element: selectedBranch
+                    });
+                    const detail = res.data;
+                    setManualActionIds(prev => new Set([...prev, actionId]));
+                    setManuallyAddedIds(prev => new Set([...prev, actionId]));
+                    setResult(prev => {
+                        const base = prev || { actions: {}, lines_overloaded: [] };
+                        return {
+                            ...base,
                             actions: {
                                 ...(base.actions || {}),
                                 [actionId]: {
@@ -2347,23 +2593,75 @@
                             }
                         };
                     });
-                    setSearchOpen(false);
-                    setSearchQuery('');
-
-                    // Use pre-fetched diagram if available (already processed in parallel)
-                    const prefetched = await diagramPromise;
-                    if (prefetched) {
-                        actionSyncSourceRef.current =
-                            (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
-                            || n1PZ.viewBox || nPZ.viewBox;
-                        setSelectedActionId(actionId);
-                        setActiveTab('action');
-                        setActionDiagram(prefetched);
-                    } else {
-                        handleActionSelect(actionId);
-                    }
+                    // DO NOT close modal as per requirement
+                    setInfoMessage(`Unitary action ${actionId} simulated successfully.`);
+                    setTimeout(() => setInfoMessage(null), 3000);
                 } catch (err) {
-                    setSearchError(err?.response?.data?.detail || 'Simulation failed');
+                    setError('Failed to simulate unitary action: ' + (err.response?.data?.detail || err.message));
+                } finally {
+                    setSimulatingActionId(null);
+                }
+            };
+
+            const handleSimulateCombined = async (actionIds = selectedCombineActionIds) => {
+                if (actionIds.length !== 2) return;
+                const combinedId = actionIds.join('+');
+                setSimulatingActionId(combinedId);
+                try {
+                    setManualActionIds(prev => new Set([...prev, combinedId]));
+                    setManuallyAddedIds(prev => new Set([...prev, combinedId]));
+                    
+                    // Add dummy entry for immediate visual feedback in the background
+                    setResult(prev => {
+                        const base = prev || { actions: {}, lines_overloaded: [] };
+                        return {
+                            ...base,
+                            actions: {
+                                ...(base.actions || {}),
+                                [combinedId]: {
+                                    description_unitaire: `Combined Action (${combinedId})`,
+                                    is_manual: true,
+                                    is_simulating: true, // Custom flag for UI feedback
+                                    rho_before: [],
+                                    rho_after: [],
+                                    max_rho: 0,
+                                }
+                            }
+                        };
+                    });
+
+                    // Close modal IMMEDIATELY as per requirement
+                    setIsCombineModalOpen(false);
+                    // Clear estimation result for next time
+                    setSuperpositionResult(null);
+
+                    const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                        action_id: combinedId,
+                        disconnected_element: selectedBranch
+                    });
+                    const detail = res.data;
+                    setResult(prev => {
+                        const base = prev || { actions: {}, lines_overloaded: [] };
+                        return {
+                            ...base,
+                            actions: {
+                                ...(base.actions || {}),
+                                [combinedId]: {
+                                    description_unitaire: detail.description_unitaire,
+                                    rho_before: detail.rho_before,
+                                    rho_after: detail.rho_after,
+                                    max_rho: detail.max_rho,
+                                    max_rho_line: detail.max_rho_line,
+                                    is_rho_reduction: detail.is_rho_reduction,
+                                    is_manual: true,
+                                }
+                            }
+                        };
+                    });
+                    // Select the action after simulation is done
+                    handleActionSelect(combinedId);
+                } catch (err) {
+                    setError('Failed to simulate combined action: ' + (err.response?.data?.detail || err.message));
                 } finally {
                     setSimulatingActionId(null);
                 }
@@ -2437,8 +2735,11 @@
                         else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
 
                         if (!shouldShow) continue;
+
+                        // Filter out combined actions that are only estimations
+                        if (actionId.includes('+') && (actionDetail?.is_estimated || !actionDetail?.rho_after || actionDetail?.rho_after.length === 0)) continue;
                         
-                        list.push({ type, actionId, score: Number(score) });
+                        list.push({ actionId, score, type });
                     }
                 }
                 return list.sort((a, b) => {
@@ -2450,6 +2751,17 @@
                     return b.score - a.score;
                 });
             }, [result?.action_scores, result?.actions, typeFilters]);
+
+            const actionScoreMap = useMemo(() => {
+                const map = {};
+                if (!result?.action_scores) return map;
+                for (const [type, data] of Object.entries(result.action_scores)) {
+                    for (const [actionId, score] of Object.entries(data?.scores || {})) {
+                        map[actionId] = Number(score);
+                    }
+                }
+                return map;
+            }, [result?.action_scores]);
 
 
 
@@ -3185,13 +3497,26 @@
             };
 
             const sortedActionEntries = React.useMemo(() => {
-                return Object.entries(result?.actions || {}).sort(([, a], [, b]) => {
-                    // Non-convergent actions go to the bottom
-                    if (a.non_convergence && !b.non_convergence) return 1;
-                    if (!a.non_convergence && b.non_convergence) return -1;
-                    // Otherwise sort by max_rho
-                    return (a.max_rho ?? 999) - (b.max_rho ?? 999);
-                });
+                return Object.entries(result?.actions || {})
+                    .filter(([id, details]) => {
+                        const isCombined = id.includes('+');
+                        // Always show manually added IDs
+                        if (manualActionIds.has(id)) return true;
+                        
+                        if (!isCombined) return true;
+                        
+                        // For combined actions:
+                        // Only show if fully simulated (not estimated)
+                        if (details.is_estimated) return false;
+                        
+                        // Ensure we have some data or it's been manually triggered
+                        return (details.rho_after && details.rho_after.length > 0) || details.is_manual;
+                    })
+                    .sort(([, a], [, b]) => {
+                        if (a.non_convergence && !b.non_convergence) return 1;
+                        if (!a.non_convergence && b.non_convergence) return -1;
+                        return (a.max_rho ?? 999) - (b.max_rho ?? 999);
+                    });
             }, [result?.actions]);
 
             const analysisActionIds = React.useMemo(() => {
@@ -3220,8 +3545,10 @@
             }, [sortedActionEntries, rejectedActionIds]);
 
             const renderActionList = (entries) => {
-                return entries.map(([id, details], index) => {
-                    const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
+                try {
+                    return entries.map(([id, details], index) => {
+                        if (!details) return null;
+                        const maxRhoPct = details.max_rho != null ? (details.max_rho * 100).toFixed(1) : null;
                     const overloadedLines = result.lines_overloaded || [];
                     // Tri-color severity: red (>100%), orange (>90%), green (<=90%)
                     const severity = details.max_rho != null
@@ -3367,6 +3694,10 @@
                         </div>
                     );
                 });
+                } catch (err) {
+                    console.error('[renderActionList] crash:', err);
+                    return <div className="error-box">Render Error in list</div>;
+                }
             };
 
             return (
@@ -3728,6 +4059,22 @@
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                                 <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
+                                <button
+                                    onClick={handleOpenCombineModal}
+                                    style={{
+                                        background: isCombineModalOpen ? '#007bff' : '#e9ecef',
+                                        color: isCombineModalOpen ? 'white' : '#333',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '4px 10px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                        marginRight: '5px'
+                                    }}
+                                >
+                                    Combine
+                                </button>
                                 <button
                                     onClick={handleOpenSearch}
                                     style={{
@@ -4387,6 +4734,298 @@
                             border: '1px solid rgba(255,255,255,0.2)'
                         }}>
                             {infoMessage}
+                        </div>
+                    )}
+                    {isCombineModalOpen && (
+                        <div className="modal-overlay">
+                            <div className="modal-content">
+                                <div className="modal-header">
+                                    <h2 style={{ margin: 0 }}>Combine Actions</h2>
+                                    <button onClick={() => setIsCombineModalOpen(false)} style={{ background: 'none', border: 'none', color: '#666', fontSize: '24px', padding: '0 5px', cursor: 'pointer' }}>&times;</button>
+                                </div>
+
+                                <div className="modal-tabs">
+                                    <div 
+                                        className={`modal-tab ${combineModalTab === 'computed' ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setCombineModalTab('computed');
+                                            setSelectedCombineActionIds([]);
+                                            setSuperpositionResult(null);
+                                        }}
+                                    >
+                                        Computed Pairs
+                                    </div>
+                                    <div 
+                                        className={`modal-tab ${combineModalTab === 'explore' ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setCombineModalTab('explore');
+                                            setSelectedCombineActionIds([]);
+                                            setSuperpositionResult(null);
+                                        }}
+                                    >
+                                        Explore Pairs
+                                    </div>
+                                </div>
+
+                                {combineModalTab === 'computed' ? (
+                                    <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                                        <table className="action-table">
+                                            <thead>
+                                                <tr>
+                                                    <th>Action 1</th>
+                                                    <th>Action 2</th>
+                                                    <th>Betas</th>
+                                                    <th>Max Loading (Est.)</th>
+                                                    <th>Line (Est.)</th>
+                                                    <th>Simulated Max Rho</th>
+                                                    <th>Simulated Line</th>
+                                                    <th>Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {Object.entries(result?.actions || {})
+                                                    .filter(([id, data]) => id.includes('+') || data.is_precomputed)
+                                                    .sort((a, b) => (a[1].max_rho ?? 999) - (b[1].max_rho ?? 999))
+                                                    .map(([id, data]) => {
+                                                        const parts = id.split('+').map(p => p.trim());
+                                                        const isSimulated = !data.is_estimated && data.rho_after && data.rho_after.length > 0;
+                                                        return (
+                                                            <tr key={id}>
+                                                                <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[0]}</td>
+                                                                <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[1]}</td>
+                                                                <td style={{ fontSize: '11px', fontFamily: 'monospace', color: '#666' }}>
+                                                                    {data.betas ? (Array.isArray(data.betas) ? data.betas : Object.values(data.betas)).map(b => b.toFixed(2)).join(', ') : '-'}
+                                                                </td>
+                                                                <td>
+                                                                    <span className="metric-badge metric-rho" style={{ 
+                                                                        background: data.is_rho_reduction ? '#e8f5e9' : '#ffebee', 
+                                                                        color: data.is_rho_reduction ? '#2e7d32' : '#c62828',
+                                                                        fontWeight: 'bold',
+                                                                        opacity: 0.8
+                                                                    }}>
+                                                                        {(data.max_rho * 100).toFixed(1)}%
+                                                                    </span>
+                                                                </td>
+                                                                <td style={{ fontSize: '11px', color: '#555' }}>{data.max_rho_line}</td>
+                                                                
+                                                                <td style={{ textAlign: 'center' }}>
+                                                                    {isSimulated ? (
+                                                                        <span className="metric-badge metric-rho" style={{ 
+                                                                            fontWeight: 'bold',
+                                                                            fontSize: '13px'
+                                                                        }}>
+                                                                            {(data.max_rho * 100).toFixed(1)}%
+                                                                        </span>
+                                                                    ) : '-'}
+                                                                </td>
+                                                                <td style={{ fontSize: '11px', color: '#333', fontWeight: isSimulated ? 'bold' : 'normal' }}>
+                                                                    {isSimulated ? data.max_rho_line : '-'}
+                                                                </td>
+
+                                                                <td>
+                                                                    <button 
+                                                                        onClick={() => {
+                                                                            setIsCombineModalOpen(false);
+                                                                            handleAddManualAction(id);
+                                                                        }}
+                                                                        style={{ padding: '6px 14px', background: isSimulated ? '#3498db' : '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}
+                                                                    >
+                                                                        {isSimulated ? 'Re-Simulate' : 'Simulate'}
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })
+                                                }
+                                                {Object.entries(result?.actions || {}).filter(([id, data]) => id.includes('+') || data.is_precomputed).length === 0 && (
+                                                    <tr>
+                                                        <td colSpan="6" style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
+                                                            No computed combinations found.<br/>Go to <strong>Explore Pairs</strong> to create new ones.
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div style={{ background: '#f8f9fa', padding: '10px', borderRadius: '6px', marginBottom: '15px', border: '1px solid #e9ecef' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                                <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#444' }}>Selected Actions ({selectedCombineActionIds.length}/2)</div>
+                                                <button 
+                                                    onClick={() => setSelectedCombineActionIds([])}
+                                                    disabled={selectedCombineActionIds.length === 0}
+                                                    style={{ background: 'none', border: 'none', color: '#007bff', fontSize: '11px', cursor: 'pointer', padding: 0 }}
+                                                >Clear All</button>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: '8px', minHeight: '30px' }}>
+                                                {selectedCombineActionIds.length === 0 ? (
+                                                    <div style={{ color: '#999', fontSize: '12px', fontStyle: 'italic', display: 'flex', alignItems: 'center' }}>Click rows in the table below to select...</div>
+                                                ) : (
+                                                    selectedCombineActionIds.map(id => (
+                                                        <div key={id} style={{ background: '#e7f1ff', color: '#007bff', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', border: '1px solid #b3d7ff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                            {id}
+                                                            <span onClick={(e) => { e.stopPropagation(); toggleActionSelection(id); }} style={{ cursor: 'pointer', fontSize: '14px' }}>&times;</span>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                            {['all', 'disco', 'reco', 'open', 'close', 'pst'].map(f => (
+                                                <button
+                                                    key={f}
+                                                    onClick={() => setExploreFilter(f)}
+                                                    style={{
+                                                        padding: '4px 10px',
+                                                        borderRadius: '15px',
+                                                        border: '1px solid',
+                                                        borderColor: exploreFilter === f ? '#007bff' : '#ddd',
+                                                        background: exploreFilter === f ? '#007bff' : 'white',
+                                                        color: exploreFilter === f ? 'white' : '#666',
+                                                        fontSize: '11px',
+                                                        cursor: 'pointer',
+                                                        fontWeight: exploreFilter === f ? 'bold' : 'normal',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    {f.toUpperCase()}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px' }}>
+                                            {Array.from(new Set(scoredActionsList.map(item => item.type)))
+                                                .filter(type => exploreFilter === 'all' || type.includes(exploreFilter))
+                                                .map(type => (
+                                                <div key={type} style={{ marginBottom: '1px' }}>
+                                                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#444', backgroundColor: '#f0f2f5', padding: '4px 8px', borderBottom: '1px solid #e1e4e8', display: 'flex', justifyContent: 'space-between' }}>
+                                                        <span>{type.replace('_', ' ').toUpperCase()}</span>
+                                                        <span>{scoredActionsList.filter(item => item.type === type).length} actions</span>
+                                                    </div>
+                                                    <table className="action-table" style={{ margin: 0, border: 'none' }}>
+                                                        <tbody>
+                                                            {scoredActionsList
+                                                                .filter(item => item.type === type)
+                                                                .map(({actionId, score}) => {
+                                                                    const data = result?.actions?.[actionId];
+                                                                    const isSelected = selectedCombineActionIds.includes(actionId);
+                                                                    return (
+                                                                        <tr 
+                                                                            key={actionId} 
+                                                                            className={isSelected ? 'selected' : ''}
+                                                                            onClick={() => toggleActionSelection(actionId)}
+                                                                            style={{ cursor: 'pointer', background: isSelected ? '#fff9db' : (data ? '#fdfdfd' : 'white') }}
+                                                                        >
+                                                                            <td style={{ width: '10px', paddingRight: 0 }}>
+                                                                                <input type="checkbox" checked={isSelected} readOnly style={{ cursor: 'pointer' }} />
+                                                                            </td>
+                                                                            <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{actionId}</td>
+                                                                            <td style={{ width: '60px' }}>
+                                                                                <span className="metric-badge metric-score" style={{ scale: '0.9' }}>
+                                                                                    {score.toFixed(2)}
+                                                                                </span>
+                                                                            </td>
+                                                                            <td style={{ width: '80px' }}>
+                                                                                {data ? (
+                                                                                    <span className="metric-badge metric-rho" style={{ scale: '0.9' }}>
+                                                                                        {(data.max_rho * 100).toFixed(1)}%
+                                                                                    </span>
+                                                                                ) : (
+                                                                                    <span style={{ color: '#aaa', fontStyle: 'italic', fontSize: '10px' }}>Untested</span>
+                                                                                )}
+                                                                            </td>
+                                                                            <td onClick={(e) => e.stopPropagation()} style={{ width: '90px' }}>
+                                                                                <button 
+                                                                                    onClick={() => handleSimulateUnitaryFromModal(actionId)}
+                                                                                    disabled={simulatingActionId === actionId}
+                                                                                    style={{ padding: '3px 8px', background: data ? '#95a5a6' : '#2980b9', color: 'white', border: 'none', borderRadius: '4px', cursor: (simulatingActionId === actionId) ? 'not-allowed' : 'pointer', fontSize: '10px' }}
+                                                                                >
+                                                                                    {simulatingActionId === actionId ? '...' : (data ? 'Re-run' : 'Simulate')}
+                                                                                </button>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })
+                                                            }
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            ))}
+                                            {scoredActionsList.length === 0 && (
+                                                <div style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
+                                                    No scored actions available. Run analysis first.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div style={{ marginTop: '15px' }}>
+                                            {!superpositionResult ? (
+                                                <button 
+                                                    onClick={handleComputeSuperposition}
+                                                    disabled={selectedCombineActionIds.length !== 2 || isComputingSuperposition}
+                                                    style={{ 
+                                                        width: '100%', 
+                                                        padding: '12px', 
+                                                        background: selectedCombineActionIds.length === 2 ? '#3498db' : '#ecf0f1', 
+                                                        color: selectedCombineActionIds.length === 2 ? 'white' : '#bdc3c7', 
+                                                        border: 'none', 
+                                                        borderRadius: '6px', 
+                                                        cursor: (selectedCombineActionIds.length !== 2 || isComputingSuperposition) ? 'not-allowed' : 'pointer', 
+                                                        fontWeight: 'bold',
+                                                        fontSize: '14px',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    {isComputingSuperposition ? '⚙️ Estimating Combination...' : (selectedCombineActionIds.length === 2 ? 'Estimate Combination effect' : 'Select 2 actions to estimate')}
+                                                </button>
+                                            ) : (
+                                                <div style={{ padding: '15px', background: superpositionResult.error ? '#fff3cd' : '#e1f5fe', borderRadius: '8px', borderLeft: '5px solid ' + (superpositionResult.error ? '#856404' : '#0288d1'), boxShadow: '0 2px 5px rgba(0,0,0,0.05)' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                                        <div style={{ flex: 1 }}>
+                                                            <div style={{ fontWeight: 800, color: superpositionResult.error ? '#856404' : '#01579b', marginBottom: '8px', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                <span>{superpositionResult.error ? '⚠️ Estimation Failed' : '✅ Superposition Estimation Result'}</span>
+                                                            </div>
+                                                            {superpositionResult.error ? (
+                                                                <div style={{ fontSize: '13px', color: '#856404' }}>{superpositionResult.error}</div>
+                                                            ) : (
+                                                                <div style={{ fontSize: '13px', lineHeight: '1.5' }}>
+                                                                    Max loading estimated at <strong style={{ color: '#d35400', fontSize: '15px' }}>{(superpositionResult.max_rho * 100).toFixed(1)}%</strong>
+                                                                    <br/>
+                                                                    Line: <strong>{superpositionResult.max_rho_line}</strong>
+                                                                </div>
+                                                            )}
+                                                            {superpositionResult.betas && (
+                                                                <div style={{ marginTop: '8px', fontSize: '11px', color: '#666', background: 'rgba(255,255,255,0.5)', padding: '4px 8px', borderRadius: '4px', display: 'inline-block' }}>
+                                                                    <strong>Betas:</strong> {superpositionResult.betas.map(b => b.toFixed(3)).join(', ')}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                            <button 
+                                                                onClick={() => setSuperpositionResult(null)}
+                                                                style={{ padding: '4px 10px', background: 'none', border: '1px solid #0288d1', color: '#0288d1', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
+                                                            >Modify</button>
+                                                            <button 
+                                                                onClick={handleSimulateCombined}
+                                                                disabled={simulatingActionId !== null}
+                                                                style={{ padding: '10px 20px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '6px', cursor: (simulatingActionId !== null) ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '14px', boxShadow: '0 4px 6px rgba(39,174,96,0.3)' }}
+                                                            >
+                                                                {simulatingActionId?.includes('+') ? '⌛ Simulating...' : 'Simulate Combined'}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+
+                                <div className="modal-footer">
+                                    <button onClick={() => setIsCombineModalOpen(false)} style={{ background: '#95a5a6', color: 'white', padding: '8px 20px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>Close</button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div >
