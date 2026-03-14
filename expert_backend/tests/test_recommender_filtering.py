@@ -90,11 +90,15 @@ def test_simulate_manual_action_for_combined(recommender):
     obs_n = MagicMock()
     obs_n.rho = np.array([0.5]) 
     obs_n.name_line = ["LINE1"]
+    obs_n.n_components = 1
+    obs_n.main_component_load_mw = 1000.0
     
     # Mock N-1 state obs (IS overloaded on LINE1)
     obs_n1 = MagicMock()
     obs_n1.rho = np.array([1.1]) 
     obs_n1.name_line = ["LINE1"]
+    obs_n1.n_components = 1
+    obs_n1.main_component_load_mw = 1000.0
     
     # env.get_obs is called twice: once for N, once for N-1
     env.get_obs.side_effect = [obs_n, obs_n1]
@@ -104,6 +108,8 @@ def test_simulate_manual_action_for_combined(recommender):
     mock_obs_after = MagicMock()
     mock_obs_after.rho = np.array([0.8]) 
     mock_obs_after.name_line = ["LINE1"]
+    mock_obs_after.n_components = 1
+    mock_obs_after.main_component_load_mw = 1000.0
     obs_n1.simulate.return_value = (mock_obs_after, None, None, {"exception": None})
     
     # Mock dict_action
