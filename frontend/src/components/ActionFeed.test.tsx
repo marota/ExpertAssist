@@ -13,7 +13,7 @@ vi.mock('../api', () => ({
 }));
 
 vi.mock('../utils/svgUtils', () => ({
-    getActionTargetVoltageLevel: vi.fn(() => null),
+    getActionTargetVoltageLevels: vi.fn(() => []),
     getActionTargetLines: vi.fn(() => []),
     processSvg: vi.fn(),
     buildMetadataIndex: vi.fn(),
@@ -25,6 +25,7 @@ vi.mock('../utils/svgUtils', () => ({
 
 import ActionFeed from './ActionFeed';
 import { api } from '../api';
+import { getActionTargetVoltageLevels, getActionTargetLines } from '../utils/svgUtils';
 import type { ActionDetail, AnalysisResult } from '../types';
 
 describe('ActionFeed', () => {
@@ -564,7 +565,7 @@ describe('ActionFeed', () => {
         expect(screen.queryByText('Combined Action')).not.toBeInTheDocument();
     });
 
-    it('shows combined actions that are NOT marked as is_estimated', () => {
+    it('shows simulated combined actions that are NOT marked as is_estimated', () => {
         const combinedId = 'act1+act2';
         const props = {
             ...defaultProps,
@@ -576,7 +577,7 @@ describe('ActionFeed', () => {
                     max_rho: 0.8,
                     max_rho_line: 'LINE_A',
                     is_rho_reduction: true,
-                    is_estimated: false, // This should be shown
+                    is_estimated: false,
                     action_topology: emptyTopo
                 }
             },
@@ -586,5 +587,43 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
 
         expect(screen.getByText('Simulated Combined Action')).toBeInTheDocument();
+    });
+
+    it('renders multiple asset badges for combined actions', () => {
+        const combinedId = 'VL1+LINE_A';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [combinedId]: {
+                    description_unitaire: "Action on 'VL1' and LINE_A",
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_B',
+                    is_rho_reduction: true,
+                    action_topology: emptyTopo
+                }
+            },
+            selectedActionIds: new Set([combinedId]),
+            nodesByEquipmentId: new Map([['VL1', { equipmentId: 'VL1', svgId: 'svg-vl1', x: 0, y: 0 }]]),
+            edgesByEquipmentId: new Map([['LINE_A', { equipmentId: 'LINE_A', svgId: 'svg-line-a', node1: 'n1', node2: 'n2' }]]),
+        };
+
+        // Mock utils to return the assets
+        vi.mocked(getActionTargetVoltageLevels).mockReturnValue(['VL1']);
+        vi.mocked(getActionTargetLines).mockReturnValue(['LINE_A']);
+
+        render(<ActionFeed {...props} />);
+
+        // Should see both badges
+        expect(screen.getByText('VL1')).toBeInTheDocument();
+        expect(screen.getByText('LINE_A')).toBeInTheDocument();
+
+        // Clicking a badge should call onAssetClick
+        fireEvent.click(screen.getByText('VL1'));
+        expect(props.onAssetClick).toHaveBeenCalledWith(combinedId, 'VL1', 'action');
+
+        fireEvent.click(screen.getByText('LINE_A'));
+        expect(props.onAssetClick).toHaveBeenCalledWith(combinedId, 'LINE_A', 'action');
     });
 });

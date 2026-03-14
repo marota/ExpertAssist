@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult } from '../types';
 import { api } from '../api';
-import { getActionTargetVoltageLevel, getActionTargetLines } from '../utils/svgUtils';
+import { getActionTargetVoltageLevels, getActionTargetLines } from '../utils/svgUtils';
 import CombinedActionsModal from './CombinedActionsModal';
 
 interface ActionFeedProps {
@@ -389,49 +389,59 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                             )}
                         </div>
                         {(() => {
-                            const badgeBtn = (name: string, bg: string, color: string, title: string) => (
+                            const badges: React.ReactNode[] = [];
+                            const badgeBtn = (name: string, bg: string, color: string, title: string, onDoubleClick?: (e: React.MouseEvent) => void) => (
                                 <button key={name}
                                     style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
                                     title={title}
-                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}>
+                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, name, 'action'); }}
+                                    onDoubleClick={onDoubleClick}>
                                     {name}
                                 </button>
                             );
-                            const vlName = nodesByEquipmentId
-                                ? getActionTargetVoltageLevel(details, id, nodesByEquipmentId)
-                                : null;
-                            if (vlName) return (
-                                <button key={vlName}
-                                    style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: '#d1fae5', color: '#065f46' }}
-                                    title={`Click: zoom to ${vlName} | Double-click: open SLD`}
-                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, vlName, 'action'); }}
-                                    onDoubleClick={(e) => { e.stopPropagation(); onVlDoubleClick?.(id, vlName); }}>
-                                    {vlName}
-                                </button>
-                            );
-                            const lineNames = (edgesByEquipmentId
+
+                            // 1. Substations (VLs)
+                            if (nodesByEquipmentId) {
+                                const vlNames = getActionTargetVoltageLevels(details, id, nodesByEquipmentId);
+                                vlNames.forEach(vlName => {
+                                    badges.push(badgeBtn(vlName, '#d1fae5', '#065f46', `Click: zoom to ${vlName} | Double-click: open SLD`, (e) => {
+                                        e.stopPropagation();
+                                        onVlDoubleClick?.(id, vlName);
+                                    }));
+                                });
+                            }
+
+                            // 2. Lines / Equipments
+                            const lineNames = edgesByEquipmentId
                                 ? getActionTargetLines(details, id, edgesByEquipmentId)
                                 : Array.from(new Set([
                                     ...Object.keys(details.action_topology?.lines_ex_bus || {}),
                                     ...Object.keys(details.action_topology?.lines_or_bus || {}),
-                                ]))) || [];
-                            if (lineNames.length > 0) return (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                    {lineNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to line ${name}`))}
+                                ]));
+
+                            lineNames.forEach(name => {
+                                // Avoid duplicates if already added as VL (unlikely but possible)
+                                if (badges.some(b => (b as any)?.key === name)) return;
+                                badges.push(badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`));
+                            });
+
+                            // 3. Fallback: gen/load equipment names from topology
+                            if (badges.length === 0) {
+                                const topo = details.action_topology;
+                                const equipNames = Array.from(new Set([
+                                    ...Object.keys(topo?.gens_bus || {}),
+                                    ...Object.keys(topo?.loads_bus || {}),
+                                ]));
+                                equipNames.forEach(name => {
+                                    badges.push(badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`));
+                                });
+                            }
+
+                            return (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0, maxWidth: '180px', justifyContent: 'flex-end' }}>
+                                    {badges}
                                 </div>
                             );
-                            // Fallback: gen/load equipment names from topology
-                            const topo = details.action_topology;
-                            const equipNames = [
-                                ...Object.keys(topo?.gens_bus || {}),
-                                ...Object.keys(topo?.loads_bus || {}),
-                            ];
-                            if (equipNames.length > 0) return (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0 }}>
-                                    {equipNames.map(name => badgeBtn(name, '#dbeafe', '#1e40af', `Zoom to ${name}`))}
-                                </div>
-                            );
-                            return null;
                         })()}
                     </div>
                     <div style={{ fontSize: '12px', background: isSelected ? '#dce8f7' : '#f8f9fa', padding: '5px', marginTop: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
