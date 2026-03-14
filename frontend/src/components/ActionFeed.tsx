@@ -353,7 +353,14 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         transition: 'all 0.15s ease',
                     }} onClick={() => onActionSelect(id)}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h4 style={{ margin: 0, fontSize: '14px', color: isSelected ? '#0056b3' : undefined }}>
+                        <h4 style={{
+                            margin: 0,
+                            fontSize: '14px',
+                            color: isSelected ? '#0056b3' : undefined,
+                            flex: 1,
+                            minWidth: 0,
+                            overflowWrap: 'anywhere'
+                        }}>
                             #{index + 1} {'\u2014'} {id}
                         </h4>
                         <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
