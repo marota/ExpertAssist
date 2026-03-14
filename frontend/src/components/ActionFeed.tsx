@@ -936,6 +936,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 isOpen={combineModalOpen}
                 onClose={() => setCombineModalOpen(false)}
                 analysisResult={pendingAnalysisResult}
+                simulatedActions={actions}
                 disconnectedElement={disconnectedElement}
                 onSimulateCombined={onManualActionAdded}
                 monitoringFactor={monitoringFactor}

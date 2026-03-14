@@ -323,6 +323,10 @@ class RecommenderService:
         # Build enriched actions the same way as run_analysis - with monitoring_factor applied and topology
         enriched_actions = self._enrich_actions(results["prioritized_actions"])
 
+        # Safety filter: ensure no combined actions (with '+') leak into the main actions feed during initial analysis
+        # They should only exist in combined_actions as estimations.
+        enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
+
         # Yield result
         yield sanitize_for_json({
             "type": "result",

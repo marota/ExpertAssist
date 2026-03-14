@@ -63,7 +63,7 @@ describe('CombinedActionsModal', () => {
         expect(screen.getByText('75.0%')).toBeInTheDocument();
     });
 
-    it('identifies simulated data in computed pairs list', () => {
+    it('identifies simulated data in computed pairs list from analysisResult.actions', () => {
         const resultWithSim = {
             ...mockAnalysisResult,
             actions: {
@@ -83,6 +83,109 @@ describe('CombinedActionsModal', () => {
 
         expect(screen.getByText('75.0%')).toBeInTheDocument();
         expect(screen.getByText('72.0%')).toBeInTheDocument();
+    });
+
+    it('identifies simulated data from simulatedActions prop (result.actions)', () => {
+        const simActions = {
+            'act1+act2': {
+                description_unitaire: 'Simulated via parent',
+                rho_before: [0.75],
+                max_rho: 0.71,
+                max_rho_line: 'L3_PARENT',
+                rho_after: [0.71],
+                is_rho_reduction: true,
+                is_estimated: false
+            }
+        };
+        render(<CombinedActionsModal {...defaultProps} simulatedActions={simActions as Record<string, import('../types').ActionDetail>} />);
+
+        expect(screen.getByText('75.0%')).toBeInTheDocument();
+        expect(screen.getByText('71.0%')).toBeInTheDocument();
+        expect(screen.getByText('Re-Simulate')).toBeInTheDocument();
+    });
+
+    it('tracks per-pair simulation results when simulating in chain', async () => {
+        // Set up two combined pairs
+        const resultWithTwoPairs: AnalysisResult = {
+            ...mockAnalysisResult,
+            combined_actions: {
+                'act1+act2': {
+                    action1_id: 'act1',
+                    action2_id: 'act2',
+                    betas: [1.0, 0.9],
+                    max_rho: 0.75,
+                    max_rho_line: 'L3',
+                    is_rho_reduction: true,
+                    description: 'Pair 1',
+                    p_or_combined: [],
+                    rho_before: [0.75],
+                    rho_after: [0.72]
+                },
+                'act1+act3': {
+                    action1_id: 'act1',
+                    action2_id: 'act3',
+                    betas: [0.8, 0.7],
+                    max_rho: 0.80,
+                    max_rho_line: 'L4',
+                    is_rho_reduction: true,
+                    description: 'Pair 2',
+                    p_or_combined: [],
+                    rho_before: [0.80],
+                    rho_after: [0.78]
+                },
+            },
+        };
+
+        // Simulate pair 1 first, then pair 2
+        vi.mocked(api.simulateManualAction)
+            .mockResolvedValueOnce({
+                action_id: 'act1+act2',
+                max_rho: 0.68,
+                max_rho_line: 'L3_SIM',
+                is_rho_reduction: true,
+                is_islanded: false,
+                description_unitaire: 'Sim pair 1',
+                rho_before: [0.75],
+                rho_after: [0.68],
+                non_convergence: null,
+                lines_overloaded: [],
+            } as unknown as SimulateResult)
+            .mockResolvedValueOnce({
+                action_id: 'act1+act3',
+                max_rho: 0.77,
+                max_rho_line: 'L4_SIM',
+                is_rho_reduction: true,
+                is_islanded: false,
+                description_unitaire: 'Sim pair 2',
+                rho_before: [0.80],
+                rho_after: [0.77],
+                non_convergence: null,
+                lines_overloaded: [],
+            } as unknown as SimulateResult);
+
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTwoPairs} />);
+
+        // Both pairs should show "Simulate" initially
+        const simButtons = screen.getAllByText('Simulate');
+        expect(simButtons).toHaveLength(2);
+
+        // Simulate pair 1
+        fireEvent.click(simButtons[0]);
+        await waitFor(() => {
+            expect(screen.getByText('68.0%')).toBeInTheDocument();
+        });
+
+        // Now simulate pair 2
+        const simButton2 = screen.getByText('Simulate');
+        fireEvent.click(simButton2);
+        await waitFor(() => {
+            expect(screen.getByText('77.0%')).toBeInTheDocument();
+        });
+
+        // Pair 1's result (68.0%) should still be displayed correctly
+        expect(screen.getByText('68.0%')).toBeInTheDocument();
+        // Both should show "Re-Simulate"
+        expect(screen.getAllByText('Re-Simulate')).toHaveLength(2);
     });
 
     it('switches to explore tab and selects actions', async () => {

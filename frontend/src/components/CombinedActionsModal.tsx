@@ -15,6 +15,7 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     analysisResult: AnalysisResult | null;
+    simulatedActions?: Record<string, ActionDetail>;
     disconnectedElement: string | null;
     onSimulateCombined: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     monitoringFactor?: number;
@@ -24,6 +25,7 @@ const CombinedActionsModal: React.FC<Props> = ({
     isOpen,
     onClose,
     analysisResult,
+    simulatedActions = {},
     disconnectedElement,
     onSimulateCombined,
     monitoringFactor = 1.0,
@@ -35,6 +37,8 @@ const CombinedActionsModal: React.FC<Props> = ({
     const [error, setError] = useState<string | null>(null);
     const [simulating, setSimulating] = useState(false);
     const [simulationFeedback, setSimulationFeedback] = useState<SimulationFeedback | null>(null);
+    // Per-pair simulation results tracked within this modal session
+    const [sessionSimResults, setSessionSimResults] = useState<Record<string, SimulationFeedback>>({});
 
     // Get all available computed actions
     const availableActions = useMemo(() => {
@@ -54,9 +58,17 @@ const CombinedActionsModal: React.FC<Props> = ({
         if (!analysisResult?.combined_actions) return [];
         return Object.entries(analysisResult.combined_actions).map(([id, data]) => {
             const parts = id.split('+');
-            // Check if this action exists in the main actions list (meaning it was simulated)
-            const simulatedData = analysisResult.actions[id];
-            const isSimulated = simulatedData && !simulatedData.is_estimated && simulatedData.rho_after && simulatedData.rho_after.length > 0;
+            // Check for simulation data: prefer session-local results, then parent-provided
+            // simulatedActions (from result.actions), then analysisResult.actions
+            const sessionResult = sessionSimResults[id];
+            const parentSimData = simulatedActions[id];
+            const analysisSimData = analysisResult.actions[id];
+            const simData = parentSimData || analysisSimData;
+            const isSimulated = !!sessionResult || (simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0);
+
+            // Use session result if available, otherwise fall back to stored simulation data
+            const simMaxRho = sessionResult?.max_rho ?? simData?.max_rho;
+            const simMaxRhoLine = sessionResult?.max_rho_line ?? simData?.max_rho_line;
 
             return {
                 id,
@@ -67,11 +79,11 @@ const CombinedActionsModal: React.FC<Props> = ({
                 max_rho_line: data.max_rho_line,
                 is_rho_reduction: data.is_rho_reduction,
                 isSimulated,
-                simulated_max_rho: simulatedData?.max_rho,
-                simulated_max_rho_line: simulatedData?.max_rho_line
+                simulated_max_rho: simMaxRho,
+                simulated_max_rho_line: simMaxRhoLine
             };
         }).sort((a, b) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
-    }, [analysisResult]);
+    }, [analysisResult, simulatedActions, sessionSimResults]);
 
     // Cleanup when modal closes
     useEffect(() => {
@@ -82,6 +94,7 @@ const CombinedActionsModal: React.FC<Props> = ({
             setActiveTab('computed');
             setSimulationFeedback(null);
             setSimulating(false);
+            setSessionSimResults({});
         }
     }, [isOpen]);
 
@@ -162,6 +175,9 @@ const CombinedActionsModal: React.FC<Props> = ({
                 non_convergence: result.non_convergence,
             };
             setSimulationFeedback(feedback);
+            // Store per-pair result in session map so the computed pairs table
+            // correctly reflects each pair's own simulation result
+            setSessionSimResults(prev => ({ ...prev, [idToSimulate]: feedback }));
             // Notify parent to add the action to the main action list
             const detail: ActionDetail = {
                 description_unitaire: result.description_unitaire,
