@@ -465,12 +465,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     )}
                                 </div>
                             )}
-                            {details.estimated_max_rho != null && (
-                                <div style={{ fontSize: '11px', color: '#666', marginTop: '2px', fontStyle: 'italic' }}>
-                                    Estimation: {(details.estimated_max_rho * 100).toFixed(1)}%
-                                    {details.estimated_max_rho_line && ` on ${details.estimated_max_rho_line}`}
-                                </div>
-                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '4px', flexShrink: 0, paddingBottom: '2px' }}>
                             {!selectedActionIds.has(id) && (

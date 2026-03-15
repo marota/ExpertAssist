@@ -12,6 +12,13 @@ import time
 from pathlib import Path
 import numpy as np
 
+from expert_op4grid_recommender.environment import load_interesting_lines
+from expert_op4grid_recommender.utils.superposition import (
+    compute_combined_pair_superposition,
+    _identify_action_elements
+)
+from expert_op4grid_recommender.action_evaluation.classifier import ActionClassifier
+
 def sanitize_for_json(obj):
     if isinstance(obj, bool):
         return obj
@@ -617,7 +624,6 @@ class RecommenderService:
         # 3. Fallback to global config or full line list
         if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
             try:
-                from expert_op4grid_recommender.environment import load_interesting_lines
                 lines_we_care_about = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
             except Exception as e:
                 print(f"Failed to load lines_we_care_about from file: {e}")
@@ -1648,12 +1654,6 @@ class RecommenderService:
                 self.simulate_manual_action(action2_id, disconnected_element)
                 all_actions = self._last_result["prioritized_actions"]
 
-        from expert_op4grid_recommender.utils.superposition import (
-            compute_combined_pair_superposition,
-            _identify_action_elements
-        )
-        from expert_op4grid_recommender.action_evaluation.classifier import ActionClassifier
-        
         env = self._get_simulation_env()
         classifier = ActionClassifier()
         

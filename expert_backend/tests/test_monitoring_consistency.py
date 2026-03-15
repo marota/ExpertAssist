@@ -32,7 +32,7 @@ class TestMonitoringConsistency:
         assert "L1" in limits
         assert "L2" not in limits # L2 has duration 60, not -1
         
-    @patch("expert_op4grid_recommender.config")
+    @patch("expert_backend.services.recommender_service.config")
     def test_get_monitoring_parameters_fallback_to_config(self, mock_config):
         service = RecommenderService()
         service._analysis_context = None # No context
@@ -49,13 +49,14 @@ class TestMonitoringConsistency:
         import pandas as pd
         mock_grid.get_operational_limits.return_value = pd.DataFrame()
 
-        with patch("expert_op4grid_recommender.environment.load_interesting_lines") as mock_load:
+        with patch("expert_backend.services.recommender_service.load_interesting_lines") as mock_load:
             mock_load.return_value = ["L2"]
             lines, _ = service._get_monitoring_parameters(mock_obs)
             assert lines == ["L2"]
 
+    @patch("expert_backend.services.recommender_service._identify_action_elements")
     @patch("expert_backend.services.recommender_service.compute_combined_pair_superposition")
-    def test_compute_superposition_uses_monitoring_parameters(self, mock_superposition):
+    def test_compute_superposition_uses_monitoring_parameters(self, mock_superposition, mock_identify):
         service = RecommenderService()
         mock_obs = MagicMock()
         mock_obs.name_line = ["L1", "L2"]
@@ -70,9 +71,23 @@ class TestMonitoringConsistency:
         # Mock _get_monitoring_parameters to return only L1
         service._get_monitoring_parameters = MagicMock(return_value=(["L1"], {"L1"}))
         
+        # Setup _last_result with the mock actions to avoid simulation calls
+        mock_act1 = MagicMock()
+        mock_act2 = MagicMock()
+        service._last_result = {
+            "prioritized_actions": {
+                "act1": {"action": mock_act1, "observation": MagicMock()},
+                "act2": {"action": mock_act2, "observation": MagicMock()}
+            }
+        }
+        
         # Mock other dependencies for compute_superposition
         service._enrich_actions = MagicMock(return_value={})
         service._dict_action = {}
+        service._get_simulation_env = MagicMock()
+        service._get_n1_variant = MagicMock(return_value="v1")
+        service._get_n_variant = MagicMock(return_value="v0")
+        mock_identify.return_value = ([1], [1])
         
         # Mock result of superposition
         mock_superposition.return_value = {
@@ -80,16 +95,11 @@ class TestMonitoringConsistency:
             "p_or_combined": [100.0, 200.0]
         }
         
-        # We need to mock all_actions since it's used inside compute_superposition
-        # compute_superposition gets all_actions from _enrich_actions(results["prioritized_actions"])
-        # Wait, I'll just mock the parts that use it or provide a real enough structure.
-        
-        # Actually, let's just trace if _get_monitoring_parameters was called
+        # Call compute_superposition
         try:
-            # This might fail due to missing mocks for the rest of the function, 
-            # but we want to see if our injected logic is reached.
-            list(service.compute_superposition("act1", "act2"))
-        except Exception:
+            service.compute_superposition("act1", "act2", "contingency")
+        except Exception as e:
+            # We don't care if it fails later, we want to see if monitoring params were requested
             pass
             
         service._get_monitoring_parameters.assert_called_once()
