@@ -27,8 +27,10 @@ describe('CombinedActionsModal', () => {
                 action1_id: 'act1',
                 action2_id: 'act2',
                 betas: [1.0, 0.9],
-                max_rho: 0.75,
+                max_rho: 0.72,
                 max_rho_line: 'L3',
+                estimated_max_rho: 0.75,
+                estimated_max_rho_line: 'L3_EST',
                 is_rho_reduction: true,
                 description: 'Pre-computed Pair',
                 p_or_combined: [],
@@ -113,8 +115,10 @@ describe('CombinedActionsModal', () => {
                     action1_id: 'act1',
                     action2_id: 'act2',
                     betas: [1.0, 0.9],
-                    max_rho: 0.75,
+                    max_rho: 0.72,
                     max_rho_line: 'L3',
+                    estimated_max_rho: 0.75,
+                    estimated_max_rho_line: 'L3_EST',
                     is_rho_reduction: true,
                     description: 'Pair 1',
                     p_or_combined: [],
@@ -125,8 +129,10 @@ describe('CombinedActionsModal', () => {
                     action1_id: 'act1',
                     action2_id: 'act3',
                     betas: [0.8, 0.7],
-                    max_rho: 0.80,
+                    max_rho: 0.78,
                     max_rho_line: 'L4',
+                    estimated_max_rho: 0.80,
+                    estimated_max_rho_line: 'L4_EST',
                     is_rho_reduction: true,
                     description: 'Pair 2',
                     p_or_combined: [],
@@ -234,7 +240,9 @@ describe('CombinedActionsModal', () => {
             p_or_combined: [],
             rho_after: [0.85],
             description: 'Computed',
-            rho_before: [0.9]
+            rho_before: [0.9],
+            estimated_max_rho: 0.85,
+            estimated_max_rho_line: 'L_NEW_EST'
         } as unknown as CombinedAction);
 
         render(<CombinedActionsModal {...defaultProps} analysisResult={emptyResult as AnalysisResult} />);

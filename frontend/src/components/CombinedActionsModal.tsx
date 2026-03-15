@@ -424,15 +424,15 @@ const CombinedActionsModal: React.FC<Props> = ({
                                                 <div style={{ fontSize: '11px', fontWeight: 700, color: '#666', textTransform: 'uppercase', marginBottom: '6px' }}>Estimation</div>
                                                 <div style={{ fontSize: '13px', marginBottom: '4px' }}>
                                                     Max loading estimated by superposition: <strong style={{
-                                                        color: preview.max_rho <= monitoringFactor ? '#28a745' : '#dc3545',
+                                                        color: (preview.estimated_max_rho ?? preview.max_rho) <= monitoringFactor ? '#28a745' : '#dc3545',
                                                         fontSize: '15px'
-                                                    }}>{(preview.max_rho * 100).toFixed(1)}%</strong>
+                                                    }}>{((preview.estimated_max_rho ?? preview.max_rho) * 100).toFixed(1)}%</strong>
                                                     {preview.is_islanded && (
                                                         <span title="Suspect estimation (islanding detected)" style={{ cursor: 'help', marginLeft: '6px' }}>⚠️</span>
                                                     )}
                                                 </div>
                                                 <div style={{ fontSize: '12px', color: '#666' }}>
-                                                    Line: {preview.max_rho_line}
+                                                    Line: {preview.estimated_max_rho_line ?? preview.max_rho_line}
                                                 </div>
                                             </div>
                                             <div style={{ flex: 1 }} data-testid="simulation-feedback">

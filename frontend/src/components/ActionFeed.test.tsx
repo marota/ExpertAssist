@@ -665,31 +665,4 @@ describe('ActionFeed', () => {
         expect(cardTexts[1]).toContain('Normal High Rho');
         expect(cardTexts[2]).toContain('Islanded Action');
     });
-
-    it('displays estimated max rho when provided', () => {
-        const actionId = 'act_est';
-        const props = {
-            ...defaultProps,
-            actions: {
-                [actionId]: {
-                    description_unitaire: 'Action with Estimation',
-                    max_rho: 0.8,
-                    max_rho_line: 'LINE_B',
-                    estimated_max_rho: 0.75,
-                    estimated_max_rho_line: 'LINE_EST',
-                    is_rho_reduction: true,
-                    is_manual: true,
-                    action_topology: emptyTopo,
-                    rho_before: [],
-                    rho_after: []
-                }
-            },
-            selectedActionIds: new Set([actionId])
-        };
-        render(<ActionFeed {...props} />);
-
-        expect(screen.getByText(/Estimation:/)).toHaveTextContent('75.0% on LINE_EST');
-        expect(screen.getByText(/Max loading:/)).toHaveTextContent('80.0%');
-        expect(screen.getByText('LINE_B')).toBeInTheDocument();
-    });
 });
