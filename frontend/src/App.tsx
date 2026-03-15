@@ -618,7 +618,7 @@ function App() {
               // Mark all recommended actions as NOT manual
               const actionsWithFlags = { ...event.actions };
               for (const id in actionsWithFlags) {
-                const existing = prevResultRef.current?.actions?.[id] || {};
+                const existing = (prevResultRef.current?.actions?.[id] || {}) as Partial<ActionDetail>;
                 actionsWithFlags[id] = {
                   ...actionsWithFlags[id],
                   is_manual: false,
@@ -664,7 +664,7 @@ function App() {
       // Merge new actions with existing ones to preserve estimation data if it was already updated
       const mergedActions = { ...pendingAnalysisResult.actions };
       for (const [id, data] of Object.entries(mergedActions)) {
-        const existing = (prev?.actions?.[id] || {}) as any;
+        const existing = (prev?.actions?.[id] || {}) as Partial<ActionDetail>;
         mergedActions[id] = {
           ...data,
           is_islanded: existing.is_islanded ?? data.is_islanded,
