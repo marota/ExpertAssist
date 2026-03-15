@@ -33,6 +33,8 @@ export interface ActionDetail {
     max_rho: number | null;
     max_rho_line: string;
     is_rho_reduction: boolean;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
     is_manual?: boolean;
     is_estimated?: boolean;
     is_islanded?: boolean;
@@ -210,6 +212,8 @@ export interface SavedActionEntry {
     max_rho: number | null;
     max_rho_line: string;
     is_rho_reduction: boolean;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
     is_islanded?: boolean;
     n_components?: number;
     disconnected_mw?: number;

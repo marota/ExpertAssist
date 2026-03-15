@@ -292,7 +292,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 if (details.is_estimated) return false;
                 return details.rho_after && details.rho_after.length > 0;
             })
-            .sort(([, a], [, b]) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
+            .sort(([, a], [, b]) => {
+                const aIslanded = !!a.is_islanded;
+                const bIslanded = !!b.is_islanded;
+                if (aIslanded !== bIslanded) return aIslanded ? 1 : -1;
+                return (a.max_rho ?? 999) - (b.max_rho ?? 999);
+            });
     }, [actions]);
 
     const analysisActionIds = useMemo(() => {
@@ -460,6 +465,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     )}
                                 </div>
                             )}
+                            {details.estimated_max_rho != null && (
+                                <div style={{ fontSize: '11px', color: '#666', marginTop: '2px', fontStyle: 'italic' }}>
+                                    Estimation: {(details.estimated_max_rho * 100).toFixed(1)}%
+                                    {details.estimated_max_rho_line && ` on ${details.estimated_max_rho_line}`}
+                                </div>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '4px', flexShrink: 0, paddingBottom: '2px' }}>
                             {!selectedActionIds.has(id) && (
@@ -478,7 +489,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                             )}
                         </div>
                     </div>
-                </div>
+                </div >
             );
         });
     };

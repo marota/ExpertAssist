@@ -302,4 +302,27 @@ describe('CombinedActionsModal', () => {
 
         resolveSim!({});
     });
+
+    it('displays suspect indicator (⚠️) for islanded estimations', () => {
+        const resultWithIslanded: AnalysisResult = {
+            ...mockAnalysisResult,
+            combined_actions: {
+                'act1+act2': {
+                    ...mockAnalysisResult.combined_actions!['act1+act2'],
+                    is_islanded: true
+                }
+            }
+        };
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithIslanded} />);
+
+        // Check for the warning emoji next to the estimated rho
+        expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+
+        // Switch to explore tab and verify it's there too
+        fireEvent.click(getExploreTab());
+        fireEvent.click(screen.getByText('act1'));
+        fireEvent.click(screen.getByText('act2'));
+
+        expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+    });
 });

@@ -644,4 +644,52 @@ describe('ActionFeed', () => {
         fireEvent.click(screen.getByText('LINE_A'));
         expect(props.onAssetClick).toHaveBeenCalledWith(combinedId, 'LINE_A', 'action');
     });
+
+    it('sorts islanded actions at the bottom', () => {
+        const props = {
+            ...defaultProps,
+            actions: {
+                act_normal: { description_unitaire: 'Normal Action', max_rho: 0.1, is_islanded: false, action_topology: emptyTopo, rho_before: [], rho_after: [], is_rho_reduction: true, max_rho_line: 'L1' },
+                act_island: { description_unitaire: 'Islanded Action', max_rho: 0.05, is_islanded: true, action_topology: emptyTopo, rho_before: [], rho_after: [], is_rho_reduction: true, max_rho_line: 'L2' },
+                act_normal_high: { description_unitaire: 'Normal High Rho', max_rho: 0.9, is_islanded: false, action_topology: emptyTopo, rho_before: [], rho_after: [], is_rho_reduction: true, max_rho_line: 'L3' }
+            },
+            selectedActionIds: new Set(['act_normal', 'act_island', 'act_normal_high'])
+        };
+        render(<ActionFeed {...props} />);
+
+        const cards = screen.getAllByTestId(/action-card-/);
+        const cardTexts = cards.map(el => el.textContent);
+
+        // Expected order: act_normal (0.1), act_normal_high (0.9), act_island (0.05)
+        expect(cardTexts[0]).toContain('Normal Action');
+        expect(cardTexts[1]).toContain('Normal High Rho');
+        expect(cardTexts[2]).toContain('Islanded Action');
+    });
+
+    it('displays estimated max rho when provided', () => {
+        const actionId = 'act_est';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Action with Estimation',
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_B',
+                    estimated_max_rho: 0.75,
+                    estimated_max_rho_line: 'LINE_EST',
+                    is_rho_reduction: true,
+                    is_manual: true,
+                    action_topology: emptyTopo,
+                    rho_before: [],
+                    rho_after: []
+                }
+            },
+            selectedActionIds: new Set([actionId])
+        };
+        render(<ActionFeed {...props} />);
+
+        expect(screen.getByText(/Estimation:/)).toHaveTextContent('75.0% on LINE_EST');
+        expect(screen.getByText(/Max loading:/)).toHaveTextContent('80.0%');
+        expect(screen.getByText('LINE_B')).toBeInTheDocument();
+    });
 });

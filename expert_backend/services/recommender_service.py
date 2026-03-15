@@ -594,11 +594,12 @@ class RecommenderService:
 
     def _get_monitoring_parameters(self, obs):
         """Get monitoring parameters (lines_we_care_about, branches_with_limits)."""
-        # 1. Identify branches with permanent limits
+        # 1. Identify branches with permanent limits in pypowsybl
         try:
             n_grid = obs._network_manager.network
             limits = n_grid.get_operational_limits()
             if not limits.empty:
+                # Filter for permanent thermal limits (type=CURRENT, duration=-1)
                 perm_limits = limits[(limits['type'] == 'CURRENT') & (limits['acceptable_duration'] == -1)]
                 branches_with_limits = set(perm_limits['element_id'].unique())
             else:
@@ -607,13 +608,19 @@ class RecommenderService:
             print(f"Warning: Failed to identify branches with limits: {e}")
             branches_with_limits = set(obs.name_line)
 
-        # 2. Get lines we care about from config
+        # 2. Prefer using lines_we_care_about from active analysis context (respects user selection in Suggestions Feed)
+        if self._analysis_context and "lines_we_care_about" in self._analysis_context:
+            care = self._analysis_context["lines_we_care_about"]
+            lines_we_care_about = list(care) if care is not None else list(obs.name_line)
+            return lines_we_care_about, branches_with_limits
+
+        # 3. Fallback to global config or full line list
         if not getattr(config, 'IGNORE_LINES_MONITORING', True) and getattr(config, 'LINES_MONITORING_FILE', None):
             try:
                 from expert_op4grid_recommender.environment import load_interesting_lines
                 lines_we_care_about = list(load_interesting_lines(file_name=config.LINES_MONITORING_FILE))
             except Exception as e:
-                print(f"Failed to load lines_we_care_about: {e}")
+                print(f"Failed to load lines_we_care_about from file: {e}")
                 lines_we_care_about = list(obs.name_line)
         else:
             lines_we_care_about = list(obs.name_line)
@@ -1413,16 +1420,21 @@ class RecommenderService:
             })
         return result
 
-    def simulate_manual_action(self, action_id: str, disconnected_element: str):
+    @staticmethod
+    def _canonicalize_id(action_id: str) -> str:
+        if not action_id or "+" not in action_id:
+            return action_id
+        return "+".join(sorted([p.strip() for p in action_id.split("+")]))
+
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str):
         """Simulate a single or combined action and return its impact.
 
-        action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
+        raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
 
-        if "+" in action_id:
-            action_id = "+".join(sorted(action_id.split("+")))
+        action_id = self._canonicalize_id(raw_action_id)
         
         action_ids = action_id.split("+")
         recent_actions = self._last_result.get("prioritized_actions", {}) if self._last_result else {}
@@ -1686,7 +1698,7 @@ class RecommenderService:
             if obs_start.rho[i] >= monitoring_factor:
                  lines_overloaded_ids.append(i)
                  
-        lines_we_care_about = self._get_lines_we_care_about()
+        lines_we_care_about, branches_with_limits = self._get_monitoring_parameters(obs_start)
 
         result = compute_combined_pair_superposition(
             obs_start=obs_start,
@@ -1715,6 +1727,11 @@ class RecommenderService:
                  care_mask = np.isin(name_line, list(lines_we_care_about))
              else:
                  care_mask = np.ones(num_lines, dtype=bool)
+
+             # Filter out branches without explicit thermal limits in pypowsybl (consistency with simulation)
+             for i, l in enumerate(name_line):
+                 if care_mask[i] and l not in branches_with_limits:
+                     care_mask[i] = False
 
              rho_combined = np.abs(
                  (1.0 - sum(result["betas"])) * obs_start.rho +

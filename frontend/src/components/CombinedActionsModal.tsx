@@ -78,6 +78,7 @@ const CombinedActionsModal: React.FC<Props> = ({
                 max_rho: data.max_rho,
                 max_rho_line: data.max_rho_line,
                 is_rho_reduction: data.is_rho_reduction,
+                is_suspect: !!data.is_islanded,
                 isSimulated,
                 simulated_max_rho: simMaxRho,
                 simulated_max_rho_line: simMaxRhoLine
@@ -161,6 +162,9 @@ const CombinedActionsModal: React.FC<Props> = ({
         const idToSimulate = actionId ? (actionId.includes('+') ? actionId.split('+').sort().join('+') : actionId) : Array.from(selectedIds).sort().join('+');
         if (!idToSimulate.includes('+') || !disconnectedElement) return;
 
+        // Try to find estimation data to preserve it
+        const estimationData = actionId ? analysisResult?.combined_actions?.[idToSimulate] : preview;
+
         setSimulating(true);
         setSimulationFeedback(null);
         setError(null);
@@ -190,6 +194,8 @@ const CombinedActionsModal: React.FC<Props> = ({
                 n_components: result.n_components,
                 disconnected_mw: result.disconnected_mw,
                 non_convergence: result.non_convergence,
+                estimated_max_rho: estimationData?.max_rho,
+                estimated_max_rho_line: estimationData?.max_rho_line,
             };
             onSimulateCombined(idToSimulate, detail, result.lines_overloaded || []);
         } catch (e: unknown) {
@@ -279,16 +285,21 @@ const CombinedActionsModal: React.FC<Props> = ({
                                                         </span>
                                                     </td>
                                                     <td style={cellStyle}>
-                                                        <span style={{
-                                                            fontWeight: 'bold',
-                                                            color: p.is_rho_reduction ? '#28a745' : '#dc3545',
-                                                            background: p.is_rho_reduction ? '#e8f5e9' : '#ffebee',
-                                                            padding: '2px 6px',
-                                                            borderRadius: '4px',
-                                                            opacity: 0.8
-                                                        }}>
-                                                            {(p.max_rho * 100).toFixed(1)}%
-                                                        </span>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                            <span style={{
+                                                                fontWeight: 'bold',
+                                                                color: p.is_rho_reduction ? '#28a745' : '#dc3545',
+                                                                background: p.is_rho_reduction ? '#e8f5e9' : '#ffebee',
+                                                                padding: '2px 6px',
+                                                                borderRadius: '4px',
+                                                                opacity: 0.8
+                                                            }}>
+                                                                {(p.max_rho * 100).toFixed(1)}%
+                                                            </span>
+                                                            {p.is_suspect && (
+                                                                <span title="Suspect estimation (islanding detected during analysis)" style={{ cursor: 'help' }}>⚠️</span>
+                                                            )}
+                                                        </div>
                                                     </td>
                                                     <td style={{ ...cellStyle, fontSize: '12px', color: '#666' }}>{p.max_rho_line}</td>
 
@@ -408,6 +419,9 @@ const CombinedActionsModal: React.FC<Props> = ({
                                                         color: preview.max_rho <= monitoringFactor ? '#28a745' : '#dc3545',
                                                         fontSize: '15px'
                                                     }}>{(preview.max_rho * 100).toFixed(1)}%</strong>
+                                                    {preview.is_islanded && (
+                                                        <span title="Suspect estimation (islanding detected)" style={{ cursor: 'help', marginLeft: '6px' }}>⚠️</span>
+                                                    )}
                                                 </div>
                                                 <div style={{ fontSize: '12px', color: '#666' }}>
                                                     Line: {preview.max_rho_line}
