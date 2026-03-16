@@ -352,6 +352,8 @@ function App() {
 
   // Ref to track the branch for which N-1 was last fetched (the "committed" branch)
   const committedBranchRef = useRef('');
+  // Set to true during session restore to prevent the contingency-change confirmation dialog
+  const restoringSessionRef = useRef(false);
 
   // ===== Config Loading =====
   const handleLoadConfig = useCallback(async () => {
@@ -489,12 +491,14 @@ function App() {
     }
 
     // Valid branch selected — check if we need confirmation before switching
-    if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
+    // Skip dialog during session restore (restoringSessionRef is cleared after the branch effect runs)
+    if (selectedBranch !== committedBranchRef.current && hasAnalysisState() && !restoringSessionRef.current) {
       // Show confirmation dialog and revert the input to the committed branch
       setConfirmDialog({ type: 'contingency', pendingBranch: selectedBranch });
       setSelectedBranch(committedBranchRef.current);
       return;
     }
+    restoringSessionRef.current = false;
 
     // Commit this branch and fetch the N-1 diagram
     committedBranchRef.current = selectedBranch;
@@ -1065,7 +1069,8 @@ function App() {
       }
 
       // 7. Set the selected branch last (triggers N-1 diagram fetch via useEffect)
-      // We need to set committedBranchRef first to prevent the confirmation dialog
+      // Set the restoring flag so the N-1 useEffect skips the contingency-change dialog
+      restoringSessionRef.current = true;
       committedBranchRef.current = contingency.disconnected_element;
       setSelectedBranch(contingency.disconnected_element);
 
