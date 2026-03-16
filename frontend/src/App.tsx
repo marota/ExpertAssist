@@ -68,6 +68,8 @@ function App() {
 
   // ===== Analysis State =====
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const prevResultRef = useRef<AnalysisResult | null>(result);
+  useEffect(() => { prevResultRef.current = result; }, [result]);
   const [pendingAnalysisResult, setPendingAnalysisResult] = useState<AnalysisResult | null>(null);
   const [selectedActionIds, setSelectedActionIds] = useState<Set<string>>(new Set());
   const [manuallyAddedIds, setManuallyAddedIds] = useState<Set<string>>(new Set());
@@ -87,7 +89,7 @@ function App() {
       return () => clearTimeout(timer);
     }
   }, [infoMessage]);
-  
+
   // ===== Analysis Flow State =====
   const [selectedOverloads, setSelectedOverloads] = useState<Set<string>>(new Set());
   const [monitorDeselected, setMonitorDeselected] = useState(false);
@@ -300,7 +302,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
+  }, [networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, minPst, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
 
   // Load paths from localStorage on initial mount
   useEffect(() => {
@@ -444,7 +446,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
+  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, minPst, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
 
   // Handle Load Study with confirmation when analysis state exists
   const handleLoadStudyClick = useCallback(() => {
@@ -512,8 +514,7 @@ function App() {
       }
     };
     fetchN1();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranch, branches, voltageLevels.length]);
+  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState]);
 
   // ===== Analysis =====
   // Sync available overloads from N-1 diagram for pre-selection
@@ -555,7 +556,7 @@ function App() {
       }
 
       const detected = res1.lines_overloaded || [];
-      
+
       // Resolve: selected overloads focus the analysis. If monitorDeselected, also pass unselected ones.
       let primaryOverloads: string[] = [];
       if (selectedOverloads.size > 0) {
@@ -585,14 +586,14 @@ function App() {
       const response2 = await fetch('http://localhost:8000/api/run-analysis-step2', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            selected_overloads: toResolve,
-            all_overloads: detected,
-            monitor_deselected: monitorDeselected,
-          }),
+        body: JSON.stringify({
+          selected_overloads: toResolve,
+          all_overloads: detected,
+          monitor_deselected: monitorDeselected,
+        }),
       });
       if (!response2.ok) throw new Error('Analysis Resolution failed');
-      
+
       const reader = response2.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -607,17 +608,24 @@ function App() {
           try {
             const event = JSON.parse(line);
             if (event.type === 'pdf') {
-              setResult((p: AnalysisResult | null) => ({ 
-                ...(p || {}), 
+              setResult((p: AnalysisResult | null) => ({
+                ...(p || {}),
                 pdf_url: event.pdf_url,
-                pdf_path: event.pdf_path 
+                pdf_path: event.pdf_path
               } as AnalysisResult));
               setActiveTab('overflow');
             } else if (event.type === 'result') {
               // Mark all recommended actions as NOT manual
               const actionsWithFlags = { ...event.actions };
               for (const id in actionsWithFlags) {
-                actionsWithFlags[id].is_manual = false;
+                const existing = (prevResultRef.current?.actions?.[id] || {}) as Partial<ActionDetail>;
+                actionsWithFlags[id] = {
+                  ...actionsWithFlags[id],
+                  is_manual: false,
+                  is_islanded: existing.is_islanded ?? actionsWithFlags[id].is_islanded,
+                  estimated_max_rho: existing.estimated_max_rho ?? actionsWithFlags[id].max_rho,
+                  estimated_max_rho_line: existing.estimated_max_rho_line ?? actionsWithFlags[id].max_rho_line,
+                };
               }
               // Record all IDs returned by the recommender — accumulate across re-runs
               // so that re-analysis for the same contingency still marks prior suggestions.
@@ -652,10 +660,23 @@ function App() {
           }
         }
       }
+
+      // Merge new actions with existing ones to preserve estimation data if it was already updated
+      const mergedActions = { ...pendingAnalysisResult.actions };
+      for (const [id, data] of Object.entries(mergedActions)) {
+        const existing = (prev?.actions?.[id] || {}) as Partial<ActionDetail>;
+        mergedActions[id] = {
+          ...data,
+          is_islanded: existing.is_islanded ?? data.is_islanded,
+          estimated_max_rho: existing.estimated_max_rho ?? data.estimated_max_rho,
+          estimated_max_rho_line: existing.estimated_max_rho_line ?? data.estimated_max_rho_line,
+        };
+      }
+
       return {
         ...prev,                   // keep existing fields (pdf_url, etc.)
         ...pendingAnalysisResult,  // overlay with analysis result
-        actions: { ...pendingAnalysisResult.actions, ...manualActionsData },
+        actions: { ...mergedActions, ...manualActionsData },
       };
     });
     setPendingAnalysisResult(null);
@@ -822,7 +843,7 @@ function App() {
     }
   }, [
     result, selectedActionIds, manuallyAddedIds, rejectedActionIds, suggestedByRecommenderIds,
-    networkPath, actionPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling,
+    networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling,
     minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor,
     preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
     selectedBranch, selectedOverloads, monitorDeselected,
@@ -1375,7 +1396,7 @@ function App() {
           backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3000,
           display: 'flex', justifyContent: 'center', alignItems: 'center'
         }}>
-          <div 
+          <div
             role="dialog"
             style={{
               background: 'white', padding: '25px', borderRadius: '8px',
@@ -1557,24 +1578,24 @@ function App() {
               <datalist id="contingencies">
                 {branches.map(b => <option key={b} value={b} />)}
               </datalist>
-                <button
-                  onClick={handleRunAnalysis}
-                  disabled={!selectedBranch || analysisLoading}
-                  style={{
-                    marginTop: '8px',
-                    width: '100%',
-                    padding: '8px',
-                    background: analysisLoading ? '#f1c40f' : (!selectedBranch ? '#95a5a6' : '#27ae60'),
-                    color: analysisLoading ? '#856404' : 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer',
-                    fontWeight: 'bold',
-                    fontSize: '0.85rem'
-                  }}
-                >
-                  {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
-                </button>
+              <button
+                onClick={handleRunAnalysis}
+                disabled={!selectedBranch || analysisLoading}
+                style={{
+                  marginTop: '8px',
+                  width: '100%',
+                  padding: '8px',
+                  background: analysisLoading ? '#f1c40f' : (!selectedBranch ? '#95a5a6' : '#27ae60'),
+                  color: analysisLoading ? '#856404' : 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: (!selectedBranch || analysisLoading) ? 'not-allowed' : 'pointer',
+                  fontWeight: 'bold',
+                  fontSize: '0.85rem'
+                }}
+              >
+                {analysisLoading ? '⚙️ Running...' : '🚀 Run Analysis'}
+              </button>
             </div>
           )}
 
@@ -1731,7 +1752,7 @@ function App() {
       {infoMessage && (
         <div style={{
           position: 'fixed', bottom: 20, left: 20,
-          background: infoMessage.startsWith('SUCCESS') ? '#27ae60' : '#3498db', 
+          background: infoMessage.startsWith('SUCCESS') ? '#27ae60' : '#3498db',
           color: 'white',
           padding: '12px 24px', borderRadius: '4px',
           boxShadow: '0 4px 15px rgba(0,0,0,0.3)', zIndex: 1000,

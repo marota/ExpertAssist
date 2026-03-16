@@ -33,9 +33,33 @@ export interface ActionDetail {
     max_rho: number | null;
     max_rho_line: string;
     is_rho_reduction: boolean;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
     is_manual?: boolean;
+    is_estimated?: boolean;
+    is_islanded?: boolean;
+    n_components?: number;
+    disconnected_mw?: number;
     non_convergence?: string | null;
     action_topology?: ActionTopology;
+}
+
+export interface CombinedAction {
+    action1_id: string;
+    action2_id: string;
+    betas: number[];
+    p_or_combined: number[];
+    max_rho: number;
+    max_rho_line: string;
+    is_rho_reduction: boolean;
+    description: string;
+    rho_after: number[];
+    rho_before: number[];
+    is_islanded?: boolean;
+    disconnected_mw?: number;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
+    error?: string;
 }
 
 export interface AnalysisResult {
@@ -44,6 +68,7 @@ export interface AnalysisResult {
     actions: Record<string, ActionDetail>;
     action_scores?: Record<string, Record<string, unknown>>;
     lines_overloaded: string[];
+    combined_actions?: Record<string, CombinedAction>;
     message: string;
     dc_fallback: boolean;
 }
@@ -189,6 +214,11 @@ export interface SavedActionEntry {
     max_rho: number | null;
     max_rho_line: string;
     is_rho_reduction: boolean;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
+    is_islanded?: boolean;
+    n_components?: number;
+    disconnected_mw?: number;
     non_convergence?: string | null;
     action_topology?: ActionTopology;
     status: SavedActionStatus;

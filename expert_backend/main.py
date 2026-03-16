@@ -57,6 +57,11 @@ class ActionVariantRequest(BaseModel):
     action_id: str
     mode: str = "network"  # "network" or "delta"
 
+class ComputeSuperpositionRequest(BaseModel):
+    action1_id: str
+    action2_id: str
+    disconnected_element: str
+
 class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
@@ -457,6 +462,19 @@ def simulate_manual_action(request: ManualActionRequest):
     try:
         result = recommender_service.simulate_manual_action(
             request.action_id, request.disconnected_element
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/compute-superposition")
+def compute_superposition(request: ComputeSuperpositionRequest):
+    """Compute the combined effect of two actions using the superposition theorem."""
+    try:
+        result = recommender_service.compute_superposition(
+            request.action1_id, request.action2_id, request.disconnected_element
         )
         return result
     except Exception as e:
