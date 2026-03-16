@@ -5211,14 +5211,29 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {Object.entries(result?.actions || {})
-                                                    .filter(([id, data]) => id.includes('+') || data.is_precomputed)
+                                                {(() => {
+                                                    // Primary source: combined_actions (includes estimated-only pairs)
+                                                    // Merge with result.actions for simulation data
+                                                    const combinedEntries = Object.entries(result?.combined_actions || {});
+                                                    // Also include any simulated pairs in result.actions not in combined_actions
+                                                    const simulatedOnly = Object.entries(result?.actions || {})
+                                                        .filter(([id, data]) => id.includes('+') && !(result?.combined_actions || {})[id]);
+                                                    const allPairs = [
+                                                        ...combinedEntries.map(([id, ca]) => {
+                                                            const simData = result?.actions?.[id];
+                                                            const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
+                                                            return [id, { ...ca, ...(isSimulated ? { _simData: simData } : {}) }];
+                                                        }),
+                                                        ...simulatedOnly.map(([id, data]) => [id, data]),
+                                                    ];
+                                                    return allPairs
                                                     .sort((a, b) => ((a[1].estimated_max_rho ?? a[1].max_rho) ?? 999) - ((b[1].estimated_max_rho ?? b[1].max_rho) ?? 999))
                                                     .map(([id, data]) => {
                                                         const parts = id.split('+').map(p => p.trim());
-                                                        const isSimulated = !data.is_estimated && data.rho_after && data.rho_after.length > 0;
-                                                        const estMaxRho = data.estimated_max_rho;
-                                                        const estMaxRhoLine = data.estimated_max_rho_line;
+                                                        const simData = data._simData || (result?.actions?.[id]);
+                                                        const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
+                                                        const estMaxRho = data.estimated_max_rho ?? data.max_rho;
+                                                        const estMaxRhoLine = data.estimated_max_rho_line ?? data.max_rho_line;
 
                                                         return (
                                                             <tr key={id}>
@@ -5248,12 +5263,12 @@
                                                                         <span className="metric-badge metric-rho" style={{
                                                                             fontWeight: 'bold',
                                                                             fontSize: '13px',
-                                                                            background: data.max_rho > monitoringFactor ? '#ffebee' : data.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
-                                                                            color: data.max_rho > monitoringFactor ? '#c62828' : data.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
+                                                                            background: simData.max_rho > monitoringFactor ? '#ffebee' : simData.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
+                                                                            color: simData.max_rho > monitoringFactor ? '#c62828' : simData.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
                                                                         }}>
-                                                                            {(data.max_rho * 100).toFixed(1)}%
-                                                                            {data.is_islanded && (
-                                                                                <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${data.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
+                                                                            {(simData.max_rho * 100).toFixed(1)}%
+                                                                            {simData.is_islanded && (
+                                                                                <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${simData.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
                                                                             )}
                                                                         </span>
                                                                     ) : (
@@ -5261,7 +5276,7 @@
                                                                     )}
                                                                 </td>
                                                                 <td style={{ fontSize: '11px', color: '#333', fontWeight: isSimulated ? 'bold' : 'normal' }}>
-                                                                    {isSimulated ? data.max_rho_line : '-'}
+                                                                    {isSimulated ? simData.max_rho_line : '-'}
                                                                 </td>
 
                                                                 <td>
@@ -5290,9 +5305,10 @@
                                                                 </td>
                                                             </tr>
                                                         );
-                                                    })
-                                                }
-                                                {Object.entries(result?.actions || {}).filter(([id, data]) => id.includes('+') || data.is_precomputed).length === 0 && (
+                                                    });}
+                                                )()}
+                                                {Object.keys(result?.combined_actions || {}).length === 0 &&
+                                                 Object.entries(result?.actions || {}).filter(([id]) => id.includes('+')).length === 0 && (
                                                     <tr>
                                                         <td colSpan="6" style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
                                                             No computed combinations found.<br />Go to <strong>Explore Pairs</strong> to create new ones.
