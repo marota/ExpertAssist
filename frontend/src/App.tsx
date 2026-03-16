@@ -741,26 +741,30 @@ function App() {
             actionContent = (detail?.action_topology as Record<string, unknown>) ?? null;
           }
           const simRes = await api.simulateManualAction(actionId, selectedBranch, actionContent);
-          // Update the action detail with fresh simulation data
+          // Update the action detail with fresh simulation data,
+          // but preserve existing rho values from the original analysis
+          // (the simulation may use different monitored line indices)
           setResult(prev => {
             if (!prev) return prev;
+            const existing = prev.actions[actionId] || {} as Partial<ActionDetail>;
+            const hasRho = (existing.rho_before?.length ?? 0) > 0;
             return {
               ...prev,
               actions: {
                 ...prev.actions,
                 [actionId]: {
-                  ...(prev.actions[actionId] || {}),
-                  description_unitaire: simRes.description_unitaire,
-                  rho_before: simRes.rho_before,
-                  rho_after: simRes.rho_after,
-                  max_rho: simRes.max_rho,
-                  max_rho_line: simRes.max_rho_line,
-                  is_rho_reduction: simRes.is_rho_reduction,
+                  ...existing,
+                  description_unitaire: existing.description_unitaire || simRes.description_unitaire,
+                  rho_before: hasRho ? existing.rho_before : simRes.rho_before,
+                  rho_after: hasRho ? existing.rho_after : simRes.rho_after,
+                  max_rho: hasRho ? existing.max_rho : simRes.max_rho,
+                  max_rho_line: hasRho ? existing.max_rho_line : simRes.max_rho_line,
+                  is_rho_reduction: hasRho ? existing.is_rho_reduction : simRes.is_rho_reduction,
                   non_convergence: simRes.non_convergence,
                   is_islanded: simRes.is_islanded,
                   n_components: simRes.n_components,
                   disconnected_mw: simRes.disconnected_mw,
-                },
+                } as ActionDetail,
               },
             };
           });

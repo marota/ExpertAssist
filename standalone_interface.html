@@ -2231,21 +2231,25 @@
                                 action_content: actionContent,
                             });
                             const detail = simRes.data;
-                            // Update the action detail with fresh simulation data
+                            // Update the action detail with fresh simulation data,
+                            // but preserve existing rho values from the original analysis
+                            // (the simulation may use different monitored line indices)
                             setResult(prev => {
                                 if (!prev) return prev;
+                                const existing = prev.actions[actionId] || {};
+                                const hasRho = existing.rho_before?.length > 0;
                                 return {
                                     ...prev,
                                     actions: {
                                         ...prev.actions,
                                         [actionId]: {
-                                            ...(prev.actions[actionId] || {}),
-                                            description_unitaire: detail.description_unitaire,
-                                            rho_before: detail.rho_before,
-                                            rho_after: detail.rho_after,
-                                            max_rho: detail.max_rho,
-                                            max_rho_line: detail.max_rho_line,
-                                            is_rho_reduction: detail.is_rho_reduction,
+                                            ...existing,
+                                            description_unitaire: existing.description_unitaire || detail.description_unitaire,
+                                            rho_before: hasRho ? existing.rho_before : detail.rho_before,
+                                            rho_after: hasRho ? existing.rho_after : detail.rho_after,
+                                            max_rho: hasRho ? existing.max_rho : detail.max_rho,
+                                            max_rho_line: hasRho ? existing.max_rho_line : detail.max_rho_line,
+                                            is_rho_reduction: hasRho ? existing.is_rho_reduction : detail.is_rho_reduction,
                                             non_convergence: detail.non_convergence,
                                             is_islanded: detail.is_islanded,
                                             n_components: detail.n_components,
