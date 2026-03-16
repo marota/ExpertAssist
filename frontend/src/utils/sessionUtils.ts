@@ -1,4 +1,4 @@
-import type { AnalysisResult, SessionResult, SavedActionEntry } from '../types';
+import type { AnalysisResult, SessionResult, SavedActionEntry, SavedCombinedAction } from '../types';
 
 /**
  * All pieces of App state required to build a SavedSessionResult JSON snapshot.
@@ -14,6 +14,7 @@ export interface SessionInput {
     minCloseCoupling: number;
     minOpenCoupling: number;
     minLineDisconnections: number;
+    minPst: number;
     nPrioritizedActions: number;
     linesMonitoringPath: string;
     monitoringFactor: number;
@@ -53,7 +54,7 @@ export interface SessionInput {
 export function buildSessionResult(input: SessionInput): SessionResult {
     const {
         networkPath, actionPath, layoutPath,
-        minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections,
+        minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst,
         nPrioritizedActions, linesMonitoringPath, monitoringFactor,
         preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
         selectedBranch, selectedOverloads, monitorDeselected,
@@ -61,6 +62,33 @@ export function buildSessionResult(input: SessionInput): SessionResult {
         result,
         selectedActionIds, rejectedActionIds, manuallyAddedIds, suggestedByRecommenderIds,
     } = input;
+
+    // Build combined_actions from the analysis result
+    const savedCombinedActions: Record<string, SavedCombinedAction> = {};
+    if (result?.combined_actions) {
+        for (const [id, ca] of Object.entries(result.combined_actions)) {
+            // Check if there's a simulated version in result.actions
+            const simData = result.actions[id];
+            const isSimulated = !!simData && !simData.is_estimated && simData.rho_after != null && simData.rho_after.length > 0;
+
+            savedCombinedActions[id] = {
+                action1_id: ca.action1_id,
+                action2_id: ca.action2_id,
+                betas: ca.betas,
+                max_rho: ca.max_rho,
+                max_rho_line: ca.max_rho_line,
+                is_rho_reduction: ca.is_rho_reduction,
+                description: ca.description,
+                estimated_max_rho: ca.estimated_max_rho ?? ca.max_rho,
+                estimated_max_rho_line: ca.estimated_max_rho_line ?? ca.max_rho_line,
+                is_islanded: ca.is_islanded,
+                disconnected_mw: ca.disconnected_mw,
+                simulated_max_rho: isSimulated ? simData.max_rho : null,
+                simulated_max_rho_line: isSimulated ? simData.max_rho_line : undefined,
+                is_simulated: isSimulated,
+            };
+        }
+    }
 
     const analysis: SessionResult['analysis'] = result
         ? {
@@ -79,6 +107,11 @@ export function buildSessionResult(input: SessionInput): SessionResult {
                         is_rho_reduction: detail.is_rho_reduction,
                         non_convergence: detail.non_convergence,
                         action_topology: detail.action_topology,
+                        estimated_max_rho: detail.estimated_max_rho,
+                        estimated_max_rho_line: detail.estimated_max_rho_line,
+                        is_islanded: detail.is_islanded,
+                        n_components: detail.n_components,
+                        disconnected_mw: detail.disconnected_mw,
                         status: {
                             is_selected: selectedActionIds.has(id),
                             // An action is "suggested" if the recommender ever returned it —
@@ -90,6 +123,7 @@ export function buildSessionResult(input: SessionInput): SessionResult {
                     },
                 ])
             ),
+            combined_actions: savedCombinedActions,
         }
         : null;
 
@@ -103,6 +137,7 @@ export function buildSessionResult(input: SessionInput): SessionResult {
             min_close_coupling: minCloseCoupling,
             min_open_coupling: minOpenCoupling,
             min_line_disconnections: minLineDisconnections,
+            min_pst: minPst,
             n_prioritized_actions: nPrioritizedActions,
             lines_monitoring_path: linesMonitoringPath,
             monitoring_factor: monitoringFactor,

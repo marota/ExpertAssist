@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { ConfigRequest, AnalysisResult, BranchResponse, DiagramData, FlowDelta, AssetDelta, AvailableAction } from './types';
+import type { ConfigRequest, AnalysisResult, BranchResponse, DiagramData, FlowDelta, AssetDelta, AvailableAction, SessionResult } from './types';
 
 const API_BASE_URL = 'http://localhost:8000';
 
@@ -148,6 +148,20 @@ export const api = {
         const response = await axios.post<{ svg: string; sld_metadata: string | null; action_id: string; voltage_level_id: string; flow_deltas?: Record<string, FlowDelta>; reactive_flow_deltas?: Record<string, FlowDelta>; asset_deltas?: Record<string, AssetDelta> }>(
             `${API_BASE_URL}/api/action-variant-sld`,
             { action_id: actionId, voltage_level_id: voltageLevelId }
+        );
+        return response.data;
+    },
+    listSessions: async (folderPath: string): Promise<{ sessions: string[] }> => {
+        const response = await axios.get<{ sessions: string[] }>(
+            `${API_BASE_URL}/api/list-sessions`,
+            { params: { folder_path: folderPath } }
+        );
+        return response.data;
+    },
+    loadSession: async (folderPath: string, sessionName: string): Promise<SessionResult> => {
+        const response = await axios.post<SessionResult>(
+            `${API_BASE_URL}/api/load-session`,
+            { folder_path: folderPath, session_name: sessionName }
         );
         return response.data;
     },

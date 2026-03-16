@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildSessionResult } from './sessionUtils';
 import type { SessionInput } from './sessionUtils';
-import type { AnalysisResult, ActionDetail } from '../types';
+import type { AnalysisResult, ActionDetail, CombinedAction } from '../types';
 
 // ===== Helpers =====
 
@@ -28,10 +28,12 @@ const makeResult = (overrides: Partial<AnalysisResult> = {}): AnalysisResult => 
 const baseInput: SessionInput = {
     networkPath: '/data/network',
     actionPath: '/data/actions.json',
+    layoutPath: '',
     minLineReconnections: 2.0,
     minCloseCoupling: 3.0,
     minOpenCoupling: 2.0,
     minLineDisconnections: 3.0,
+    minPst: 1.0,
     nPrioritizedActions: 10,
     linesMonitoringPath: '/data/monitoring.csv',
     monitoringFactor: 0.95,
@@ -63,10 +65,12 @@ describe('buildSessionResult — structure', () => {
         expect(out.configuration).toEqual({
             network_path: '/data/network',
             action_file_path: '/data/actions.json',
+            layout_path: '',
             min_line_reconnections: 2.0,
             min_close_coupling: 3.0,
             min_open_coupling: 2.0,
             min_line_disconnections: 3.0,
+            min_pst: 1.0,
             n_prioritized_actions: 10,
             lines_monitoring_path: '/data/monitoring.csv',
             monitoring_factor: 0.95,
@@ -345,5 +349,66 @@ describe('buildSessionResult — is_suggested edge case', () => {
         });
         expect(out.analysis!.actions.act1.status.is_suggested).toBe(true);
         expect(out.analysis!.actions.act2.status.is_suggested).toBe(true);
+    });
+});
+
+describe('buildSessionResult — combined_actions', () => {
+    const makeCombinedAction = (overrides: Partial<CombinedAction> = {}): CombinedAction => ({
+        action1_id: 'act1',
+        action2_id: 'act2',
+        betas: [0.5, 0.3],
+        p_or_combined: [100, 200],
+        max_rho: 0.85,
+        max_rho_line: 'LINE_C',
+        is_rho_reduction: true,
+        description: 'Combined act1 + act2',
+        rho_after: [0.8, 0.85],
+        rho_before: [1.1, 1.05],
+        estimated_max_rho: 0.82,
+        estimated_max_rho_line: 'LINE_C',
+        ...overrides,
+    });
+
+    it('serialises combined_actions from analysis result', () => {
+        const result = makeResult({
+            actions: { act1: makeAction('A'), act2: makeAction('B') },
+            combined_actions: { 'act1+act2': makeCombinedAction() },
+        });
+        const out = buildSessionResult({ ...baseInput, result });
+        expect(out.analysis!.combined_actions).toBeDefined();
+        expect(out.analysis!.combined_actions['act1+act2']).toBeDefined();
+        const saved = out.analysis!.combined_actions['act1+act2'];
+        expect(saved.action1_id).toBe('act1');
+        expect(saved.action2_id).toBe('act2');
+        expect(saved.betas).toEqual([0.5, 0.3]);
+        expect(saved.estimated_max_rho).toBe(0.82);
+        expect(saved.is_simulated).toBe(false);
+    });
+
+    it('marks combined_action as simulated when result.actions contains it', () => {
+        const result = makeResult({
+            actions: {
+                act1: makeAction('A'),
+                act2: makeAction('B'),
+                'act1+act2': makeAction('Combined', { is_estimated: false, rho_after: [0.78, 0.80], max_rho: 0.80, max_rho_line: 'LINE_D' }),
+            },
+            combined_actions: { 'act1+act2': makeCombinedAction() },
+        });
+        const out = buildSessionResult({ ...baseInput, result });
+        const saved = out.analysis!.combined_actions['act1+act2'];
+        expect(saved.is_simulated).toBe(true);
+        expect(saved.simulated_max_rho).toBe(0.80);
+        expect(saved.simulated_max_rho_line).toBe('LINE_D');
+    });
+
+    it('combined_actions is empty object when result has no combined_actions', () => {
+        const result = makeResult({ actions: { act1: makeAction('A') } });
+        const out = buildSessionResult({ ...baseInput, result });
+        expect(out.analysis!.combined_actions).toEqual({});
+    });
+
+    it('combined_actions is not present when analysis is null', () => {
+        const out = buildSessionResult({ ...baseInput, result: null });
+        expect(out.analysis).toBeNull();
     });
 });

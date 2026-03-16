@@ -1700,10 +1700,12 @@
                     configuration: {
                         network_path: networkPath,
                         action_file_path: actionPath,
+                        layout_path: layoutPath || '',
                         min_line_reconnections: minLineReconnections,
                         min_close_coupling: minCloseCoupling,
                         min_open_coupling: minOpenCoupling,
                         min_line_disconnections: minLineDisconnections,
+                        min_pst: minPst ?? 1.0,
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
@@ -1741,6 +1743,11 @@
                                         is_rho_reduction: detail.is_rho_reduction,
                                         non_convergence: detail.non_convergence,
                                         action_topology: detail.action_topology,
+                                        estimated_max_rho: detail.estimated_max_rho,
+                                        estimated_max_rho_line: detail.estimated_max_rho_line,
+                                        is_islanded: detail.is_islanded,
+                                        n_components: detail.n_components,
+                                        disconnected_mw: detail.disconnected_mw,
                                         status: {
                                             is_selected: manualActionIds.has(id),
                                             is_suggested: suggestedByRecommenderIds.has(id),
@@ -1750,6 +1757,32 @@
                                     },
                                 ])
                             ),
+                            combined_actions: (() => {
+                                const saved = {};
+                                if (result.combined_actions) {
+                                    for (const [id, ca] of Object.entries(result.combined_actions)) {
+                                        const simData = result.actions?.[id];
+                                        const isSimulated = !!simData && !simData.is_estimated && simData.rho_after?.length > 0;
+                                        saved[id] = {
+                                            action1_id: ca.action1_id,
+                                            action2_id: ca.action2_id,
+                                            betas: ca.betas,
+                                            max_rho: ca.max_rho,
+                                            max_rho_line: ca.max_rho_line,
+                                            is_rho_reduction: ca.is_rho_reduction,
+                                            description: ca.description,
+                                            estimated_max_rho: ca.estimated_max_rho ?? ca.max_rho,
+                                            estimated_max_rho_line: ca.estimated_max_rho_line ?? ca.max_rho_line,
+                                            is_islanded: ca.is_islanded,
+                                            disconnected_mw: ca.disconnected_mw,
+                                            simulated_max_rho: isSimulated ? simData.max_rho : null,
+                                            simulated_max_rho_line: isSimulated ? simData.max_rho_line : undefined,
+                                            is_simulated: isSimulated,
+                                        };
+                                    }
+                                }
+                                return saved;
+                            })(),
                         }
                         : null,
                 };
@@ -1776,6 +1809,163 @@
                     a.download = `${sessionName}.json`;
                     a.click();
                     URL.revokeObjectURL(url);
+                }
+            };
+
+            // ===== Reload Session =====
+            const [showReloadModal, setShowReloadModal] = useState(false);
+            const [sessionList, setSessionList] = useState([]);
+            const [sessionListLoading, setSessionListLoading] = useState(false);
+            const [sessionRestoring, setSessionRestoring] = useState(false);
+
+            const handleOpenReloadModal = async () => {
+                if (!outputFolderPath) {
+                    setError('Configure an Output Folder Path in Settings before reloading a session.');
+                    return;
+                }
+                setShowReloadModal(true);
+                setSessionListLoading(true);
+                try {
+                    const res = await axios.get(API_BASE + '/api/list-sessions', { params: { folder_path: outputFolderPath } });
+                    setSessionList(res.data.sessions);
+                } catch (err) {
+                    setError('Failed to list sessions: ' + (err.response?.data?.detail || err.message));
+                    setShowReloadModal(false);
+                } finally {
+                    setSessionListLoading(false);
+                }
+            };
+
+            const handleRestoreSession = async (sessionName) => {
+                if (!outputFolderPath) return;
+                setSessionRestoring(true);
+                try {
+                    const res = await axios.post(API_BASE + '/api/load-session', { folder_path: outputFolderPath, session_name: sessionName });
+                    const session = res.data;
+                    const cfg = session.configuration;
+
+                    // Restore config
+                    setNetworkPath(cfg.network_path);
+                    setActionPath(cfg.action_file_path);
+                    setLayoutPath(cfg.layout_path || '');
+                    setMinLineReconnections(cfg.min_line_reconnections);
+                    setMinCloseCoupling(cfg.min_close_coupling);
+                    setMinOpenCoupling(cfg.min_open_coupling);
+                    setMinLineDisconnections(cfg.min_line_disconnections);
+                    setMinPst(cfg.min_pst ?? 1.0);
+                    setNPrioritizedActions(cfg.n_prioritized_actions);
+                    setLinesMonitoringPath(cfg.lines_monitoring_path || '');
+                    setMonitoringFactor(cfg.monitoring_factor);
+                    setPreExistingOverloadThreshold(cfg.pre_existing_overload_threshold);
+                    setIgnoreReconnections(cfg.ignore_reconnections ?? false);
+                    setPypowsyblFastMode(cfg.pypowsybl_fast_mode ?? true);
+
+                    // Load network on backend
+                    await axios.post(API_BASE + '/api/config', {
+                        network_path: cfg.network_path,
+                        action_file_path: cfg.action_file_path,
+                        layout_path: cfg.layout_path,
+                        min_line_reconnections: cfg.min_line_reconnections,
+                        min_close_coupling: cfg.min_close_coupling,
+                        min_open_coupling: cfg.min_open_coupling,
+                        min_line_disconnections: cfg.min_line_disconnections,
+                        min_pst: cfg.min_pst ?? 1.0,
+                        n_prioritized_actions: cfg.n_prioritized_actions,
+                        lines_monitoring_path: cfg.lines_monitoring_path,
+                        monitoring_factor: cfg.monitoring_factor,
+                        pre_existing_overload_threshold: cfg.pre_existing_overload_threshold,
+                        ignore_reconnections: cfg.ignore_reconnections,
+                        pypowsybl_fast_mode: cfg.pypowsybl_fast_mode,
+                    });
+
+                    // Fetch branches
+                    const branchRes = await axios.get(API_BASE + '/api/branches');
+                    setBranches(branchRes.data.branches);
+
+                    // Restore contingency
+                    setMonitorDeselected(session.contingency.monitor_deselected);
+                    setSelectedOverloads(new Set(session.contingency.selected_overloads));
+
+                    // Restore analysis result
+                    if (session.analysis) {
+                        const a = session.analysis;
+                        const restoredActions = {};
+                        const restoredSelected = new Set();
+                        const restoredRejected = new Set();
+                        const restoredManual = new Set();
+                        const restoredSuggested = new Set();
+
+                        for (const [id, entry] of Object.entries(a.actions)) {
+                            restoredActions[id] = {
+                                description_unitaire: entry.description_unitaire,
+                                rho_before: entry.rho_before,
+                                rho_after: entry.rho_after,
+                                max_rho: entry.max_rho,
+                                max_rho_line: entry.max_rho_line,
+                                is_rho_reduction: entry.is_rho_reduction,
+                                non_convergence: entry.non_convergence,
+                                action_topology: entry.action_topology,
+                                estimated_max_rho: entry.estimated_max_rho,
+                                estimated_max_rho_line: entry.estimated_max_rho_line,
+                                is_islanded: entry.is_islanded,
+                                n_components: entry.n_components,
+                                disconnected_mw: entry.disconnected_mw,
+                                is_manual: entry.status.is_manually_simulated,
+                            };
+                            if (entry.status.is_selected) restoredSelected.add(id);
+                            if (entry.status.is_rejected) restoredRejected.add(id);
+                            if (entry.status.is_manually_simulated) restoredManual.add(id);
+                            if (entry.status.is_suggested) restoredSuggested.add(id);
+                        }
+
+                        const restoredCombinedActions = {};
+                        if (a.combined_actions) {
+                            for (const [id, ca] of Object.entries(a.combined_actions)) {
+                                restoredCombinedActions[id] = {
+                                    action1_id: ca.action1_id,
+                                    action2_id: ca.action2_id,
+                                    betas: ca.betas,
+                                    p_or_combined: [],
+                                    max_rho: ca.max_rho,
+                                    max_rho_line: ca.max_rho_line,
+                                    is_rho_reduction: ca.is_rho_reduction,
+                                    description: ca.description,
+                                    rho_after: [],
+                                    rho_before: [],
+                                    estimated_max_rho: ca.estimated_max_rho,
+                                    estimated_max_rho_line: ca.estimated_max_rho_line,
+                                    is_islanded: ca.is_islanded,
+                                    disconnected_mw: ca.disconnected_mw,
+                                };
+                            }
+                        }
+
+                        setResult({
+                            pdf_path: session.overflow_graph?.pdf_path ?? null,
+                            pdf_url: session.overflow_graph?.pdf_url ?? null,
+                            actions: restoredActions,
+                            action_scores: a.action_scores,
+                            lines_overloaded: session.overloads.resolved_overloads,
+                            combined_actions: restoredCombinedActions,
+                            message: a.message,
+                            dc_fallback: a.dc_fallback,
+                        });
+                        setManualActionIds(restoredSelected);
+                        setRejectedActionIds(restoredRejected);
+                        setManuallyAddedIds(restoredManual);
+                        setSuggestedByRecommenderIds(restoredSuggested);
+                    } else {
+                        setResult(null);
+                    }
+
+                    // Set branch last (triggers N-1 fetch)
+                    setSelectedBranch(session.contingency.disconnected_element);
+                    setShowReloadModal(false);
+                    setInfoMessage(`SUCCESS: Session "${sessionName}" restored`);
+                } catch (err) {
+                    setError('Failed to restore session: ' + (err.response?.data?.detail || err.message));
+                } finally {
+                    setSessionRestoring(false);
                 }
             };
 
@@ -3799,6 +3989,14 @@
                         >
                             💾 Save Results
                         </button>
+                        <button
+                            onClick={handleOpenReloadModal}
+                            disabled={sessionRestoring}
+                            style={{ padding: '6px 14px', background: sessionRestoring ? '#95a5a6' : '#2980b9', color: 'white', border: 'none', borderRadius: '4px', cursor: sessionRestoring ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            title="Reload a previously saved session"
+                        >
+                            {sessionRestoring ? 'Restoring...' : 'Reload Session'}
+                        </button>
                         <button onClick={handleOpenSettings} style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">&#9881;</button>
                     </header>
 
@@ -3967,6 +4165,62 @@
                             </div>
                         )
                     }
+
+                    {showReloadModal && (
+                        <div style={{
+                            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                            backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3500,
+                            display: 'flex', justifyContent: 'center', alignItems: 'center'
+                        }}>
+                            <div style={{
+                                background: 'white', borderRadius: '10px',
+                                width: '500px', maxWidth: '95vw', maxHeight: '70vh',
+                                display: 'flex', flexDirection: 'column',
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.3)'
+                            }}>
+                                <div style={{ padding: '15px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Reload Session</h3>
+                                    <button onClick={() => setShowReloadModal(false)} style={{ border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer', color: '#999' }}>&times;</button>
+                                </div>
+                                <div style={{ padding: '15px 20px', fontSize: '0.8rem', color: '#666', borderBottom: '1px solid #f0f0f0' }}>
+                                    From: {outputFolderPath}
+                                </div>
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '10px 20px' }}>
+                                    {sessionListLoading ? (
+                                        <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>Loading sessions...</div>
+                                    ) : sessionList.length === 0 ? (
+                                        <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>No saved sessions found in this folder.</div>
+                                    ) : (
+                                        sessionList.map(name => (
+                                            <div
+                                                key={name}
+                                                onClick={() => !sessionRestoring && handleRestoreSession(name)}
+                                                style={{
+                                                    padding: '10px 12px', margin: '4px 0',
+                                                    border: '1px solid #eee', borderRadius: '6px',
+                                                    cursor: sessionRestoring ? 'not-allowed' : 'pointer',
+                                                    fontSize: '0.85rem', fontFamily: 'monospace',
+                                                    opacity: sessionRestoring ? 0.5 : 1,
+                                                }}
+                                                onMouseOver={e => { if (!sessionRestoring) e.currentTarget.style.background = '#e7f1ff'; }}
+                                                onMouseOut={e => { e.currentTarget.style.background = 'transparent'; }}
+                                            >
+                                                {name}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                <div style={{ padding: '12px 20px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                        onClick={() => setShowReloadModal(false)}
+                                        style={{ padding: '8px 20px', background: '#95a5a6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="main-content">
                         <div className="action-feed">

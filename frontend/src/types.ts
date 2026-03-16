@@ -224,22 +224,40 @@ export interface SavedActionEntry {
     status: SavedActionStatus;
 }
 
+export interface SavedCombinedAction {
+    action1_id: string;
+    action2_id: string;
+    betas: number[];
+    max_rho: number;
+    max_rho_line: string;
+    is_rho_reduction: boolean;
+    description: string;
+    estimated_max_rho?: number | null;
+    estimated_max_rho_line?: string;
+    is_islanded?: boolean;
+    disconnected_mw?: number;
+    simulated_max_rho?: number | null;
+    simulated_max_rho_line?: string;
+    is_simulated: boolean;
+}
+
 export interface SessionResult {
     saved_at: string;           // ISO 8601 timestamp
     configuration: {
         network_path: string;
         action_file_path: string;
+        layout_path: string;
         min_line_reconnections: number;
         min_close_coupling: number;
         min_open_coupling: number;
         min_line_disconnections: number;
+        min_pst: number;
         n_prioritized_actions: number;
         lines_monitoring_path: string;
         monitoring_factor: number;
         pre_existing_overload_threshold: number;
         ignore_reconnections: boolean;
         pypowsybl_fast_mode: boolean;
-        layout_path: string;
     };
     contingency: {
         disconnected_element: string;
@@ -260,5 +278,6 @@ export interface SessionResult {
         dc_fallback: boolean;
         action_scores: Record<string, Record<string, unknown>> | undefined;
         actions: Record<string, SavedActionEntry>;
+        combined_actions: Record<string, SavedCombinedAction>;
     } | null;
 }
