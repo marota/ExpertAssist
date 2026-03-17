@@ -740,7 +740,8 @@ function App() {
             const detail = result?.actions?.[actionId];
             actionContent = (detail?.action_topology as Record<string, unknown>) ?? null;
           }
-          const simRes = await api.simulateManualAction(actionId, selectedBranch, actionContent);
+          const linesOvl = result?.lines_overloaded?.length ? result.lines_overloaded : null;
+          const simRes = await api.simulateManualAction(actionId, selectedBranch, actionContent, linesOvl);
           // Update the action detail with fresh simulation data,
           // but preserve existing rho values from the original analysis
           // (the simulation may use different monitored line indices)

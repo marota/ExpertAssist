@@ -2230,6 +2230,7 @@
                             const simRes = await axios.post(API_BASE + '/api/simulate-manual-action', {
                                 action_id: actionId, disconnected_element: selectedBranch,
                                 action_content: actionContent,
+                                lines_overloaded: result?.lines_overloaded?.length > 0 ? result.lines_overloaded : null,
                             });
                             const detail = simRes.data;
                             // Update the action detail with fresh simulation data,
@@ -2795,6 +2796,7 @@
                         action_id: actionId,
                         disconnected_element: selectedBranch,
                         action_content: actionContent,
+                        lines_overloaded: result?.lines_overloaded?.length > 0 ? result.lines_overloaded : null,
                     });
                     console.log('[handleAddManualAction] Simulation result received:', res.data);
                     const detail = res.data;

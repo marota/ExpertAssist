@@ -19,6 +19,7 @@ interface Props {
     disconnectedElement: string | null;
     onSimulateCombined: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     monitoringFactor?: number;
+    linesOverloaded?: string[];
 }
 
 /** Canonicalize a combined action ID by sorting the parts alphabetically. */
@@ -35,6 +36,7 @@ const CombinedActionsModal: React.FC<Props> = ({
     disconnectedElement,
     onSimulateCombined,
     monitoringFactor = 1.0,
+    linesOverloaded = [],
 }) => {
     const [activeTab, setActiveTab] = useState<'computed' | 'explore'>('computed');
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -196,7 +198,7 @@ const CombinedActionsModal: React.FC<Props> = ({
         setSimulationFeedback(null);
         setError(null);
         try {
-            const result = await api.simulateManualAction(idToSimulate, disconnectedElement, actionContent);
+            const result = await api.simulateManualAction(idToSimulate, disconnectedElement, actionContent, linesOverloaded.length > 0 ? linesOverloaded : null);
             const feedback: SimulationFeedback = {
                 max_rho: result.max_rho,
                 max_rho_line: result.max_rho_line,

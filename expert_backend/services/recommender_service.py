@@ -1475,12 +1475,15 @@ class RecommenderService:
         entry["content"] = content if content else {}
         return entry
 
-    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None):
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None):
         """Simulate a single or combined action and return its impact.
 
         raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
         action_content: optional dict with topology fields (switches, lines_ex_bus, etc.)
                         for actions not in the dictionary (e.g. restored from a saved session).
+        lines_overloaded: optional list of overloaded line names from the saved session,
+                          used when _analysis_context is missing (e.g. after session reload)
+                          to determine which lines to report rho_before/rho_after for.
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
@@ -1545,21 +1548,32 @@ class RecommenderService:
         lines_we_care_about, branches_with_limits = self._get_monitoring_parameters(obs_simu_defaut)
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
         worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
-        
-        lines_overloaded_ids = []
-        for i, l in enumerate(obs_simu_defaut.name_line):
-            if l not in lines_we_care_about:
-                continue
-            if l not in branches_with_limits:
-                continue
-            if obs_simu_defaut.rho[i] < monitoring_factor:
-                continue
-            # Exclude pre-existing N overloads unless worsened
-            if obs.rho[i] >= monitoring_factor:
-                if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+
+        # If the caller provided overloaded line names (e.g. from a saved session)
+        # and we have no analysis context, use those directly to determine which lines
+        # to report rho_before/rho_after for.  This avoids the monitoring parameter
+        # mismatch that occurs after session reload when _analysis_context is None.
+        if lines_overloaded and not self._analysis_context:
+            name_to_idx = {l: i for i, l in enumerate(obs_simu_defaut.name_line)}
+            lines_overloaded_ids = [name_to_idx[l] for l in lines_overloaded if l in name_to_idx]
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+            # Also restrict lines_we_care_about so max_rho uses the same set
+            lines_we_care_about = list(set(lines_we_care_about) | set(lines_overloaded))
+        else:
+            lines_overloaded_ids = []
+            for i, l in enumerate(obs_simu_defaut.name_line):
+                if l not in lines_we_care_about:
                     continue
-            lines_overloaded_ids.append(i)
-        lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+                if l not in branches_with_limits:
+                    continue
+                if obs_simu_defaut.rho[i] < monitoring_factor:
+                    continue
+                # Exclude pre-existing N overloads unless worsened
+                if obs.rho[i] >= monitoring_factor:
+                    if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                        continue
+                lines_overloaded_ids.append(i)
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
 
         # Build the action object
         try:

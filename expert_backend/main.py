@@ -66,6 +66,7 @@ class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
     action_content: dict | None = None  # Optional switches dict for actions not in the dictionary
+    lines_overloaded: list[str] | None = None  # Optional overloaded line names from saved session
 
 class SaveSessionRequest(BaseModel):
     session_name: str
@@ -519,6 +520,7 @@ def simulate_manual_action(request: ManualActionRequest):
         result = recommender_service.simulate_manual_action(
             request.action_id, request.disconnected_element,
             action_content=request.action_content,
+            lines_overloaded=request.lines_overloaded,
         )
         return result
     except Exception as e:

@@ -945,6 +945,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 disconnectedElement={disconnectedElement}
                 onSimulateCombined={onManualActionAdded}
                 monitoringFactor={monitoringFactor}
+                linesOverloaded={linesOverloaded}
             />
         </div>
     );
