@@ -335,6 +335,8 @@ function App() {
   const clearContingencyState = useCallback(() => {
     setResult(null);
     setPendingAnalysisResult(null);
+    setSelectedOverloads(new Set());
+    setMonitorDeselected(false);
     setSelectedActionId(null);
     setSelectedActionIds(new Set());
     setManuallyAddedIds(new Set());
@@ -462,7 +464,6 @@ function App() {
     if (!confirmDialog) return;
     if (confirmDialog.type === 'contingency') {
       clearContingencyState();
-      committedBranchRef.current = confirmDialog.pendingBranch || '';
       setSelectedBranch(confirmDialog.pendingBranch || '');
     } else {
       handleLoadConfig();
@@ -478,15 +479,18 @@ function App() {
   useEffect(() => {
     if (!selectedBranch) {
       setN1Diagram(null);
-      // Only clear the committed branch when there's no analysis state to protect
       if (!hasAnalysisState()) {
         committedBranchRef.current = '';
       }
       return;
     }
+
     if (branches.length > 0 && !branches.includes(selectedBranch)) {
       return;
     }
+
+    // If this is already the branch we have committed, do nothing
+    if (selectedBranch === committedBranchRef.current && (n1Diagram || hasAnalysisState() || n1Loading || analysisLoading)) return;
 
     // Valid branch selected — check if we need confirmation before switching
     if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
@@ -496,8 +500,8 @@ function App() {
       return;
     }
 
-    // Commit this branch and fetch the N-1 diagram
     committedBranchRef.current = selectedBranch;
+    clearContingencyState();
 
     const fetchN1 = async () => {
       setN1Loading(true);
@@ -514,7 +518,7 @@ function App() {
       }
     };
     fetchN1();
-  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState]);
+  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState, clearContingencyState]);
 
   // ===== Analysis =====
   // Sync available overloads from N-1 diagram for pre-selection
@@ -528,22 +532,10 @@ function App() {
 
   const handleRunAnalysis = useCallback(async () => {
     if (!selectedBranch) return;
+    clearContingencyState();
     setAnalysisLoading(true);
     setError('');
     setInfoMessage('');
-    setSelectedActionId(null);
-    setActionDiagram(null);
-    setPendingAnalysisResult(null);
-    setResult(prev => {
-      if (!prev) return null;
-      const manualActionsData: Record<string, ActionDetail> = {};
-      for (const [id, data] of Object.entries(prev.actions || {})) {
-        if (data.is_manual) {
-          manualActionsData[id] = data;
-        }
-      }
-      return { ...prev, actions: manualActionsData };
-    });
 
     try {
       // Step 1: Detection
@@ -636,13 +628,12 @@ function App() {
               setError('Analysis failed: ' + event.message);
             }
           } catch (e) {
-            console.error('Stream error:', e);
+            // Silent catch for incomplete rows
           }
         }
       }
-    } catch (err: unknown) {
-      const e = err as { response?: { data?: { detail?: string } }; message?: string };
-      setError('Analysis failed: ' + (e.response?.data?.detail || e.message));
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during analysis.');
     } finally {
       setAnalysisLoading(false);
     }

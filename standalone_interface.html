@@ -1630,6 +1630,9 @@
                 setDismissedRejectedWarning(false);
                 setDismissedRecommenderWarning(false);
                 lastZoomState.current = { query: '', branch: '' };
+                setAvailableOverloads([]);
+                setSelectedOverloads(new Set());
+                setMonitorDeselected(false);
             };
 
             // Fetch N-1 Diagram when contingency is selected (ONLY if valid branch)
@@ -1659,6 +1662,7 @@
 
                 // Commit this branch and fetch the N-1 diagram
                 committedBranchRef.current = selectedBranch;
+                clearContingencyState();
 
                 const fetchN1 = async () => {
                     setN1Loading(true);
@@ -1792,7 +1796,7 @@
                     for (const [id, data] of Object.entries(prev.actions || {})) {
                         if (data.is_manual) manuals[id] = data;
                     }
-                    return { ...prev, actions: manuals };
+                    return { ...prev, actions: manuals, lines_overloaded: [] };
                 });
 
                 try {
