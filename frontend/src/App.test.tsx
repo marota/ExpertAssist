@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, fireEvent, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
@@ -36,10 +36,27 @@ vi.mock('./components/VisualizationPanel', () => {
   return { default: MockVisualizationPanel };
 });
 vi.mock('./components/ActionFeed', () => ({
-  default: () => <div data-testid="action-feed" />,
+  default: (props: { linesOverloaded: string[]; pendingAnalysisResult: object | null; analysisLoading: boolean; onDisplayPrioritizedActions: () => void }) => (
+    <div
+      data-testid="action-feed"
+      data-ol-count={props.linesOverloaded?.length || 0}
+      data-pending={!!props.pendingAnalysisResult}
+      data-loading={!!props.analysisLoading}
+    >
+      {props.pendingAnalysisResult && (
+        <button onClick={props.onDisplayPrioritizedActions}>Display prioritized actions</button>
+      )}
+    </div>
+  ),
 }));
 vi.mock('./components/OverloadPanel', () => ({
-  default: () => <div data-testid="overload-panel" />,
+  default: (props: { n1Overloads: string[]; selectedOverloads: Set<string> }) => (
+    <div
+      data-testid="overload-panel"
+      data-n1-ol-count={props.n1Overloads?.length || 0}
+      data-sel-ol-count={props.selectedOverloads?.size || 0}
+    />
+  ),
 }));
 
 // Mock hooks
@@ -88,14 +105,12 @@ async function renderAndLoadStudy() {
 
   // Click Load Study
   const loadBtn = screen.getByText('🔄 Load Study');
-  await act(async () => {
-    await userEvent.click(loadBtn);
-  });
+  await userEvent.click(loadBtn);
 
-  // Wait for branches to be loaded (the datalist input appears)
+  // Wait for branches to be loaded (which means handleLoadConfig is done)
   await waitFor(() => {
-    expect(screen.getByPlaceholderText('Search line/bus...')).toBeInTheDocument();
-  });
+    expect(screen.getByText('🎯 Select Contingency')).toBeInTheDocument();
+  }, { timeout: 5000 });
 }
 
 // Helper: select a valid branch by typing the full name
@@ -133,8 +148,13 @@ async function runAnalysis() {
   });
 
   await waitFor(() => {
-    expect(screen.queryByText('⚙️ Running...')).not.toBeInTheDocument();
-  });
+    const running = screen.queryByText('⚙️ Running...');
+    if (running) throw new Error('Still running...');
+  }, { timeout: 5000 });
+
+  // Click Display Actions if present
+  const displayBtn = await screen.findByText(/Display.*prioritized actions/, {}, { timeout: 3000 });
+  await userEvent.click(displayBtn);
 }
 
 describe('Contingency Change Confirmation', () => {
@@ -961,7 +981,96 @@ describe('Settings Modal Enhancements', () => {
   });
 });
 
-// Helper for repeated logic in new tests if needed
+describe('Overload Clearing Logic', () => {
+  beforeEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+    Object.values(mockApi).forEach(m => {
+      if (vi.isMockFunction(m)) m.mockReset();
+    });
+    // Restore defaults after reset
+    mockApi.updateConfig.mockResolvedValue({ monitored_lines_count: 10, total_lines_count: 10 });
+    mockApi.getBranches.mockResolvedValue(['BRANCH_A', 'BRANCH_B', 'BRANCH_C']);
+    mockApi.getVoltageLevels.mockResolvedValue(['VL1', 'VL2']);
+    mockApi.getNominalVoltages.mockResolvedValue({ mapping: {}, unique_kv: [63, 225] });
+    mockApi.getNetworkDiagram.mockResolvedValue({ svg: '<svg></svg>', metadata: null });
+    mockApi.getN1Diagram.mockResolvedValue({ svg: '<svg></svg>', metadata: null, lines_overloaded: [] });
+    mockApi.runAnalysisStep1.mockResolvedValue({ can_proceed: true, lines_overloaded: ['LINE_OL1'] });
+    mockApi.getActionVariantDiagram.mockResolvedValue({ svg: '<svg></svg>', metadata: null });
+
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('clears overloads from UI components immediately upon contingency change confirmation', async () => {
+    await renderAndLoadStudy();
+
+    // 1. Select BRANCH_A with overloads
+    mockApi.getN1Diagram.mockResolvedValueOnce({
+      svg: '<svg></svg>',
+      lines_overloaded: ['OL_1', 'OL_2']
+    });
+    const input = screen.getByPlaceholderText('Search line/bus...');
+    fireEvent.change(input, { target: { value: 'BRANCH_A' } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('overload-panel')).toHaveAttribute('data-n1-ol-count', '2');
+    }, { timeout: 3000 });
+
+    expect(screen.getByTestId('overload-panel')).toHaveAttribute('data-sel-ol-count', '2');
+
+    // Run analysis to create state
+    await runAnalysis();
+
+    // 2. Select BRANCH_B (triggers confirmation dialog)
+    await userEvent.clear(input);
+    await userEvent.type(input, 'BRANCH_B');
+
+    await waitFor(() => {
+      expect(screen.getByText('Change Contingency?')).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // 3. Confirm change
+    fireEvent.click(screen.getByText('Confirm'));
+
+    // 4. VERIFY IMMEDIATE CLEAR
+    await waitFor(() => {
+      expect(screen.getByTestId('overload-panel')).toHaveAttribute('data-n1-ol-count', '0');
+      expect(screen.getByTestId('overload-panel')).toHaveAttribute('data-sel-ol-count', '0');
+    });
+  });
+
+  it('clears ActionFeed overloads immediately when starting a new analysis', async () => {
+    await renderAndLoadStudy();
+
+    // Ensure analysis finds overloads
+    mockApi.runAnalysisStep1.mockResolvedValue({ can_proceed: true, lines_overloaded: ['OL_1'] });
+
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    // Verify initial overloads in feed
+    await waitFor(() => {
+      expect(screen.getByTestId('action-feed')).toHaveAttribute('data-ol-count', '1');
+    }, { timeout: 3000 });
+
+    // Start new analysis. Slow it down to catch the 0 state.
+    let resolveStep1: (val: { can_proceed: boolean; lines_overloaded: string[] }) => void;
+    const slowStep1 = new Promise<{ can_proceed: boolean; lines_overloaded: string[] }>(resolve => { resolveStep1 = resolve; });
+    mockApi.runAnalysisStep1.mockReturnValue(slowStep1);
+
+    await userEvent.click(screen.getByText('🚀 Run Analysis'));
+
+    // VERIFY IMMEDIATE CLEAR in ActionFeed
+    await waitFor(() => {
+      expect(screen.getByTestId('action-feed')).toHaveAttribute('data-ol-count', '0');
+    }, { timeout: 3000 });
+
+    // Cleanup
+    resolveStep1!({ can_proceed: true, lines_overloaded: [] });
+  });
+});
+
 async function loadStudy() {
   const loadBtn = screen.getByText('🔄 Load Study');
   await userEvent.click(loadBtn);

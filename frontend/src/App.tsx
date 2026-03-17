@@ -335,6 +335,8 @@ function App() {
   const clearContingencyState = useCallback(() => {
     setResult(null);
     setPendingAnalysisResult(null);
+    setSelectedOverloads(new Set());
+    setMonitorDeselected(false);
     setSelectedActionId(null);
     setSelectedActionIds(new Set());
     setManuallyAddedIds(new Set());
@@ -464,7 +466,6 @@ function App() {
     if (!confirmDialog) return;
     if (confirmDialog.type === 'contingency') {
       clearContingencyState();
-      committedBranchRef.current = confirmDialog.pendingBranch || '';
       setSelectedBranch(confirmDialog.pendingBranch || '');
     } else {
       handleLoadConfig();
@@ -480,15 +481,18 @@ function App() {
   useEffect(() => {
     if (!selectedBranch) {
       setN1Diagram(null);
-      // Only clear the committed branch when there's no analysis state to protect
       if (!hasAnalysisState()) {
         committedBranchRef.current = '';
       }
       return;
     }
+
     if (branches.length > 0 && !branches.includes(selectedBranch)) {
       return;
     }
+
+    // If this is already the branch we have committed, do nothing
+    if (selectedBranch === committedBranchRef.current && (n1Diagram || hasAnalysisState() || n1Loading || analysisLoading)) return;
 
     // Valid branch selected — check if we need confirmation before switching
     // Skip dialog during session restore (restoringSessionRef is cleared after the branch effect runs)
@@ -500,8 +504,8 @@ function App() {
     }
     restoringSessionRef.current = false;
 
-    // Commit this branch and fetch the N-1 diagram
     committedBranchRef.current = selectedBranch;
+    clearContingencyState();
 
     const fetchN1 = async () => {
       setN1Loading(true);
@@ -518,36 +522,24 @@ function App() {
       }
     };
     fetchN1();
-  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState]);
+  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState, clearContingencyState, analysisLoading, n1Diagram, n1Loading]);
 
   // ===== Analysis =====
   // Sync available overloads from N-1 diagram for pre-selection
   useEffect(() => {
-    if (n1Diagram && n1Diagram.lines_overloaded) {
+    if (n1Diagram?.lines_overloaded) {
       setSelectedOverloads(new Set(n1Diagram.lines_overloaded));
     } else {
       setSelectedOverloads(new Set());
     }
-  }, [n1Diagram]);
+  }, [n1Diagram, analysisLoading, n1Loading]);
 
   const handleRunAnalysis = useCallback(async () => {
     if (!selectedBranch) return;
+    clearContingencyState();
     setAnalysisLoading(true);
     setError('');
     setInfoMessage('');
-    setSelectedActionId(null);
-    setActionDiagram(null);
-    setPendingAnalysisResult(null);
-    setResult(prev => {
-      if (!prev) return null;
-      const manualActionsData: Record<string, ActionDetail> = {};
-      for (const [id, data] of Object.entries(prev.actions || {})) {
-        if (data.is_manual) {
-          manualActionsData[id] = data;
-        }
-      }
-      return { ...prev, actions: manualActionsData };
-    });
 
     try {
       // Step 1: Detection
@@ -563,17 +555,19 @@ function App() {
 
       // Resolve: selected overloads focus the analysis. If monitorDeselected, also pass unselected ones.
       let primaryOverloads: string[] = [];
-      if (selectedOverloads.size > 0) {
-        const stillRelevant = detected.filter(name => selectedOverloads.has(name));
-        if (stillRelevant.length > 0) {
-          primaryOverloads = stillRelevant;
+      if (detected.length > 0) {
+        if (selectedOverloads.size > 0) {
+          const stillRelevant = detected.filter(name => selectedOverloads.has(name));
+          if (stillRelevant.length > 0) {
+            primaryOverloads = stillRelevant;
+          } else {
+            setSelectedOverloads(new Set(detected));
+            primaryOverloads = detected;
+          }
         } else {
           setSelectedOverloads(new Set(detected));
           primaryOverloads = detected;
         }
-      } else {
-        setSelectedOverloads(new Set(detected));
-        primaryOverloads = detected;
       }
 
       // The backend knows which ones to monitor via the monitor_deselected flag.
@@ -639,18 +633,18 @@ function App() {
             } else if (event.type === 'error') {
               setError('Analysis failed: ' + event.message);
             }
-          } catch (e) {
-            console.error('Stream error:', e);
+          } catch {
+            // Silent catch for incomplete rows
           }
         }
       }
     } catch (err: unknown) {
-      const e = err as { response?: { data?: { detail?: string } }; message?: string };
-      setError('Analysis failed: ' + (e.response?.data?.detail || e.message));
+      const message = err instanceof Error ? err.message : 'An error occurred during analysis.';
+      setError(message);
     } finally {
       setAnalysisLoading(false);
     }
-  }, [selectedBranch, selectedOverloads, monitorDeselected]);
+  }, [selectedBranch, selectedOverloads, monitorDeselected, clearContingencyState]);
 
   const handleDisplayPrioritizedActions = useCallback(() => {
     if (!pendingAnalysisResult) return;
