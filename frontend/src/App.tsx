@@ -11,7 +11,7 @@ import {
   getIdMap, invalidateIdMapCache,
 } from './utils/svgUtils';
 import { processSvgAsync } from './utils/svgWorkerClient';
-import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup, VlOverlay, SldTab, FlowDelta, AssetDelta } from './types';
+import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup, VlOverlay, SldTab, FlowDelta, AssetDelta, SessionResult, CombinedAction } from './types';
 import { buildSessionResult } from './utils/sessionUtils';
 
 function App() {
@@ -352,6 +352,8 @@ function App() {
 
   // Ref to track the branch for which N-1 was last fetched (the "committed" branch)
   const committedBranchRef = useRef('');
+  // Set to true during session restore to prevent the contingency-change confirmation dialog
+  const restoringSessionRef = useRef(false);
 
   // ===== Config Loading =====
   const handleLoadConfig = useCallback(async () => {
@@ -489,12 +491,14 @@ function App() {
     }
 
     // Valid branch selected — check if we need confirmation before switching
-    if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
+    // Skip dialog during session restore (restoringSessionRef is cleared after the branch effect runs)
+    if (selectedBranch !== committedBranchRef.current && hasAnalysisState() && !restoringSessionRef.current) {
       // Show confirmation dialog and revert the input to the committed branch
       setConfirmDialog({ type: 'contingency', pendingBranch: selectedBranch });
       setSelectedBranch(committedBranchRef.current);
       return;
     }
+    restoringSessionRef.current = false;
 
     // Commit this branch and fetch the N-1 diagram
     committedBranchRef.current = selectedBranch;
@@ -716,13 +720,70 @@ function App() {
       const res = await api.getActionVariantDiagram(actionId);
       const { svg, viewBox } = await processSvgAsync(res.svg, voltageLevels.length);
       setActionDiagram({ ...res, svg, originalViewBox: viewBox });
-    } catch (err) {
-      console.error('Failed to fetch action variant diagram:', err);
-      setError('Failed to fetch action variant diagram for ' + actionId);
+    } catch {
+      // Diagram not in backend memory (e.g. after session restore) — simulate first
+      if (selectedBranch) {
+        try {
+          // Pass action_topology so the backend can reconstruct actions
+          // not in the dictionary (e.g. node_merging actions from analysis)
+          // For combined actions (a+b), pass per-component topologies
+          let actionContent: Record<string, unknown> | null = null;
+          if (actionId.includes('+')) {
+            const parts = actionId.split('+');
+            const perAction: Record<string, unknown> = {};
+            for (const part of parts) {
+              const partDetail = result?.actions?.[part];
+              if (partDetail?.action_topology) perAction[part] = partDetail.action_topology;
+            }
+            if (Object.keys(perAction).length > 0) actionContent = perAction;
+          } else {
+            const detail = result?.actions?.[actionId];
+            actionContent = (detail?.action_topology as Record<string, unknown>) ?? null;
+          }
+          const linesOvl = result?.lines_overloaded?.length ? result.lines_overloaded : null;
+          const simRes = await api.simulateManualAction(actionId, selectedBranch, actionContent, linesOvl);
+          // Update the action detail with fresh simulation data,
+          // but preserve existing rho values from the original analysis
+          // (the simulation may use different monitored line indices)
+          setResult(prev => {
+            if (!prev) return prev;
+            const existing = prev.actions[actionId] || {} as Partial<ActionDetail>;
+            const hasRho = (existing.rho_before?.length ?? 0) > 0;
+            return {
+              ...prev,
+              actions: {
+                ...prev.actions,
+                [actionId]: {
+                  ...existing,
+                  description_unitaire: existing.description_unitaire || simRes.description_unitaire,
+                  rho_before: hasRho ? existing.rho_before : simRes.rho_before,
+                  rho_after: hasRho ? existing.rho_after : simRes.rho_after,
+                  max_rho: hasRho ? existing.max_rho : simRes.max_rho,
+                  max_rho_line: hasRho ? existing.max_rho_line : simRes.max_rho_line,
+                  is_rho_reduction: hasRho ? existing.is_rho_reduction : simRes.is_rho_reduction,
+                  non_convergence: simRes.non_convergence,
+                  is_islanded: simRes.is_islanded,
+                  n_components: simRes.n_components,
+                  disconnected_mw: simRes.disconnected_mw,
+                } as ActionDetail,
+              },
+            };
+          });
+          // Now try fetching the diagram again
+          const res = await api.getActionVariantDiagram(actionId);
+          const { svg, viewBox } = await processSvgAsync(res.svg, voltageLevels.length);
+          setActionDiagram({ ...res, svg, originalViewBox: viewBox });
+        } catch (simErr) {
+          console.error('Failed to simulate and fetch diagram for', actionId, simErr);
+          setError('Failed to load action diagram for ' + actionId);
+        }
+      } else {
+        setError('Failed to fetch action variant diagram for ' + actionId);
+      }
     } finally {
       setActionDiagramLoading(false);
     }
-  }, [selectedActionId, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox, voltageLevels.length]);
+  }, [selectedActionId, selectedBranch, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox, voltageLevels.length]);
 
   const handleActionFavorite = useCallback((actionId: string) => {
     setSelectedActionIds(prev => {
@@ -802,7 +863,7 @@ function App() {
       networkPath,
       actionPath,
       layoutPath,
-      minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections,
+      minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst,
       nPrioritizedActions, linesMonitoringPath, monitoringFactor,
       preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
       selectedBranch, selectedOverloads, monitorDeselected,
@@ -844,11 +905,210 @@ function App() {
   }, [
     result, selectedActionIds, manuallyAddedIds, rejectedActionIds, suggestedByRecommenderIds,
     networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling,
-    minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor,
+    minLineDisconnections, minPst, nPrioritizedActions, linesMonitoringPath, monitoringFactor,
     preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
     selectedBranch, selectedOverloads, monitorDeselected,
     nDiagram, n1Diagram,
   ]);
+
+  // ===== Reload Session =====
+  const [showReloadModal, setShowReloadModal] = useState(false);
+  const [sessionList, setSessionList] = useState<string[]>([]);
+  const [sessionListLoading, setSessionListLoading] = useState(false);
+  const [sessionRestoring, setSessionRestoring] = useState(false);
+
+  const handleOpenReloadModal = useCallback(async () => {
+    if (!outputFolderPath) {
+      setError('Configure an Output Folder Path in Settings before reloading a session.');
+      return;
+    }
+    setShowReloadModal(true);
+    setSessionListLoading(true);
+    try {
+      const res = await api.listSessions(outputFolderPath);
+      setSessionList(res.sessions);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      setError('Failed to list sessions: ' + (e.response?.data?.detail || e.message));
+      setShowReloadModal(false);
+    } finally {
+      setSessionListLoading(false);
+    }
+  }, [outputFolderPath]);
+
+  const handleRestoreSession = useCallback(async (sessionName: string) => {
+    if (!outputFolderPath) return;
+    setSessionRestoring(true);
+    try {
+      const session: SessionResult = await api.loadSession(outputFolderPath, sessionName);
+
+      // 1. Restore configuration paths
+      const cfg = session.configuration;
+      setNetworkPath(cfg.network_path);
+      setActionPath(cfg.action_file_path);
+      setLayoutPath(cfg.layout_path || '');
+      setMinLineReconnections(cfg.min_line_reconnections);
+      setMinCloseCoupling(cfg.min_close_coupling);
+      setMinOpenCoupling(cfg.min_open_coupling);
+      setMinLineDisconnections(cfg.min_line_disconnections);
+      setMinPst(cfg.min_pst ?? 1.0);
+      setNPrioritizedActions(cfg.n_prioritized_actions);
+      setLinesMonitoringPath(cfg.lines_monitoring_path || '');
+      setMonitoringFactor(cfg.monitoring_factor);
+      setPreExistingOverloadThreshold(cfg.pre_existing_overload_threshold);
+      setIgnoreReconnections(cfg.ignore_reconnections ?? false);
+      setPypowsyblFastMode(cfg.pypowsybl_fast_mode ?? true);
+
+      // 2. Send config to backend and load network
+      const configRes = await api.updateConfig({
+        network_path: cfg.network_path,
+        action_file_path: cfg.action_file_path,
+        layout_path: cfg.layout_path,
+        min_line_reconnections: cfg.min_line_reconnections,
+        min_close_coupling: cfg.min_close_coupling,
+        min_open_coupling: cfg.min_open_coupling,
+        min_line_disconnections: cfg.min_line_disconnections,
+        min_pst: cfg.min_pst ?? 1.0,
+        n_prioritized_actions: cfg.n_prioritized_actions,
+        lines_monitoring_path: cfg.lines_monitoring_path,
+        monitoring_factor: cfg.monitoring_factor,
+        pre_existing_overload_threshold: cfg.pre_existing_overload_threshold,
+        ignore_reconnections: cfg.ignore_reconnections,
+        pypowsybl_fast_mode: cfg.pypowsybl_fast_mode,
+      });
+
+      if (configRes?.total_lines_count !== undefined) {
+        setMonitoredLinesCount(configRes.monitored_lines_count);
+        setTotalLinesCount(configRes.total_lines_count);
+        if (configRes.monitored_lines_count < configRes.total_lines_count) {
+          setShowMonitoringWarning(true);
+        }
+      }
+      if (configRes?.action_dict_file_name) setActionDictFileName(configRes.action_dict_file_name);
+      if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats);
+
+      // 3. Fetch study data
+      const [branchesList, vlRes, nomVRes] = await Promise.all([
+        api.getBranches(),
+        api.getVoltageLevels(),
+        api.getNominalVoltages(),
+      ]);
+      setBranches(branchesList);
+      setVoltageLevels(vlRes);
+      setNominalVoltageMap(nomVRes.mapping);
+      setUniqueVoltages(nomVRes.unique_kv);
+      if (nomVRes.unique_kv.length > 0) {
+        setVoltageRange([nomVRes.unique_kv[0], nomVRes.unique_kv[nomVRes.unique_kv.length - 1]]);
+      }
+
+      // 4. Fetch base diagram
+      fetchBaseDiagram(vlRes.length);
+
+      // 5. Restore contingency
+      const contingency = session.contingency;
+      setMonitorDeselected(contingency.monitor_deselected);
+      setSelectedOverloads(new Set(contingency.selected_overloads));
+
+      // 6. Restore analysis result (actions without rho_after are "unloaded" — will resim on click)
+      if (session.analysis) {
+        const a = session.analysis;
+        const restoredActions: Record<string, ActionDetail> = {};
+        const restoredSelected = new Set<string>();
+        const restoredRejected = new Set<string>();
+        const restoredManual = new Set<string>();
+        const restoredSuggested = new Set<string>();
+
+        for (const [id, entry] of Object.entries(a.actions)) {
+          // Skip estimation-only combined-pair entries — they live in combined_actions,
+          // not in the action feed, and should not appear as action cards.
+          if (id.includes('+') && entry.is_estimated && !entry.status.is_manually_simulated) continue;
+
+          restoredActions[id] = {
+            description_unitaire: entry.description_unitaire,
+            rho_before: entry.rho_before,
+            rho_after: entry.rho_after,
+            max_rho: entry.max_rho,
+            max_rho_line: entry.max_rho_line,
+            is_rho_reduction: entry.is_rho_reduction,
+            is_estimated: entry.is_estimated,
+            non_convergence: entry.non_convergence,
+            action_topology: entry.action_topology,
+            estimated_max_rho: entry.estimated_max_rho,
+            estimated_max_rho_line: entry.estimated_max_rho_line,
+            is_islanded: entry.is_islanded,
+            n_components: entry.n_components,
+            disconnected_mw: entry.disconnected_mw,
+            is_manual: entry.status.is_manually_simulated,
+          };
+
+          if (entry.status.is_selected) restoredSelected.add(id);
+          if (entry.status.is_rejected) restoredRejected.add(id);
+          if (entry.status.is_manually_simulated) restoredManual.add(id);
+          if (entry.status.is_suggested) restoredSuggested.add(id);
+        }
+
+        // Restore combined_actions
+        const restoredCombinedActions: Record<string, CombinedAction> = {};
+        if (a.combined_actions) {
+          for (const [id, ca] of Object.entries(a.combined_actions)) {
+            restoredCombinedActions[id] = {
+              action1_id: ca.action1_id,
+              action2_id: ca.action2_id,
+              betas: ca.betas,
+              p_or_combined: [],
+              max_rho: ca.max_rho,
+              max_rho_line: ca.max_rho_line,
+              is_rho_reduction: ca.is_rho_reduction,
+              description: ca.description,
+              rho_after: [],
+              rho_before: [],
+              estimated_max_rho: ca.estimated_max_rho,
+              estimated_max_rho_line: ca.estimated_max_rho_line,
+              is_islanded: ca.is_islanded,
+              disconnected_mw: ca.disconnected_mw,
+            };
+          }
+        }
+
+        const restoredResult: AnalysisResult = {
+          pdf_path: session.overflow_graph?.pdf_path ?? null,
+          pdf_url: session.overflow_graph?.pdf_url ?? null,
+          actions: restoredActions,
+          action_scores: a.action_scores,
+          lines_overloaded: session.overloads.resolved_overloads,
+          combined_actions: restoredCombinedActions,
+          message: a.message,
+          dc_fallback: a.dc_fallback,
+        };
+
+        setResult(restoredResult);
+        setSelectedActionIds(restoredSelected);
+        setRejectedActionIds(restoredRejected);
+        setManuallyAddedIds(restoredManual);
+        setSuggestedByRecommenderIds(restoredSuggested);
+      } else {
+        setResult(null);
+        setSelectedActionIds(new Set());
+        setRejectedActionIds(new Set());
+        setManuallyAddedIds(new Set());
+        setSuggestedByRecommenderIds(new Set());
+      }
+
+      // 7. Set the selected branch last (triggers N-1 diagram fetch via useEffect)
+      // Set the restoring flag so the N-1 useEffect skips the contingency-change dialog
+      restoringSessionRef.current = true;
+      committedBranchRef.current = contingency.disconnected_element;
+      setSelectedBranch(contingency.disconnected_element);
+
+      setShowReloadModal(false);
+      setInfoMessage(`SUCCESS: Session "${sessionName}" restored`);
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { detail?: string } }; message?: string };
+      setError('Failed to restore session: ' + (e.response?.data?.detail || e.message));
+    } finally {
+      setSessionRestoring(false);
+    }
+  }, [outputFolderPath, fetchBaseDiagram]);
 
   // ===== SLD Overlay =====
   const [vlOverlay, setVlOverlay] = useState<VlOverlay | null>(null);
@@ -1381,6 +1641,21 @@ function App() {
         </button>
 
         <button
+          onClick={handleOpenReloadModal}
+          disabled={sessionRestoring}
+          style={{
+            padding: '6px 14px',
+            background: sessionRestoring ? '#95a5a6' : '#2980b9',
+            color: 'white', border: 'none', borderRadius: '4px',
+            cursor: sessionRestoring ? 'not-allowed' : 'pointer',
+            fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap'
+          }}
+          title="Reload a previously saved session"
+        >
+          {sessionRestoring ? 'Restoring...' : 'Reload Session'}
+        </button>
+
+        <button
           onClick={() => handleOpenSettings('paths')}
           style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
           title="Settings"
@@ -1556,6 +1831,64 @@ function App() {
                 }}
               >
                 Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reload Session Modal */}
+      {showReloadModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3500,
+          display: 'flex', justifyContent: 'center', alignItems: 'center'
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '10px',
+            width: '500px', maxWidth: '95vw', maxHeight: '70vh',
+            display: 'flex', flexDirection: 'column',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.3)', color: 'black'
+          }}>
+            <div style={{ padding: '15px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Reload Session</h3>
+              <button onClick={() => setShowReloadModal(false)} style={{ border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer', color: '#999' }}>&times;</button>
+            </div>
+            <div style={{ padding: '15px 20px', fontSize: '0.8rem', color: '#666', borderBottom: '1px solid #f0f0f0' }}>
+              From: {outputFolderPath}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '10px 20px' }}>
+              {sessionListLoading ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>Loading sessions...</div>
+              ) : sessionList.length === 0 ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>No saved sessions found in this folder.</div>
+              ) : (
+                sessionList.map(name => (
+                  <div
+                    key={name}
+                    onClick={() => !sessionRestoring && handleRestoreSession(name)}
+                    style={{
+                      padding: '10px 12px', margin: '4px 0',
+                      border: '1px solid #eee', borderRadius: '6px',
+                      cursor: sessionRestoring ? 'not-allowed' : 'pointer',
+                      fontSize: '0.85rem', fontFamily: 'monospace',
+                      transition: 'background 0.15s',
+                      opacity: sessionRestoring ? 0.5 : 1,
+                    }}
+                    onMouseOver={e => { if (!sessionRestoring) (e.currentTarget as HTMLElement).style.background = '#e7f1ff'; }}
+                    onMouseOut={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    {name}
+                  </div>
+                ))
+              )}
+            </div>
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowReloadModal(false)}
+                style={{ padding: '8px 20px', background: '#95a5a6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+              >
+                Cancel
               </button>
             </div>
           </div>

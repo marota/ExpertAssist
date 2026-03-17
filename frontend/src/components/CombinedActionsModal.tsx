@@ -19,6 +19,13 @@ interface Props {
     disconnectedElement: string | null;
     onSimulateCombined: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     monitoringFactor?: number;
+    linesOverloaded?: string[];
+}
+
+/** Canonicalize a combined action ID by sorting the parts alphabetically. */
+function canonicalizeId(id: string): string {
+    if (!id || !id.includes('+')) return id;
+    return id.split('+').map(p => p.trim()).sort().join('+');
 }
 
 const CombinedActionsModal: React.FC<Props> = ({
@@ -29,6 +36,7 @@ const CombinedActionsModal: React.FC<Props> = ({
     disconnectedElement,
     onSimulateCombined,
     monitoringFactor = 1.0,
+    linesOverloaded = [],
 }) => {
     const [activeTab, setActiveTab] = useState<'computed' | 'explore'>('computed');
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -58,11 +66,13 @@ const CombinedActionsModal: React.FC<Props> = ({
         if (!analysisResult?.combined_actions) return [];
         return Object.entries(analysisResult.combined_actions).map(([id, data]) => {
             const parts = id.split('+');
+            const cId = canonicalizeId(id);
             // Check for simulation data: prefer session-local results, then parent-provided
             // simulatedActions (from result.actions), then analysisResult.actions
-            const sessionResult = sessionSimResults[id];
-            const parentSimData = simulatedActions[id];
-            const analysisSimData = analysisResult.actions[id];
+            // Look up by both original key and canonical key to handle key ordering mismatches
+            const sessionResult = sessionSimResults[id] || sessionSimResults[cId];
+            const parentSimData = simulatedActions[id] || simulatedActions[cId];
+            const analysisSimData = analysisResult.actions[id] || analysisResult.actions[cId];
             const simData = parentSimData || analysisSimData;
             const isSimulated = !!sessionResult || (simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0);
 
@@ -166,14 +176,29 @@ const CombinedActionsModal: React.FC<Props> = ({
         const idToSimulate = actionId ? (actionId.includes('+') ? actionId.split('+').sort().join('+') : actionId) : Array.from(selectedIds).sort().join('+');
         if (!idToSimulate.includes('+') || !disconnectedElement) return;
 
-        // Try to find estimation data to preserve it
-        const estimationData = actionId ? analysisResult?.combined_actions?.[idToSimulate] : preview;
+        // Try to find estimation data to preserve it (check both original and canonical key)
+        const estimationData = actionId
+            ? (analysisResult?.combined_actions?.[idToSimulate] || analysisResult?.combined_actions?.[actionId])
+            : preview;
+
+        // Build action_content from saved topologies so the backend can
+        // reconstruct actions not in the dictionary (e.g. node_merging,
+        // coupling actions generated during analysis).
+        let actionContent: Record<string, unknown> | null = null;
+        const parts = idToSimulate.split('+');
+        const allActions = { ...simulatedActions, ...analysisResult?.actions };
+        const perAction: Record<string, unknown> = {};
+        for (const part of parts) {
+            const partDetail = allActions[part];
+            if (partDetail?.action_topology) perAction[part] = partDetail.action_topology;
+        }
+        if (Object.keys(perAction).length > 0) actionContent = perAction;
 
         setSimulating(true);
         setSimulationFeedback(null);
         setError(null);
         try {
-            const result = await api.simulateManualAction(idToSimulate, disconnectedElement);
+            const result = await api.simulateManualAction(idToSimulate, disconnectedElement, actionContent, linesOverloaded.length > 0 ? linesOverloaded : null);
             const feedback: SimulationFeedback = {
                 max_rho: result.max_rho,
                 max_rho_line: result.max_rho_line,

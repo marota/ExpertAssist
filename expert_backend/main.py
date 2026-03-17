@@ -62,9 +62,17 @@ class ComputeSuperpositionRequest(BaseModel):
     action2_id: str
     disconnected_element: str
 
+class RestoreAnalysisContextRequest(BaseModel):
+    lines_we_care_about: list[str] | None = None
+    disconnected_element: str | None = None
+    lines_overloaded: list[str] | None = None
+    computed_pairs: dict | None = None
+
 class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
+    action_content: dict | None = None  # Optional switches dict for actions not in the dictionary
+    lines_overloaded: list[str] | None = None  # Optional overloaded line names from saved session
 
 class SaveSessionRequest(BaseModel):
     session_name: str
@@ -238,6 +246,80 @@ def save_session(request: SaveSessionRequest):
         "session_folder": session_dir,
         "pdf_copied": pdf_copied
     }
+
+@app.get("/api/list-sessions")
+def list_sessions(folder_path: str = Query(...)):
+    """List available session folders inside the given output folder.
+    Returns session names sorted most-recent first (by folder name timestamp)."""
+    if not folder_path or not os.path.isdir(folder_path):
+        raise HTTPException(status_code=400, detail=f"Invalid folder path: {folder_path}")
+
+    sessions = []
+    try:
+        for entry in os.listdir(folder_path):
+            entry_path = os.path.join(folder_path, entry)
+            if os.path.isdir(entry_path) and entry.startswith("expertassist_session"):
+                json_path = os.path.join(entry_path, "session.json")
+                if os.path.isfile(json_path):
+                    sessions.append(entry)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read folder: {e}")
+
+    sessions.sort(reverse=True)
+    return {"sessions": sessions}
+
+@app.post("/api/load-session")
+def load_session(folder_path: str = Body(...), session_name: str = Body(...)):
+    """Read and return the contents of a session.json file.
+    Also restores the overflow PDF into Overflow_Graph/ if found in the session folder."""
+    import json as json_module
+    import shutil
+    import glob
+
+    session_dir = os.path.join(folder_path, session_name)
+    json_path = os.path.join(session_dir, "session.json")
+
+    if not os.path.isfile(json_path):
+        raise HTTPException(status_code=404, detail=f"Session file not found: {json_path}")
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            content = json_module.load(f)
+
+        # Restore overflow PDF: if the original pdf_path is gone, copy from session folder
+        overflow = content.get("overflow_graph")
+        if overflow and overflow.get("pdf_url"):
+            pdf_filename = os.path.basename(overflow["pdf_url"])
+            target_path = os.path.join("Overflow_Graph", pdf_filename)
+            if not os.path.isfile(target_path):
+                # Look for PDF in session folder
+                session_pdfs = glob.glob(os.path.join(session_dir, "*.pdf"))
+                if session_pdfs:
+                    os.makedirs("Overflow_Graph", exist_ok=True)
+                    shutil.copy2(session_pdfs[0], target_path)
+
+        return content
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read session: {e}")
+
+@app.post("/api/restore-analysis-context")
+def restore_analysis_context(request: RestoreAnalysisContextRequest):
+    """Restore analysis context from a saved session so that subsequent
+    simulate_manual_action calls use the same monitored lines."""
+    try:
+        recommender_service.restore_analysis_context(
+            lines_we_care_about=request.lines_we_care_about,
+            disconnected_element=request.disconnected_element,
+            lines_overloaded=request.lines_overloaded,
+            computed_pairs=request.computed_pairs,
+        )
+        return {
+            "status": "success",
+            "lines_we_care_about_count": len(request.lines_we_care_about) if request.lines_we_care_about else 0,
+            "computed_pairs_count": len(request.computed_pairs) if request.computed_pairs else 0,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 from fastapi.responses import StreamingResponse
 import json
@@ -461,7 +543,9 @@ def simulate_manual_action(request: ManualActionRequest):
     """Simulate a specific action from the loaded dictionary against a contingency."""
     try:
         result = recommender_service.simulate_manual_action(
-            request.action_id, request.disconnected_element
+            request.action_id, request.disconnected_element,
+            action_content=request.action_content,
+            lines_overloaded=request.lines_overloaded,
         )
         return result
     except Exception as e:

@@ -58,6 +58,7 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
         self._analysis_context = None
+        self._saved_computed_pairs = None
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
@@ -69,6 +70,35 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
         self._analysis_context = None
+        self._saved_computed_pairs = None
+
+    def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
+        """Restore analysis context from a saved session.
+
+        This sets _analysis_context so that subsequent simulate_manual_action
+        calls use the same monitored lines (lines_we_care_about) that were
+        determined during the original analysis.  Without this, session reload
+        falls back to _get_monitoring_parameters which may return a different
+        set of lines and produce inconsistent max_rho values.
+        """
+        self._analysis_context = {
+            "lines_we_care_about": list(lines_we_care_about) if lines_we_care_about else None,
+        }
+        if disconnected_element:
+            self._last_disconnected_element = disconnected_element
+        if lines_overloaded is not None:
+            self._analysis_context["lines_overloaded"] = list(lines_overloaded)
+        if computed_pairs is not None:
+            self._saved_computed_pairs = computed_pairs
+        print(f"[restore_analysis_context] Restored context: "
+              f"{len(lines_we_care_about) if lines_we_care_about else 0} monitored lines, "
+              f"disconnected={disconnected_element}, "
+              f"{len(lines_overloaded) if lines_overloaded else 0} overloaded lines, "
+              f"{len(computed_pairs) if computed_pairs else 0} computed pairs")
+
+    def get_saved_computed_pairs(self):
+        """Return saved computed pairs from session restore, or None."""
+        return self._saved_computed_pairs
 
     def _enrich_actions(self, prioritized_actions_dict):
         """Helper to convert raw prioritized actions into enriched dict for JSON response."""
@@ -335,6 +365,7 @@ class RecommenderService:
         enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
         # Yield result
+        care = context.get("lines_we_care_about")
         yield sanitize_for_json({
             "type": "result",
             "actions": enriched_actions,
@@ -342,6 +373,7 @@ class RecommenderService:
             "lines_overloaded": results["lines_overloaded_names"],
             "pre_existing_overloads": results.get("pre_existing_overloads", []),
             "combined_actions": results.get("combined_actions", {}),
+            "lines_we_care_about": list(care) if care is not None else None,
             "message": "Analysis completed",
             "dc_fallback": False,
         })
@@ -492,6 +524,7 @@ class RecommenderService:
         # They should only exist in combined_actions as estimations.
         enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
+        care = self._analysis_context.get("lines_we_care_about") if self._analysis_context else None
         yield sanitize_for_json({
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
@@ -499,6 +532,7 @@ class RecommenderService:
             "action_scores": action_scores,
             "lines_overloaded": lines_overloaded,
             "combined_actions": combined_actions,
+            "lines_we_care_about": list(care) if care is not None else None,
             "message": analysis_message,
             "dc_fallback": dc_fallback_used
         })
@@ -1432,19 +1466,91 @@ class RecommenderService:
             return action_id
         return "+".join(sorted([p.strip() for p in action_id.split("+")]))
 
-    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str):
+    @staticmethod
+    def _build_action_entry_from_topology(action_id, topo):
+        """Build an action dict entry from saved topology fields.
+
+        Converts action_topology (lines_ex_bus, lines_or_bus, gens_bus,
+        loads_bus, substations) back into a content dict that
+        env.action_space(content) can parse.
+        """
+        entry = {"description_unitaire": f"Restored action: {action_id}"}
+        content = {}
+
+        # Build set_bus from element-level topology (dict format, matching raw action files)
+        set_bus = {}
+        topo_to_content = {
+            "lines_ex_bus": "lines_ex_id",
+            "lines_or_bus": "lines_or_id",
+            "gens_bus": "generators_id",
+            "loads_bus": "loads_id",
+        }
+        for topo_field, content_field in topo_to_content.items():
+            vals = topo.get(topo_field) or {}
+            if vals:
+                set_bus[content_field] = {name: int(bus) for name, bus in vals.items()}
+
+        # Include substations (critical for node_merging_* actions)
+        subs = topo.get("substations") or {}
+        if subs:
+            set_bus["substations_id"] = [
+                (int(sub_id), [int(b) for b in bus_array])
+                for sub_id, bus_array in subs.items()
+            ]
+
+        if set_bus:
+            content["set_bus"] = set_bus
+
+        # Include switches if present
+        switches = topo.get("switches") or {}
+        if switches:
+            content["switches"] = switches
+
+        entry["content"] = content if content else {}
+        return entry
+
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None):
         """Simulate a single or combined action and return its impact.
 
         raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
+        action_content: optional dict with topology fields (switches, lines_ex_bus, etc.)
+                        for actions not in the dictionary (e.g. restored from a saved session).
+        lines_overloaded: optional list of overloaded line names from the saved session,
+                          used when _analysis_context is missing (e.g. after session reload)
+                          to determine which lines to report rho_before/rho_after for.
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
 
         action_id = self._canonicalize_id(raw_action_id)
-        
+
         action_ids = action_id.split("+")
         recent_actions = self._last_result.get("prioritized_actions", {}) if self._last_result else {}
-        
+
+        # If action_content is provided, inject unknown actions into the dict.
+        # action_content can be:
+        #   - A single topology dict (for individual actions)
+        #   - A dict mapping action_id -> topology (for combined actions)
+        if action_content:
+            # Normalize: if it looks like a topology dict (has topology keys),
+            # wrap it as {action_id: topology} for uniform handling.
+            topo_keys = {"lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "substations", "switches"}
+            if any(k in action_content for k in topo_keys):
+                # Single topology — apply to all unknown action_ids
+                per_action = {aid: action_content for aid in action_ids}
+            else:
+                # Dict mapping action_id -> topology
+                per_action = action_content
+
+            for aid in action_ids:
+                if aid not in self._dict_action and aid not in recent_actions:
+                    topo = per_action.get(aid)
+                    if not topo:
+                        continue
+                    entry = self._build_action_entry_from_topology(aid, topo)
+                    self._dict_action[aid] = entry
+                    print(f"[simulate_manual_action] Injected restored action '{aid}' into dict")
+
         for aid in action_ids:
             if aid not in self._dict_action and aid not in recent_actions:
                 raise ValueError(f"Action '{aid}' not found in the loaded action dictionary or recent analysis.")
@@ -1476,21 +1582,35 @@ class RecommenderService:
         lines_we_care_about, branches_with_limits = self._get_monitoring_parameters(obs_simu_defaut)
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
         worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
-        
-        lines_overloaded_ids = []
-        for i, l in enumerate(obs_simu_defaut.name_line):
-            if l not in lines_we_care_about:
-                continue
-            if l not in branches_with_limits:
-                continue
-            if obs_simu_defaut.rho[i] < monitoring_factor:
-                continue
-            # Exclude pre-existing N overloads unless worsened
-            if obs.rho[i] >= monitoring_factor:
-                if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+
+        # Determine which lines are "overloaded" for rho_before/rho_after reporting.
+        # Priority: 1) saved analysis context, 2) caller-provided list, 3) recompute
+        name_to_idx = {l: i for i, l in enumerate(obs_simu_defaut.name_line)}
+
+        ctx_overloaded = (self._analysis_context or {}).get("lines_overloaded")
+        if ctx_overloaded:
+            # Use overloaded lines from the restored analysis context
+            lines_overloaded_ids = [name_to_idx[l] for l in ctx_overloaded if l in name_to_idx]
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+        elif lines_overloaded:
+            # Use caller-provided lines (e.g. from saved session without analysis context)
+            lines_overloaded_ids = [name_to_idx[l] for l in lines_overloaded if l in name_to_idx]
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+        else:
+            lines_overloaded_ids = []
+            for i, l in enumerate(obs_simu_defaut.name_line):
+                if l not in lines_we_care_about:
                     continue
-            lines_overloaded_ids.append(i)
-        lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+                if l not in branches_with_limits:
+                    continue
+                if obs_simu_defaut.rho[i] < monitoring_factor:
+                    continue
+                # Exclude pre-existing N overloads unless worsened
+                if obs.rho[i] >= monitoring_factor:
+                    if obs_simu_defaut.rho[i] <= obs.rho[i] * (1 + worsening_threshold):
+                        continue
+                lines_overloaded_ids.append(i)
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
 
         # Build the action object
         try:
@@ -1557,9 +1677,16 @@ class RecommenderService:
             if rho_before:
                 is_rho_reduction = bool(np.all(np.array(rho_after) + 0.01 < np.array(rho_before)))
             
-            # Re-fetch care_mask for max_rho computation
+            # Build care_mask for max_rho computation.
+            # Always include lines_overloaded_ids — these are the lines we're
+            # actively monitoring and their post-action loading must be reported.
+            overloaded_set = set(lines_overloaded_ids)
             care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
             for i in range(len(obs_simu_action.name_line)):
+                if i in overloaded_set:
+                    # Always include overloaded lines in max_rho
+                    care_mask[i] = True
+                    continue
                 l = obs_simu_action.name_line[i]
                 if care_mask[i]:
                     if l not in branches_with_limits:

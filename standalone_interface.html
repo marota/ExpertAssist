@@ -1417,6 +1417,7 @@
             const lastViewStateN1 = useRef(null); // { zoom, pan: {x, y} }
             const lastZoomState = useRef({ query: '', branch: '' }); // Tracks last auto-zoom triggers
             const committedBranchRef = useRef(''); // Last confirmed contingency branch
+            const restoringSessionRef = useRef(false); // Set during session restore to skip contingency-change dialog
             // Captured viewBox to re-apply after the action diagram loads
             // (the tab-switch sync fires before the SVG exists, then
             // usePanZoom resets to the diagram's native viewBox).
@@ -1647,7 +1648,8 @@
                 }
 
                 // Valid branch selected — check if we need confirmation before switching
-                if (selectedBranch !== committedBranchRef.current && hasAnalysisState()) {
+                // Skip dialog during session restore (restoringSessionRef is cleared after the branch effect runs)
+                if (selectedBranch !== committedBranchRef.current && hasAnalysisState() && !restoringSessionRef.current) {
                     if (!window.confirm("Changing contingency will clear all previous analysis results, manual simulations, and action selections. The network state will be preserved.\n\nDo you want to continue?")) {
                         // User cancelled — revert input to the committed branch
                         setSelectedBranch(committedBranchRef.current);
@@ -1656,6 +1658,9 @@
                     // User confirmed — clear analysis state
                     clearContingencyState();
                 }
+
+                // Clear the restoring flag after the first branch effect pass
+                restoringSessionRef.current = false;
 
                 // Commit this branch and fetch the N-1 diagram
                 committedBranchRef.current = selectedBranch;
@@ -1700,10 +1705,12 @@
                     configuration: {
                         network_path: networkPath,
                         action_file_path: actionPath,
+                        layout_path: layoutPath || '',
                         min_line_reconnections: minLineReconnections,
                         min_close_coupling: minCloseCoupling,
                         min_open_coupling: minOpenCoupling,
                         min_line_disconnections: minLineDisconnections,
+                        min_pst: minPst ?? 1.0,
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
@@ -1729,6 +1736,7 @@
                             message: result.message,
                             dc_fallback: result.dc_fallback,
                             action_scores: result.action_scores,
+                            lines_we_care_about: result.lines_we_care_about || null,
                             actions: Object.fromEntries(
                                 Object.entries(result.actions || {}).map(([id, detail]) => [
                                     id,
@@ -1739,8 +1747,14 @@
                                         max_rho: detail.max_rho,
                                         max_rho_line: detail.max_rho_line,
                                         is_rho_reduction: detail.is_rho_reduction,
+                                        is_estimated: detail.is_estimated,
                                         non_convergence: detail.non_convergence,
                                         action_topology: detail.action_topology,
+                                        estimated_max_rho: detail.estimated_max_rho,
+                                        estimated_max_rho_line: detail.estimated_max_rho_line,
+                                        is_islanded: detail.is_islanded,
+                                        n_components: detail.n_components,
+                                        disconnected_mw: detail.disconnected_mw,
                                         status: {
                                             is_selected: manualActionIds.has(id),
                                             is_suggested: suggestedByRecommenderIds.has(id),
@@ -1750,6 +1764,33 @@
                                     },
                                 ])
                             ),
+                            combined_actions: (() => {
+                                const saved = {};
+                                if (result.combined_actions) {
+                                    for (const [id, ca] of Object.entries(result.combined_actions)) {
+                                        // Look up simulation data by both original key and canonical key
+                                        const simData = result.actions?.[id] || result.actions?.[canonicalizeId(id)];
+                                        const isSimulated = !!simData && !simData.is_estimated && simData.rho_after?.length > 0;
+                                        saved[id] = {
+                                            action1_id: ca.action1_id,
+                                            action2_id: ca.action2_id,
+                                            betas: ca.betas,
+                                            max_rho: ca.max_rho,
+                                            max_rho_line: ca.max_rho_line,
+                                            is_rho_reduction: ca.is_rho_reduction,
+                                            description: ca.description,
+                                            estimated_max_rho: ca.estimated_max_rho ?? ca.max_rho,
+                                            estimated_max_rho_line: ca.estimated_max_rho_line ?? ca.max_rho_line,
+                                            is_islanded: ca.is_islanded,
+                                            disconnected_mw: ca.disconnected_mw,
+                                            simulated_max_rho: isSimulated ? simData.max_rho : null,
+                                            simulated_max_rho_line: isSimulated ? simData.max_rho_line : undefined,
+                                            is_simulated: isSimulated,
+                                        };
+                                    }
+                                }
+                                return saved;
+                            })(),
                         }
                         : null,
                 };
@@ -1776,6 +1817,221 @@
                     a.download = `${sessionName}.json`;
                     a.click();
                     URL.revokeObjectURL(url);
+                }
+            };
+
+            // ===== Reload Session =====
+            const [showReloadModal, setShowReloadModal] = useState(false);
+            const [sessionList, setSessionList] = useState([]);
+            const [sessionListLoading, setSessionListLoading] = useState(false);
+            const [sessionRestoring, setSessionRestoring] = useState(false);
+
+            const handleOpenReloadModal = async () => {
+                if (!outputFolderPath) {
+                    setError('Configure an Output Folder Path in Settings before reloading a session.');
+                    return;
+                }
+                setShowReloadModal(true);
+                setSessionListLoading(true);
+                try {
+                    const res = await axios.get(API_BASE + '/api/list-sessions', { params: { folder_path: outputFolderPath } });
+                    setSessionList(res.data.sessions);
+                } catch (err) {
+                    setError('Failed to list sessions: ' + (err.response?.data?.detail || err.message));
+                    setShowReloadModal(false);
+                } finally {
+                    setSessionListLoading(false);
+                }
+            };
+
+            const handleRestoreSession = async (sessionName) => {
+                if (!outputFolderPath) return;
+                setSessionRestoring(true);
+                try {
+                    const res = await axios.post(API_BASE + '/api/load-session', { folder_path: outputFolderPath, session_name: sessionName });
+                    const session = res.data;
+                    const cfg = session.configuration;
+
+                    // Restore config
+                    setNetworkPath(cfg.network_path);
+                    setActionPath(cfg.action_file_path);
+                    setLayoutPath(cfg.layout_path || '');
+                    setMinLineReconnections(cfg.min_line_reconnections);
+                    setMinCloseCoupling(cfg.min_close_coupling);
+                    setMinOpenCoupling(cfg.min_open_coupling);
+                    setMinLineDisconnections(cfg.min_line_disconnections);
+                    setMinPst(cfg.min_pst ?? 1.0);
+                    setNPrioritizedActions(cfg.n_prioritized_actions);
+                    setLinesMonitoringPath(cfg.lines_monitoring_path || '');
+                    setMonitoringFactor(cfg.monitoring_factor);
+                    setPreExistingOverloadThreshold(cfg.pre_existing_overload_threshold);
+                    setIgnoreReconnections(cfg.ignore_reconnections ?? false);
+                    setPypowsyblFastMode(cfg.pypowsybl_fast_mode ?? true);
+
+                    // Load network and action dictionary on backend
+                    const configRes = await axios.post(API_BASE + '/api/config', {
+                        network_path: cfg.network_path,
+                        action_file_path: cfg.action_file_path,
+                        layout_path: cfg.layout_path,
+                        min_line_reconnections: cfg.min_line_reconnections,
+                        min_close_coupling: cfg.min_close_coupling,
+                        min_open_coupling: cfg.min_open_coupling,
+                        min_line_disconnections: cfg.min_line_disconnections,
+                        min_pst: cfg.min_pst ?? 1.0,
+                        n_prioritized_actions: cfg.n_prioritized_actions,
+                        lines_monitoring_path: cfg.lines_monitoring_path,
+                        monitoring_factor: cfg.monitoring_factor,
+                        pre_existing_overload_threshold: cfg.pre_existing_overload_threshold,
+                        ignore_reconnections: cfg.ignore_reconnections,
+                        pypowsybl_fast_mode: cfg.pypowsybl_fast_mode,
+                    });
+
+                    // Process config response (action dictionary, monitoring info)
+                    if (configRes.data && configRes.data.total_lines_count !== undefined) {
+                        setMonitoredLinesCount(configRes.data.monitored_lines_count);
+                        setTotalLinesCount(configRes.data.total_lines_count);
+                        if (configRes.data.monitored_lines_count < configRes.data.total_lines_count) {
+                            setShowMonitoringWarning(true);
+                        }
+                    }
+                    if (configRes.data?.action_dict_file_name) { setActionDictFileName(configRes.data.action_dict_file_name); }
+                    if (configRes.data?.action_dict_stats) setActionDictStats(configRes.data.action_dict_stats);
+
+                    // Fetch branches, voltage levels, and nominal voltages in parallel
+                    const [branchRes, vlRes, nomVRes] = await Promise.all([
+                        axios.get(API_BASE + '/api/branches'),
+                        axios.get(API_BASE + '/api/voltage-levels'),
+                        axios.get(API_BASE + '/api/nominal-voltages'),
+                    ]);
+                    setBranches(branchRes.data.branches);
+                    setVoltageLevels(vlRes.data.voltage_levels);
+
+                    // Set up nominal voltage filter
+                    const nvMap = nomVRes.data.mapping;
+                    const uniqueKv = nomVRes.data.unique_kv;
+                    setNominalVoltageMap(nvMap);
+                    setUniqueVoltages(uniqueKv);
+                    if (uniqueKv.length > 0) {
+                        setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
+                    }
+
+                    // Fetch the base network diagram
+                    fetchBaseDiagram(vlRes.data.voltage_levels.length);
+
+                    // Restore analysis context (lines_we_care_about) so simulate uses same monitored lines
+                    if (session.analysis?.lines_we_care_about) {
+                        try {
+                            await axios.post(API_BASE + '/api/restore-analysis-context', {
+                                lines_we_care_about: session.analysis.lines_we_care_about,
+                                disconnected_element: session.contingency.disconnected_element,
+                                lines_overloaded: session.overloads?.resolved_overloads || null,
+                                computed_pairs: session.analysis.computed_pairs || null,
+                            });
+                            const nCare = session.analysis.lines_we_care_about.length;
+                            console.log(`[restore] Analysis context restored: ${nCare} monitored lines`);
+                        } catch (ctxErr) {
+                            console.warn('Failed to restore analysis context:', ctxErr);
+                        }
+                    }
+
+                    // Restore contingency
+                    setMonitorDeselected(session.contingency.monitor_deselected);
+                    setSelectedOverloads(new Set(session.contingency.selected_overloads));
+
+                    // Restore analysis result
+                    if (session.analysis) {
+                        const a = session.analysis;
+                        const restoredActions = {};
+                        const restoredSelected = new Set();
+                        const restoredRejected = new Set();
+                        const restoredManual = new Set();
+                        const restoredSuggested = new Set();
+
+                        for (const [id, entry] of Object.entries(a.actions)) {
+                            // Skip estimation-only combined-pair entries
+                            if (id.includes('+') && entry.is_estimated && !entry.status.is_manually_simulated) continue;
+                            restoredActions[id] = {
+                                description_unitaire: entry.description_unitaire,
+                                rho_before: entry.rho_before,
+                                rho_after: entry.rho_after,
+                                max_rho: entry.max_rho,
+                                max_rho_line: entry.max_rho_line,
+                                is_rho_reduction: entry.is_rho_reduction,
+                                is_estimated: entry.is_estimated,
+                                non_convergence: entry.non_convergence,
+                                action_topology: entry.action_topology,
+                                estimated_max_rho: entry.estimated_max_rho,
+                                estimated_max_rho_line: entry.estimated_max_rho_line,
+                                is_islanded: entry.is_islanded,
+                                n_components: entry.n_components,
+                                disconnected_mw: entry.disconnected_mw,
+                                is_manual: entry.status.is_manually_simulated,
+                            };
+                            if (entry.status.is_selected) restoredSelected.add(id);
+                            if (entry.status.is_rejected) restoredRejected.add(id);
+                            if (entry.status.is_manually_simulated) restoredManual.add(id);
+                            if (entry.status.is_suggested) restoredSuggested.add(id);
+                        }
+
+                        const restoredCombinedActions = {};
+                        if (a.combined_actions) {
+                            for (const [id, ca] of Object.entries(a.combined_actions)) {
+                                restoredCombinedActions[id] = {
+                                    action1_id: ca.action1_id,
+                                    action2_id: ca.action2_id,
+                                    betas: ca.betas,
+                                    p_or_combined: [],
+                                    max_rho: ca.max_rho,
+                                    max_rho_line: ca.max_rho_line,
+                                    is_rho_reduction: ca.is_rho_reduction,
+                                    description: ca.description,
+                                    rho_after: [],
+                                    rho_before: [],
+                                    estimated_max_rho: ca.estimated_max_rho,
+                                    estimated_max_rho_line: ca.estimated_max_rho_line,
+                                    is_islanded: ca.is_islanded,
+                                    disconnected_mw: ca.disconnected_mw,
+                                };
+                            }
+                        }
+
+                        setResult({
+                            pdf_path: session.overflow_graph?.pdf_path ?? null,
+                            pdf_url: session.overflow_graph?.pdf_url ?? null,
+                            actions: restoredActions,
+                            action_scores: a.action_scores,
+                            lines_overloaded: session.overloads.resolved_overloads,
+                            combined_actions: restoredCombinedActions,
+                            message: a.message,
+                            dc_fallback: a.dc_fallback,
+                            lines_we_care_about: a.lines_we_care_about || null,
+                        });
+                        setManualActionIds(restoredSelected);
+                        setRejectedActionIds(restoredRejected);
+                        setManuallyAddedIds(restoredManual);
+                        setSuggestedByRecommenderIds(restoredSuggested);
+                    } else {
+                        setResult(null);
+                    }
+
+                    // Set the restoring flag so the N-1 useEffect skips the contingency-change dialog
+                    restoringSessionRef.current = true;
+                    committedBranchRef.current = session.contingency.disconnected_element;
+                    setSelectedBranch(session.contingency.disconnected_element);
+                    setShowReloadModal(false);
+                    // Build info message with monitoring details
+                    let restoreMsg = `SUCCESS: Session "${sessionName}" restored`;
+                    if (session.analysis?.lines_we_care_about) {
+                        const nCare = session.analysis.lines_we_care_about.length;
+                        restoreMsg += ` | Monitoring: ${nCare} lines restored from saved analysis context`;
+                    } else {
+                        restoreMsg += ` | WARNING: No saved monitoring context – simulations may use different monitored lines`;
+                    }
+                    setInfoMessage(restoreMsg);
+                } catch (err) {
+                    setError('Failed to restore session: ' + (err.response?.data?.detail || err.message));
+                } finally {
+                    setSessionRestoring(false);
                 }
             };
 
@@ -1981,8 +2237,70 @@
                     const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                     setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) {
-                    console.error('Failed to fetch action variant diagram:', err);
-                    setError('Failed to fetch action variant diagram for ' + actionId);
+                    // Diagram not in backend memory (e.g. after session restore) — simulate first
+                    if (selectedBranch) {
+                        try {
+                            // Pass action_topology so the backend can reconstruct actions
+                            // not in the dictionary (e.g. node_merging actions from analysis)
+                            // For combined actions (a+b), pass per-component topologies
+                            let actionContent = null;
+                            if (actionId.includes('+')) {
+                                const parts = actionId.split('+');
+                                const perAction = {};
+                                for (const part of parts) {
+                                    const partDetail = result?.actions?.[part];
+                                    if (partDetail?.action_topology) perAction[part] = partDetail.action_topology;
+                                }
+                                if (Object.keys(perAction).length > 0) actionContent = perAction;
+                            } else {
+                                const actionDetail = result?.actions?.[actionId];
+                                actionContent = actionDetail?.action_topology || null;
+                            }
+                            const simRes = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                                action_id: actionId, disconnected_element: selectedBranch,
+                                action_content: actionContent,
+                                lines_overloaded: result?.lines_overloaded?.length > 0 ? result.lines_overloaded : null,
+                            });
+                            const detail = simRes.data;
+                            // Update the action detail with fresh simulation data,
+                            // but preserve existing rho values from the original analysis
+                            // (the simulation may use different monitored line indices)
+                            setResult(prev => {
+                                if (!prev) return prev;
+                                const existing = prev.actions[actionId] || {};
+                                const hasRho = existing.rho_before?.length > 0;
+                                return {
+                                    ...prev,
+                                    actions: {
+                                        ...prev.actions,
+                                        [actionId]: {
+                                            ...existing,
+                                            description_unitaire: existing.description_unitaire || detail.description_unitaire,
+                                            rho_before: hasRho ? existing.rho_before : detail.rho_before,
+                                            rho_after: hasRho ? existing.rho_after : detail.rho_after,
+                                            max_rho: hasRho ? existing.max_rho : detail.max_rho,
+                                            max_rho_line: hasRho ? existing.max_rho_line : detail.max_rho_line,
+                                            is_rho_reduction: hasRho ? existing.is_rho_reduction : detail.is_rho_reduction,
+                                            non_convergence: detail.non_convergence,
+                                            is_islanded: detail.is_islanded,
+                                            n_components: detail.n_components,
+                                            disconnected_mw: detail.disconnected_mw,
+                                        },
+                                    },
+                                };
+                            });
+                            // Now try fetching the diagram again
+                            const res2 = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
+                            const { svg, viewBox } = processSvg(res2.data.svg, voltageLevels.length);
+                            setActionDiagram({ ...res2.data, svg, originalViewBox: viewBox });
+                        } catch (simErr) {
+                            console.error('Failed to simulate and fetch diagram for', actionId, simErr);
+                            setError('Failed to load action diagram for ' + actionId);
+                        }
+                    } else {
+                        console.error('Failed to fetch action variant diagram:', err);
+                        setError('Failed to fetch action variant diagram for ' + actionId);
+                    }
                 } finally {
                     setActionDiagramLoading(false);
                 }
@@ -2486,9 +2804,28 @@
                 setSearchError('');
 
                 try {
+                    // Build action_content from saved topologies so the backend can
+                    // reconstruct actions not in the dictionary (e.g. node_merging,
+                    // coupling actions generated during analysis).
+                    let actionContent = null;
+                    if (actionId.includes('+')) {
+                        const parts = actionId.split('+');
+                        const perAction = {};
+                        for (const part of parts) {
+                            const partDetail = result?.actions?.[part];
+                            if (partDetail?.action_topology) perAction[part] = partDetail.action_topology;
+                        }
+                        if (Object.keys(perAction).length > 0) actionContent = perAction;
+                    } else {
+                        const actionDetail = result?.actions?.[actionId];
+                        actionContent = actionDetail?.action_topology || null;
+                    }
+
                     const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
                         action_id: actionId,
-                        disconnected_element: selectedBranch
+                        disconnected_element: selectedBranch,
+                        action_content: actionContent,
+                        lines_overloaded: result?.lines_overloaded?.length > 0 ? result.lines_overloaded : null,
                     });
                     console.log('[handleAddManualAction] Simulation result received:', res.data);
                     const detail = res.data;
@@ -3799,6 +4136,14 @@
                         >
                             💾 Save Results
                         </button>
+                        <button
+                            onClick={handleOpenReloadModal}
+                            disabled={sessionRestoring}
+                            style={{ padding: '6px 14px', background: sessionRestoring ? '#95a5a6' : '#2980b9', color: 'white', border: 'none', borderRadius: '4px', cursor: sessionRestoring ? 'not-allowed' : 'pointer', fontWeight: 'bold', fontSize: '0.8rem', whiteSpace: 'nowrap' }}
+                            title="Reload a previously saved session"
+                        >
+                            {sessionRestoring ? 'Restoring...' : 'Reload Session'}
+                        </button>
                         <button onClick={handleOpenSettings} style={{ background: '#7f8c8d', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px', fontSize: '1rem', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }} title="Settings">&#9881;</button>
                     </header>
 
@@ -3967,6 +4312,62 @@
                             </div>
                         )
                     }
+
+                    {showReloadModal && (
+                        <div style={{
+                            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                            backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 3500,
+                            display: 'flex', justifyContent: 'center', alignItems: 'center'
+                        }}>
+                            <div style={{
+                                background: 'white', borderRadius: '10px',
+                                width: '500px', maxWidth: '95vw', maxHeight: '70vh',
+                                display: 'flex', flexDirection: 'column',
+                                boxShadow: '0 8px 32px rgba(0,0,0,0.3)'
+                            }}>
+                                <div style={{ padding: '15px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Reload Session</h3>
+                                    <button onClick={() => setShowReloadModal(false)} style={{ border: 'none', background: 'none', fontSize: '20px', cursor: 'pointer', color: '#999' }}>&times;</button>
+                                </div>
+                                <div style={{ padding: '15px 20px', fontSize: '0.8rem', color: '#666', borderBottom: '1px solid #f0f0f0' }}>
+                                    From: {outputFolderPath}
+                                </div>
+                                <div style={{ flex: 1, overflowY: 'auto', padding: '10px 20px' }}>
+                                    {sessionListLoading ? (
+                                        <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>Loading sessions...</div>
+                                    ) : sessionList.length === 0 ? (
+                                        <div style={{ padding: '30px', textAlign: 'center', color: '#999' }}>No saved sessions found in this folder.</div>
+                                    ) : (
+                                        sessionList.map(name => (
+                                            <div
+                                                key={name}
+                                                onClick={() => !sessionRestoring && handleRestoreSession(name)}
+                                                style={{
+                                                    padding: '10px 12px', margin: '4px 0',
+                                                    border: '1px solid #eee', borderRadius: '6px',
+                                                    cursor: sessionRestoring ? 'not-allowed' : 'pointer',
+                                                    fontSize: '0.85rem', fontFamily: 'monospace',
+                                                    opacity: sessionRestoring ? 0.5 : 1,
+                                                }}
+                                                onMouseOver={e => { if (!sessionRestoring) e.currentTarget.style.background = '#e7f1ff'; }}
+                                                onMouseOut={e => { e.currentTarget.style.background = 'transparent'; }}
+                                            >
+                                                {name}
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                <div style={{ padding: '12px 20px', borderTop: '1px solid #eee', display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                        onClick={() => setShowReloadModal(false)}
+                                        style={{ padding: '8px 20px', background: '#95a5a6', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }}
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="main-content">
                         <div className="action-feed">
@@ -4623,7 +5024,7 @@
                                         Action: {selectedActionId}
                                     </button>
                                 )}
-                                {analysisRan && result && (
+                                {result?.pdf_url && (
                                     <button
                                         onClick={() => setActiveTab('overflow')}
                                         style={{ flex: 1, borderRadius: 0, border: 'none', background: activeTab === 'overflow' ? 'white' : '#ecf0f1', color: activeTab === 'overflow' ? '#2c3e50' : '#7f8c8d', borderBottom: activeTab === 'overflow' ? '3px solid #27ae60' : 'none', cursor: 'pointer', padding: '8px 15px', fontWeight: activeTab === 'overflow' ? 'bold' : 400 }}
@@ -4860,14 +5261,34 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {Object.entries(result?.actions || {})
-                                                    .filter(([id, data]) => id.includes('+') || data.is_precomputed)
+                                                {(() => {
+                                                    // Primary source: combined_actions (includes estimated-only pairs)
+                                                    // Merge with result.actions for simulation data
+                                                    const combinedEntries = Object.entries(result?.combined_actions || {});
+                                                    // Build a set of canonical keys present in combined_actions
+                                                    const combinedCanonicalKeys = new Set(combinedEntries.map(([id]) => canonicalizeId(id)));
+                                                    // Also include any simulated pairs in result.actions not in combined_actions
+                                                    // (check both original key AND canonical key to avoid duplicates)
+                                                    const simulatedOnly = Object.entries(result?.actions || {})
+                                                        .filter(([id, data]) => id.includes('+') && !(result?.combined_actions || {})[id] && !combinedCanonicalKeys.has(canonicalizeId(id)));
+                                                    const allPairs = [
+                                                        ...combinedEntries.map(([id, ca]) => {
+                                                            // Look up simulation data by both original key and canonical key
+                                                            const cId = canonicalizeId(id);
+                                                            const simData = result?.actions?.[id] || result?.actions?.[cId];
+                                                            const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
+                                                            return [id, { ...ca, ...(isSimulated ? { _simData: simData } : {}) }];
+                                                        }),
+                                                        ...simulatedOnly.map(([id, data]) => [id, data]),
+                                                    ];
+                                                    return allPairs
                                                     .sort((a, b) => ((a[1].estimated_max_rho ?? a[1].max_rho) ?? 999) - ((b[1].estimated_max_rho ?? b[1].max_rho) ?? 999))
                                                     .map(([id, data]) => {
                                                         const parts = id.split('+').map(p => p.trim());
-                                                        const isSimulated = !data.is_estimated && data.rho_after && data.rho_after.length > 0;
-                                                        const estMaxRho = data.estimated_max_rho;
-                                                        const estMaxRhoLine = data.estimated_max_rho_line;
+                                                        const simData = data._simData || result?.actions?.[id] || result?.actions?.[canonicalizeId(id)];
+                                                        const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
+                                                        const estMaxRho = data.estimated_max_rho ?? data.max_rho;
+                                                        const estMaxRhoLine = data.estimated_max_rho_line ?? data.max_rho_line;
 
                                                         return (
                                                             <tr key={id}>
@@ -4897,12 +5318,12 @@
                                                                         <span className="metric-badge metric-rho" style={{
                                                                             fontWeight: 'bold',
                                                                             fontSize: '13px',
-                                                                            background: data.max_rho > monitoringFactor ? '#ffebee' : data.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
-                                                                            color: data.max_rho > monitoringFactor ? '#c62828' : data.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
+                                                                            background: simData.max_rho > monitoringFactor ? '#ffebee' : simData.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
+                                                                            color: simData.max_rho > monitoringFactor ? '#c62828' : simData.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
                                                                         }}>
-                                                                            {(data.max_rho * 100).toFixed(1)}%
-                                                                            {data.is_islanded && (
-                                                                                <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${data.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
+                                                                            {(simData.max_rho * 100).toFixed(1)}%
+                                                                            {simData.is_islanded && (
+                                                                                <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${simData.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
                                                                             )}
                                                                         </span>
                                                                     ) : (
@@ -4910,7 +5331,7 @@
                                                                     )}
                                                                 </td>
                                                                 <td style={{ fontSize: '11px', color: '#333', fontWeight: isSimulated ? 'bold' : 'normal' }}>
-                                                                    {isSimulated ? data.max_rho_line : '-'}
+                                                                    {isSimulated ? simData.max_rho_line : '-'}
                                                                 </td>
 
                                                                 <td>
@@ -4939,9 +5360,10 @@
                                                                 </td>
                                                             </tr>
                                                         );
-                                                    })
-                                                }
-                                                {Object.entries(result?.actions || {}).filter(([id, data]) => id.includes('+') || data.is_precomputed).length === 0 && (
+                                                    });}
+                                                )()}
+                                                {Object.keys(result?.combined_actions || {}).length === 0 &&
+                                                 Object.entries(result?.actions || {}).filter(([id]) => id.includes('+')).length === 0 && (
                                                     <tr>
                                                         <td colSpan="6" style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
                                                             No computed combinations found.<br />Go to <strong>Explore Pairs</strong> to create new ones.
