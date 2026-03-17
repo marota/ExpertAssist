@@ -1583,16 +1583,19 @@ class RecommenderService:
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
         worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
 
-        # If the caller provided overloaded line names (e.g. from a saved session)
-        # and we have no analysis context, use those directly to determine which lines
-        # to report rho_before/rho_after for.  This avoids the monitoring parameter
-        # mismatch that occurs after session reload when _analysis_context is None.
-        if lines_overloaded and not self._analysis_context:
-            name_to_idx = {l: i for i, l in enumerate(obs_simu_defaut.name_line)}
+        # Determine which lines are "overloaded" for rho_before/rho_after reporting.
+        # Priority: 1) saved analysis context, 2) caller-provided list, 3) recompute
+        name_to_idx = {l: i for i, l in enumerate(obs_simu_defaut.name_line)}
+
+        ctx_overloaded = (self._analysis_context or {}).get("lines_overloaded")
+        if ctx_overloaded:
+            # Use overloaded lines from the restored analysis context
+            lines_overloaded_ids = [name_to_idx[l] for l in ctx_overloaded if l in name_to_idx]
+            lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
+        elif lines_overloaded:
+            # Use caller-provided lines (e.g. from saved session without analysis context)
             lines_overloaded_ids = [name_to_idx[l] for l in lines_overloaded if l in name_to_idx]
             lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
-            # lines_we_care_about stays as-is from _get_monitoring_parameters
-            # (loaded from config / monitoring file) for correct max_rho computation
         else:
             lines_overloaded_ids = []
             for i, l in enumerate(obs_simu_defaut.name_line):
@@ -1674,9 +1677,16 @@ class RecommenderService:
             if rho_before:
                 is_rho_reduction = bool(np.all(np.array(rho_after) + 0.01 < np.array(rho_before)))
             
-            # Re-fetch care_mask for max_rho computation
+            # Build care_mask for max_rho computation.
+            # Always include lines_overloaded_ids — these are the lines we're
+            # actively monitoring and their post-action loading must be reported.
+            overloaded_set = set(lines_overloaded_ids)
             care_mask = np.isin(obs_simu_action.name_line, lines_we_care_about)
             for i in range(len(obs_simu_action.name_line)):
+                if i in overloaded_set:
+                    # Always include overloaded lines in max_rho
+                    care_mask[i] = True
+                    continue
                 l = obs_simu_action.name_line[i]
                 if care_mask[i]:
                     if l not in branches_with_limits:

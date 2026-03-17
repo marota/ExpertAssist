@@ -1890,6 +1890,9 @@
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
                         setMonitoredLinesCount(configRes.data.monitored_lines_count);
                         setTotalLinesCount(configRes.data.total_lines_count);
+                        if (configRes.data.monitored_lines_count < configRes.data.total_lines_count) {
+                            setShowMonitoringWarning(true);
+                        }
                     }
                     if (configRes.data?.action_dict_file_name) { setActionDictFileName(configRes.data.action_dict_file_name); }
                     if (configRes.data?.action_dict_stats) setActionDictStats(configRes.data.action_dict_stats);
