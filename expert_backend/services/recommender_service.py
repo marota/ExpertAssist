@@ -1557,8 +1557,9 @@ class RecommenderService:
             name_to_idx = {l: i for i, l in enumerate(obs_simu_defaut.name_line)}
             lines_overloaded_ids = [name_to_idx[l] for l in lines_overloaded if l in name_to_idx]
             lines_overloaded_names = [obs_simu_defaut.name_line[i] for i in lines_overloaded_ids]
-            # Also restrict lines_we_care_about so max_rho uses the same set
-            lines_we_care_about = list(set(lines_we_care_about) | set(lines_overloaded))
+            # Restrict lines_we_care_about to only the provided overloaded lines
+            # so that max_rho is computed over the same set as the original analysis
+            lines_we_care_about = list(lines_overloaded)
         else:
             lines_overloaded_ids = []
             for i, l in enumerate(obs_simu_defaut.name_line):
