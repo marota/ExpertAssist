@@ -58,6 +58,7 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
         self._analysis_context = None
+        self._saved_computed_pairs = None
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
@@ -69,6 +70,35 @@ class RecommenderService:
         self._last_disconnected_element = None
         self._dict_action = None
         self._analysis_context = None
+        self._saved_computed_pairs = None
+
+    def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
+        """Restore analysis context from a saved session.
+
+        This sets _analysis_context so that subsequent simulate_manual_action
+        calls use the same monitored lines (lines_we_care_about) that were
+        determined during the original analysis.  Without this, session reload
+        falls back to _get_monitoring_parameters which may return a different
+        set of lines and produce inconsistent max_rho values.
+        """
+        self._analysis_context = {
+            "lines_we_care_about": list(lines_we_care_about) if lines_we_care_about else None,
+        }
+        if disconnected_element:
+            self._last_disconnected_element = disconnected_element
+        if lines_overloaded is not None:
+            self._analysis_context["lines_overloaded"] = list(lines_overloaded)
+        if computed_pairs is not None:
+            self._saved_computed_pairs = computed_pairs
+        print(f"[restore_analysis_context] Restored context: "
+              f"{len(lines_we_care_about) if lines_we_care_about else 0} monitored lines, "
+              f"disconnected={disconnected_element}, "
+              f"{len(lines_overloaded) if lines_overloaded else 0} overloaded lines, "
+              f"{len(computed_pairs) if computed_pairs else 0} computed pairs")
+
+    def get_saved_computed_pairs(self):
+        """Return saved computed pairs from session restore, or None."""
+        return self._saved_computed_pairs
 
     def _enrich_actions(self, prioritized_actions_dict):
         """Helper to convert raw prioritized actions into enriched dict for JSON response."""
@@ -335,6 +365,7 @@ class RecommenderService:
         enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
         # Yield result
+        care = context.get("lines_we_care_about")
         yield sanitize_for_json({
             "type": "result",
             "actions": enriched_actions,
@@ -342,6 +373,7 @@ class RecommenderService:
             "lines_overloaded": results["lines_overloaded_names"],
             "pre_existing_overloads": results.get("pre_existing_overloads", []),
             "combined_actions": results.get("combined_actions", {}),
+            "lines_we_care_about": list(care) if care is not None else None,
             "message": "Analysis completed",
             "dc_fallback": False,
         })
@@ -492,6 +524,7 @@ class RecommenderService:
         # They should only exist in combined_actions as estimations.
         enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
+        care = self._analysis_context.get("lines_we_care_about") if self._analysis_context else None
         yield sanitize_for_json({
             "type": "result",
             "pdf_path": str(shared_state["latest_pdf"]) if shared_state["latest_pdf"] else None,
@@ -499,6 +532,7 @@ class RecommenderService:
             "action_scores": action_scores,
             "lines_overloaded": lines_overloaded,
             "combined_actions": combined_actions,
+            "lines_we_care_about": list(care) if care is not None else None,
             "message": analysis_message,
             "dc_fallback": dc_fallback_used
         })

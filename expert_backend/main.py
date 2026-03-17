@@ -62,6 +62,12 @@ class ComputeSuperpositionRequest(BaseModel):
     action2_id: str
     disconnected_element: str
 
+class RestoreAnalysisContextRequest(BaseModel):
+    lines_we_care_about: list[str] | None = None
+    disconnected_element: str | None = None
+    lines_overloaded: list[str] | None = None
+    computed_pairs: dict | None = None
+
 class ManualActionRequest(BaseModel):
     action_id: str
     disconnected_element: str
@@ -295,6 +301,25 @@ def load_session(folder_path: str = Body(...), session_name: str = Body(...)):
         return content
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read session: {e}")
+
+@app.post("/api/restore-analysis-context")
+def restore_analysis_context(request: RestoreAnalysisContextRequest):
+    """Restore analysis context from a saved session so that subsequent
+    simulate_manual_action calls use the same monitored lines."""
+    try:
+        recommender_service.restore_analysis_context(
+            lines_we_care_about=request.lines_we_care_about,
+            disconnected_element=request.disconnected_element,
+            lines_overloaded=request.lines_overloaded,
+            computed_pairs=request.computed_pairs,
+        )
+        return {
+            "status": "success",
+            "lines_we_care_about_count": len(request.lines_we_care_about) if request.lines_we_care_about else 0,
+            "computed_pairs_count": len(request.computed_pairs) if request.computed_pairs else 0,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 from fastapi.responses import StreamingResponse
 import json

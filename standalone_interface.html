@@ -1736,6 +1736,7 @@
                             message: result.message,
                             dc_fallback: result.dc_fallback,
                             action_scores: result.action_scores,
+                            lines_we_care_about: result.lines_we_care_about || null,
                             actions: Object.fromEntries(
                                 Object.entries(result.actions || {}).map(([id, detail]) => [
                                     id,
@@ -1914,6 +1915,22 @@
                     // Fetch the base network diagram
                     fetchBaseDiagram(vlRes.data.voltage_levels.length);
 
+                    // Restore analysis context (lines_we_care_about) so simulate uses same monitored lines
+                    if (session.analysis?.lines_we_care_about) {
+                        try {
+                            await axios.post(API_BASE + '/api/restore-analysis-context', {
+                                lines_we_care_about: session.analysis.lines_we_care_about,
+                                disconnected_element: session.contingency.disconnected_element,
+                                lines_overloaded: session.overloads?.resolved_overloads || null,
+                                computed_pairs: session.analysis.computed_pairs || null,
+                            });
+                            const nCare = session.analysis.lines_we_care_about.length;
+                            console.log(`[restore] Analysis context restored: ${nCare} monitored lines`);
+                        } catch (ctxErr) {
+                            console.warn('Failed to restore analysis context:', ctxErr);
+                        }
+                    }
+
                     // Restore contingency
                     setMonitorDeselected(session.contingency.monitor_deselected);
                     setSelectedOverloads(new Set(session.contingency.selected_overloads));
@@ -1984,6 +2001,7 @@
                             combined_actions: restoredCombinedActions,
                             message: a.message,
                             dc_fallback: a.dc_fallback,
+                            lines_we_care_about: a.lines_we_care_about || null,
                         });
                         setManualActionIds(restoredSelected);
                         setRejectedActionIds(restoredRejected);
@@ -1998,7 +2016,15 @@
                     committedBranchRef.current = session.contingency.disconnected_element;
                     setSelectedBranch(session.contingency.disconnected_element);
                     setShowReloadModal(false);
-                    setInfoMessage(`SUCCESS: Session "${sessionName}" restored`);
+                    // Build info message with monitoring details
+                    let restoreMsg = `SUCCESS: Session "${sessionName}" restored`;
+                    if (session.analysis?.lines_we_care_about) {
+                        const nCare = session.analysis.lines_we_care_about.length;
+                        restoreMsg += ` | Monitoring: ${nCare} lines restored from saved analysis context`;
+                    } else {
+                        restoreMsg += ` | WARNING: No saved monitoring context – simulations may use different monitored lines`;
+                    }
+                    setInfoMessage(restoreMsg);
                 } catch (err) {
                     setError('Failed to restore session: ' + (err.response?.data?.detail || err.message));
                 } finally {
