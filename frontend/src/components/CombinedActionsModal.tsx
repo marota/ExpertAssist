@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../api';
 import type { AnalysisResult, CombinedAction, ActionDetail } from '../types';
+import { interactionLogger } from '../utils/interactionLogger';
 
 interface SimulationFeedback {
     max_rho: number | null;
@@ -100,9 +101,12 @@ const CombinedActionsModal: React.FC<Props> = ({
         }).sort((a, b) => (a.max_rho ?? 999) - (b.max_rho ?? 999));
     }, [analysisResult, simulatedActions, sessionSimResults]);
 
-    // Cleanup when modal closes
+    // Log modal open/close and cleanup when modal closes
     useEffect(() => {
-        if (!isOpen) {
+        if (isOpen) {
+            interactionLogger.record('combine_modal_opened');
+        } else {
+            interactionLogger.record('combine_modal_closed');
             setSelectedIds(new Set());
             setPreview(null);
             setError(null);
@@ -129,6 +133,11 @@ const CombinedActionsModal: React.FC<Props> = ({
                 const preComputed = analysisResult?.combined_actions?.[pairKey];
 
                 if (preComputed) {
+                    interactionLogger.record('combine_pair_estimated', {
+                        action1_id: id1, action2_id: id2,
+                        estimated_max_rho: preComputed.estimated_max_rho ?? preComputed.max_rho,
+                        estimated_max_rho_line: preComputed.estimated_max_rho_line ?? preComputed.max_rho_line,
+                    });
                     setPreview(preComputed);
                     setError(null);
                     return;
@@ -142,6 +151,11 @@ const CombinedActionsModal: React.FC<Props> = ({
                         setError(result.error);
                         setPreview(null);
                     } else {
+                        interactionLogger.record('combine_pair_estimated', {
+                            action1_id: id1, action2_id: id2,
+                            estimated_max_rho: result.estimated_max_rho ?? result.max_rho,
+                            estimated_max_rho_line: result.estimated_max_rho_line ?? result.max_rho_line,
+                        });
                         setPreview(result);
                     }
                 } catch (e: unknown) {
@@ -165,9 +179,11 @@ const CombinedActionsModal: React.FC<Props> = ({
         const newSet = new Set(selectedIds);
         if (newSet.has(id)) {
             newSet.delete(id);
+            interactionLogger.record('combine_pair_toggled', { action_id: id, selected: false });
         } else {
             if (newSet.size >= 2) return; // Only allow 2
             newSet.add(id);
+            interactionLogger.record('combine_pair_toggled', { action_id: id, selected: true });
         }
         setSelectedIds(newSet);
     };
@@ -207,6 +223,13 @@ const CombinedActionsModal: React.FC<Props> = ({
                 disconnected_mw: result.disconnected_mw,
                 non_convergence: result.non_convergence,
             };
+            const simParts = idToSimulate.split('+');
+            interactionLogger.record('combine_pair_simulated', {
+                combined_id: idToSimulate,
+                action1_id: simParts[0],
+                action2_id: simParts[1],
+                simulated_max_rho: result.max_rho,
+            });
             setSimulationFeedback(feedback);
             // Store per-pair result in session map so the computed pairs table
             // correctly reflects each pair's own simulation result

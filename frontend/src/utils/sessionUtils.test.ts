@@ -50,6 +50,7 @@ const baseInput: SessionInput = {
     rejectedActionIds: new Set(),
     manuallyAddedIds: new Set(),
     suggestedByRecommenderIds: new Set(),
+    interactionLog: [],
 };
 
 // ===== Tests =====
@@ -478,5 +479,31 @@ describe('buildSessionResult — combined_actions', () => {
     it('combined_actions is not present when analysis is null', () => {
         const out = buildSessionResult({ ...baseInput, result: null });
         expect(out.analysis).toBeNull();
+    });
+});
+
+describe('buildSessionResult — interaction_log', () => {
+    it('includes interaction_log when provided', () => {
+        const log = [
+            { seq: 0, timestamp: '2026-03-18T10:00:00.000Z', type: 'config_loaded' as const, details: { network_path: '/data/net.xiidm' }, correlation_id: 'abc' },
+            { seq: 1, timestamp: '2026-03-18T10:01:00.000Z', type: 'contingency_selected' as const, details: { element: 'LINE_A' }, correlation_id: 'def' },
+        ];
+        const out = buildSessionResult({ ...baseInput, interactionLog: log });
+        expect(out.interaction_log).toEqual(log);
+        expect(out.interaction_log).toHaveLength(2);
+    });
+
+    it('interaction_log is empty array when no interactions recorded', () => {
+        const out = buildSessionResult({ ...baseInput, interactionLog: [] });
+        expect(out.interaction_log).toEqual([]);
+    });
+
+    it('interaction_log is independent of analysis result', () => {
+        const log = [
+            { seq: 0, timestamp: '2026-03-18T10:00:00.000Z', type: 'zoom_in' as const, details: {}, correlation_id: 'x' },
+        ];
+        const out = buildSessionResult({ ...baseInput, result: null, interactionLog: log });
+        expect(out.analysis).toBeNull();
+        expect(out.interaction_log).toHaveLength(1);
     });
 });
