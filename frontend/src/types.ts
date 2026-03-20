@@ -44,6 +44,7 @@ export interface ActionDetail {
     n_components?: number;
     disconnected_mw?: number;
     non_convergence?: string | null;
+    affected_line?: string;
     action_topology?: ActionTopology;
 }
 

@@ -896,12 +896,17 @@
 
         // Determine which lines an action acts upon (for line disconnection/reconnection actions).
         // Returns an array of line names.
-        const getActionTargetLines = (actionDetail, actionId, edgesByEquipmentId) => {
+        const getActionTargetLines = (actionDetail, actionId, edgesByEquipmentId, params) => {
             const targets = new Set();
 
-            // 1. From topology
+            // 1. From params (Direct asset tagging)
+            if (params && params.affected_line && typeof params.affected_line === 'string') {
+                targets.add(params.affected_line);
+            }
+
+            // 2. From topology
             const topo = actionDetail?.action_topology;
-            if (topo) {
+            if (topo && typeof topo === 'object') {
                 const lineKeys = new Set([
                     ...Object.keys(topo.lines_ex_bus || {}),
                     ...Object.keys(topo.lines_or_bus || {}),
@@ -911,6 +916,11 @@
 
                 if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
                     lineKeys.forEach(l => targets.add(l));
+                } else if (topo.pst_tap) {
+                    // PST tap actions also target specific lines
+                    Object.keys(topo.pst_tap).forEach(pstId => {
+                        if (pstId) targets.add(String(pstId));
+                    });
                 } else {
                     const allValues = [
                         ...Object.values(topo.lines_ex_bus || {}),
@@ -924,11 +934,22 @@
                 }
             }
 
-            // 2. From action ID (handles combined IDs)
+            // 3. From action ID (handles combined IDs)
             if (actionId) {
                 actionId.split('+').forEach(part => {
                     const subParts = part.split('_');
-                    const candidate = subParts[subParts.length - 1];
+                    if (subParts.length < 2) return;
+
+                    let candidate = subParts[subParts.length - 1];
+
+                    // Handle PST tap variety suffix (e.g. pst_tap_ID_inc2 or pst_tap_ID_dec1)
+                    if (part.startsWith('pst_tap_') && subParts.length >= 4) {
+                        const lastPart = subParts[subParts.length - 1];
+                        if (lastPart.startsWith('inc') || lastPart.startsWith('dec')) {
+                            candidate = subParts[subParts.length - 2];
+                        }
+                    }
+
                     if (edgesByEquipmentId && edgesByEquipmentId.has(candidate)) {
                         targets.add(candidate);
                     }
@@ -4124,7 +4145,10 @@
                     });
                 } catch (err) {
                     console.error('[renderActionList] crash:', err);
-                    return <div className="error-box">Render Error in list</div>;
+                    return <div className="error-box" style={{ padding: '20px', color: '#721c24', background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '4px', margin: '10px 0' }}>
+                        <strong>Render Error in list:</strong> {err.message}
+                        <div style={{ fontSize: '10px', marginTop: '5px', opacity: 0.7 }}>Check console for stack trace.</div>
+                    </div>;
                 }
             };
 

@@ -134,6 +134,7 @@ class RecommenderService:
                 "max_rho_line": action_data.get("max_rho_line", ""),
                 "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
                 "non_convergence": non_convergence,
+                "affected_line": action_data.get("affected_line"),
             }
 
             # Extract topology from the underlying action object
@@ -1908,6 +1909,17 @@ class RecommenderService:
              baseline_rho = obs_start.rho[lines_overloaded_ids]
              is_rho_reduction = bool(np.all(rho_after + 0.01 < baseline_rho))
 
+             # Build action_topology for the combined result
+             topo1 = {field: getattr(act1_obj, field, {}) for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches")}
+             topo2 = {field: getattr(act2_obj, field, {}) for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches")}
+             
+             combined_topo = {}
+             for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
+                 d1 = topo1.get(field) or {}
+                 d2 = topo2.get(field) or {}
+                 # Merge dictionaries (priority to act2 if same keys, which is fine for combined)
+                 combined_topo[field] = {**d1, **d2}
+
              result.update({
                  "max_rho": res_max_rho,
                  "max_rho_line": max_rho_line,
@@ -1915,6 +1927,7 @@ class RecommenderService:
                  "rho_after": res_rho_after,
                  "rho_before": res_rho_before,
                  "is_estimated": True,
+                 "action_topology": sanitize_for_json(combined_topo),
              })
 
         n.set_working_variant(original_variant)
