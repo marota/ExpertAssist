@@ -168,9 +168,19 @@ export const getActionTargetLines = (
 ): string[] => {
     const targets = new Set<string>();
 
-    // 1. From topology
+    // 1. From affected_line (explicit from backend)
+    if (actionDetail?.affected_line) {
+        targets.add(actionDetail.affected_line);
+    }
+
+    // 2. From topology
     const topo = actionDetail?.action_topology;
     if (topo) {
+        // Handle PST tap (if present)
+        if (topo.pst_tap) {
+            Object.keys(topo.pst_tap).forEach(k => targets.add(k));
+        }
+
         const lineKeys = new Set([
             ...Object.keys(topo.lines_ex_bus || {}),
             ...Object.keys(topo.lines_or_bus || {}),
@@ -193,7 +203,7 @@ export const getActionTargetLines = (
         }
     }
 
-    // 2. From action ID (handles combined IDs)
+    // 3. From action ID (handles combined IDs)
     if (actionId) {
         actionId.split('+').forEach(part => {
             if (edgesByEquipmentId.has(part)) {
@@ -201,17 +211,30 @@ export const getActionTargetLines = (
                 return;
             }
             const subParts = part.split('_');
-            for (let i = 1; i < subParts.length; i++) {
-                const candidate = subParts.slice(i).join('_');
-                if (edgesByEquipmentId.has(candidate)) {
-                    targets.add(candidate);
-                    return;
+            if (subParts.length < 2) return;
+
+            let candidate = subParts[subParts.length - 1];
+
+            // Handle PST tap variety suffix (e.g. pst_tap_ID_inc2)
+            if (part.startsWith('pst_tap_') && subParts.length >= 4) {
+                const lastPart = subParts[subParts.length - 1];
+                if (lastPart.startsWith('inc') || lastPart.startsWith('dec')) {
+                    candidate = subParts[subParts.length - 2];
                 }
             }
-            // Fallback: last segment
-            const last = subParts[subParts.length - 1];
-            if (edgesByEquipmentId.has(last)) {
-                targets.add(last);
+
+            if (edgesByEquipmentId.has(candidate)) {
+                targets.add(candidate);
+                return;
+            }
+
+            // Legacy fallback
+            for (let i = 1; i < subParts.length; i++) {
+                const c = subParts.slice(i).join('_');
+                if (edgesByEquipmentId.has(c)) {
+                    targets.add(c);
+                    return;
+                }
             }
         });
     }
