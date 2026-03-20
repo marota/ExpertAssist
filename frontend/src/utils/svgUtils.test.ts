@@ -9,6 +9,8 @@ import {
     invalidateIdMapCache,
     applyOverloadedHighlights,
     applyDeltaVisuals,
+    applyActionTargetHighlights,
+    applyContingencyHighlight,
 } from './svgUtils';
 import type { ActionDetail, NodeMeta, EdgeMeta, MetadataIndex } from '../types';
 
@@ -257,6 +259,89 @@ describe('getActionTargetLines', () => {
         expect(result).toContain('LINE_B');
         expect(result).toHaveLength(2);
     });
+
+    it('extracts lines from pst_tap in topology', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Change PST tap',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                pst_tap: { PST_LINE_1: 5 },
+                lines_ex_bus: {},
+                lines_or_bus: {},
+                gens_bus: {},
+                loads_bus: {},
+            },
+        };
+
+        const result = getActionTargetLines(detail, null, makeEdgeMap('PST_LINE_1'));
+        expect(result).toEqual(['PST_LINE_1']);
+    });
+
+    it('strips _inc/_dec suffixes from action ID parts', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'PST action with suffix',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        // pst_tap_.ARKA TD 661_inc2 -> stripped to pst_tap_.ARKA TD 661
+        // then parsed to .ARKA TD 661
+        const result = getActionTargetLines(detail, 'pst_tap_LINE_PST_inc2', makeEdgeMap('LINE_PST'));
+        expect(result).toEqual(['LINE_PST']);
+    });
+
+    it('handles combined PST actions with suffixes', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Combined PST and Line',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        const result = getActionTargetLines(
+            detail,
+            'pst_tap_PST_A_inc1+disco_LINE_B',
+            makeEdgeMap('PST_A', 'LINE_B')
+        );
+        expect(result).toContain('PST_A');
+        expect(result).toContain('LINE_B');
+        expect(result).toHaveLength(2);
+    });
+
+    it('suppresses topology lines for coupling actions but keeps pst_tap', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Coupling with side effects',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                lines_ex_bus: { LINE_SIDE_EFFECT: -1 },
+                pst_tap: { PST_LINE: 5 },
+                lines_or_bus: {},
+                gens_bus: {},
+                loads_bus: {},
+            },
+        };
+
+        const result = getActionTargetLines(detail, 'MQIS P7_coupling', makeEdgeMap('LINE_SIDE_EFFECT', 'PST_LINE'));
+
+        // Should NOT contain LINE_SIDE_EFFECT (it's a side effect of coupling)
+        expect(result).not.toContain('LINE_SIDE_EFFECT');
+        // Should STILL contain PST_LINE
+        expect(result).toContain('PST_LINE');
+        expect(result).toHaveLength(1);
+    });
 });
 
 describe('getActionTargetVoltageLevels', () => {
@@ -380,6 +465,20 @@ describe('getActionTargetVoltageLevels', () => {
         // because it's a line reconnection (lines with bus >= 0, no gen/load)
         const result = getActionTargetVoltageLevels(detail, 'reco_VL1', makeNodeMap('VL1'));
         expect(result).toEqual([]);
+    });
+
+    it('strips _inc/_dec suffixes in fallback ID parsing', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'No description available',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        const result = getActionTargetVoltageLevels(detail, 'open_coupling_VL1_inc2', makeNodeMap('VL1'));
+        expect(result).toEqual(['VL1']);
     });
 });
 
@@ -548,5 +647,40 @@ describe('applyDeltaVisuals', () => {
 
         expect(container.querySelector('#svg-line-a')?.classList.contains('nad-delta-negative')).toBe(true);
         expect(container.querySelector('#info1-a text')?.textContent).toBe('\u0394 -3.7');
+    });
+});
+
+describe('Highlight Layering', () => {
+    it('prepends the contingency clone to the background layer (z-order fix)', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg><g id="svg-line-a"></g><g id="svg-line-b"></g></svg>';
+        const metaIndex = {
+            edgesByEquipmentId: new Map([
+                ['LINE_A', { equipmentId: 'LINE_A', svgId: 'svg-line-a' } as EdgeMeta],
+                ['LINE_B', { equipmentId: 'LINE_B', svgId: 'svg-line-b' } as EdgeMeta],
+            ]),
+            nodesByEquipmentId: new Map(),
+            nodesBySvgId: new Map(),
+            edgesByNode: new Map(),
+        } as unknown as MetadataIndex;
+
+        // 1. Apply action highlight first (appends to layer)
+        const detail: ActionDetail = {
+            action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, pst_tap: {} }
+        } as unknown as ActionDetail;
+        applyActionTargetHighlights(container, metaIndex, detail, 'disco_LINE_A');
+
+        // 2. Apply contingency highlight (should prepend to layer)
+        applyContingencyHighlight(container, metaIndex, 'LINE_B');
+
+        const bgLayer = container.querySelector('#nad-background-layer');
+        expect(bgLayer).not.toBeNull();
+        const children = bgLayer!.children;
+        expect(children.length).toBe(2);
+
+        // LINE_B (contingency) should be FIRST in DOM (at the bottom visually)
+        expect(children[0].classList.contains('nad-contingency-highlight')).toBe(true);
+        // LINE_A (action) should be SECOND in DOM (on top visually)
+        expect(children[1].classList.contains('nad-action-target')).toBe(true);
     });
 });

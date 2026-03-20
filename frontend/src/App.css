@@ -57,6 +57,11 @@ circle.nad-highlight {
     filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
 }
 
+/* Contingency highlight in orange */
+.nad-contingency-highlight {
+    filter: drop-shadow(0 0 8px #ff8c00) drop-shadow(0 0 15px #ff8c00) !important;
+}
+
 /* For lines and paths, use grid units for stroke-width so the halo is always
    significantly wider than the actual element it highlights. */
 .nad-action-target path,
@@ -72,6 +77,19 @@ circle.nad-highlight {
     stroke-linejoin: round !important;
 }
 
+.nad-contingency-highlight path,
+.nad-contingency-highlight line,
+.nad-contingency-highlight polyline,
+.nad-contingency-highlight rect,
+.nad-contingency-highlight polygon {
+    stroke: #ff8c00 !important;
+    stroke-width: 150px !important;
+    stroke-opacity: 0.8 !important;
+    fill: none !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+}
+
 /* For nodes (circles and rects), add a screen-space stroke to create a glowing
    background halo that doesn't shrink into invisibility on large grids. */
 .nad-action-target circle,
@@ -80,6 +98,16 @@ circle.nad-highlight {
     stroke-width: 45px !important;
     stroke-opacity: 0.6 !important;
     fill: #ffe600 !important;
+    fill-opacity: 0.8 !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+.nad-contingency-highlight circle,
+.nad-contingency-highlight rect {
+    stroke: #ff8c00 !important;
+    stroke-width: 45px !important;
+    stroke-opacity: 0.6 !important;
+    fill: #ff8c00 !important;
     fill-opacity: 0.8 !important;
     vector-effect: non-scaling-stroke !important;
 }

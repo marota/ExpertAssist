@@ -171,24 +171,31 @@ export const getActionTargetLines = (
     // 1. From topology
     const topo = actionDetail?.action_topology;
     if (topo) {
-        const lineKeys = new Set([
-            ...Object.keys(topo.lines_ex_bus || {}),
-            ...Object.keys(topo.lines_or_bus || {}),
-        ]);
-        const genKeys = Object.keys(topo.gens_bus || {});
-        const loadKeys = Object.keys(topo.loads_bus || {});
+        const isCoupling = actionId?.toLowerCase().includes('coupling') || actionId?.toLowerCase().includes('busbar');
 
-        if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
-            lineKeys.forEach(l => targets.add(l));
-        } else {
-            const allValues = [
-                ...Object.values(topo.lines_ex_bus || {}),
-                ...Object.values(topo.lines_or_bus || {}),
-                ...Object.values(topo.gens_bus || {}),
-                ...Object.values(topo.loads_bus || {}),
-            ];
-            if (allValues.length > 0 && allValues.every(v => v === -1)) {
+        // Pst taps are always included
+        Object.keys(topo.pst_tap || {}).forEach(l => targets.add(l));
+
+        if (!isCoupling) {
+            const lineKeys = new Set([
+                ...Object.keys(topo.lines_ex_bus || {}),
+                ...Object.keys(topo.lines_or_bus || {}),
+            ]);
+            const genKeys = Object.keys(topo.gens_bus || {});
+            const loadKeys = Object.keys(topo.loads_bus || {});
+
+            if (lineKeys.size > 0 && genKeys.length === 0 && loadKeys.length === 0) {
                 lineKeys.forEach(l => targets.add(l));
+            } else {
+                const allValues = [
+                    ...Object.values(topo.lines_ex_bus || {}),
+                    ...Object.values(topo.lines_or_bus || {}),
+                    ...Object.values(topo.gens_bus || {}),
+                    ...Object.values(topo.loads_bus || {}),
+                ];
+                if (allValues.length > 0 && allValues.every(v => v === -1)) {
+                    lineKeys.forEach(l => targets.add(l));
+                }
             }
         }
     }
@@ -196,11 +203,19 @@ export const getActionTargetLines = (
     // 2. From action ID (handles combined IDs)
     if (actionId) {
         actionId.split('+').forEach(part => {
+            // Strip any suffix added by discovery (e.g. _inc1, _dec2)
+            const cleanPart = part.replace(/_(inc|dec)\d+$/, '');
+
+            if (edgesByEquipmentId.has(cleanPart)) {
+                targets.add(cleanPart);
+                return;
+            }
             if (edgesByEquipmentId.has(part)) {
                 targets.add(part);
                 return;
             }
-            const subParts = part.split('_');
+
+            const subParts = cleanPart.split('_');
             for (let i = 1; i < subParts.length; i++) {
                 const candidate = subParts.slice(i).join('_');
                 if (edgesByEquipmentId.has(candidate)) {
@@ -254,11 +269,18 @@ export const getActionTargetVoltageLevels = (
 
     if (actionId && !isLineReconnection) {
         actionId.split('+').forEach(part => {
+            const cleanPart = part.replace(/_(inc|dec)\d+$/, '');
+
+            if (nodesByEquipmentId.has(cleanPart)) {
+                targets.add(cleanPart);
+                return;
+            }
             if (nodesByEquipmentId.has(part)) {
                 targets.add(part);
                 return;
             }
-            const subParts = part.split('_');
+
+            const subParts = cleanPart.split('_');
             for (let i = 1; i < subParts.length; i++) {
                 const candidate = subParts.slice(i).join('_');
                 if (nodesByEquipmentId.has(candidate)) {
@@ -360,7 +382,7 @@ export const applyActionTargetHighlights = (
 };
 
 /**
- * Apply yellow fluo halo to the disconnected branch in the N-1 state.
+ * Apply orange halo to the disconnected branch in the N-1 state.
  */
 export const applyContingencyHighlight = (
     container: HTMLElement,
@@ -392,7 +414,7 @@ export const applyContingencyHighlight = (
 
     const clone = el.cloneNode(true) as SVGGraphicsElement;
     clone.removeAttribute('id');
-    clone.classList.add('nad-action-target');
+    clone.classList.add('nad-contingency-highlight');
     clone.classList.add('nad-highlight-clone');
 
     try {
@@ -408,7 +430,7 @@ export const applyContingencyHighlight = (
     } catch (e) {
         console.warn('Failed to get CTM for contingency highlight:', e);
     }
-    backgroundLayer.appendChild(clone);
+    backgroundLayer.prepend(clone);
 };
 
 
