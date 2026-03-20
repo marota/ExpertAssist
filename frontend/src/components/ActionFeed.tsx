@@ -422,6 +422,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                 : Array.from(new Set([
                                     ...Object.keys(details.action_topology?.lines_ex_bus || {}),
                                     ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                    ...Object.keys(details.action_topology?.pst_tap || {}),
                                 ]));
 
                             lineNames.forEach(name => {

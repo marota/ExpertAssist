@@ -1335,10 +1335,14 @@ function App() {
 
         if (actionSvgContainerRef.current) {
           applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
+          // Also highlight the contingency in the action view
+          applyContingencyHighlight(actionSvgContainerRef.current, actionMetaIndex, selectedBranch);
         }
       } else {
         if (actionSvgContainerRef.current) {
           applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+          // Clear contingency highlight if no action selected
+          actionSvgContainerRef.current.querySelectorAll('.nad-highlight-clone.nad-contingency-highlight').forEach(el => el.remove());
         }
       }
     }

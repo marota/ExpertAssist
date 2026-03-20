@@ -164,6 +164,11 @@
             filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
         }
 
+        /* Contingency highlight in orange */
+        .nad-contingency-highlight {
+            filter: drop-shadow(0 0 8px #ff8c00) drop-shadow(0 0 15px #ff8c00) !important;
+        }
+
         /* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
         .nad-action-target path,
         .nad-action-target line,
@@ -178,6 +183,19 @@
             stroke-linejoin: round !important;
         }
 
+        .nad-contingency-highlight path,
+        .nad-contingency-highlight line,
+        .nad-contingency-highlight polyline,
+        .nad-contingency-highlight rect,
+        .nad-contingency-highlight polygon {
+            stroke: #ff8c00 !important;
+            stroke-width: 150px !important;
+            stroke-opacity: 0.8 !important;
+            fill: none !important;
+            stroke-linecap: round !important;
+            stroke-linejoin: round !important;
+        }
+
         /* For nodes (circles and rects), add a screen-space stroke to create a glowing background halo that doesn't shrink into invisibility on large grids, avoiding obscuring the original node in the foreground. */
         .nad-action-target circle,
         .nad-action-target rect {
@@ -185,6 +203,16 @@
             stroke-width: 45px !important;
             stroke-opacity: 0.6 !important;
             fill: #ffe600 !important;
+            fill-opacity: 0.8 !important;
+            vector-effect: non-scaling-stroke !important;
+        }
+
+        .nad-contingency-highlight circle,
+        .nad-contingency-highlight rect {
+            stroke: #ff8c00 !important;
+            stroke-width: 45px !important;
+            stroke-opacity: 0.6 !important;
+            fill: #ff8c00 !important;
             fill-opacity: 0.8 !important;
             vector-effect: non-scaling-stroke !important;
         }
@@ -905,6 +933,7 @@
                 const lineKeys = new Set([
                     ...Object.keys(topo.lines_ex_bus || {}),
                     ...Object.keys(topo.lines_or_bus || {}),
+                    ...Object.keys(topo.pst_tap || {}),
                 ]);
                 const genKeys = Object.keys(topo.gens_bus || {});
                 const loadKeys = Object.keys(topo.loads_bus || {});
@@ -915,6 +944,7 @@
                     const allValues = [
                         ...Object.values(topo.lines_ex_bus || {}),
                         ...Object.values(topo.lines_or_bus || {}),
+                        ...Object.values(topo.pst_tap || {}),
                         ...Object.values(topo.gens_bus || {}),
                         ...Object.values(topo.loads_bus || {}),
                     ];
@@ -927,10 +957,17 @@
             // 2. From action ID (handles combined IDs)
             if (actionId) {
                 actionId.split('+').forEach(part => {
-                    const subParts = part.split('_');
-                    const candidate = subParts[subParts.length - 1];
-                    if (edgesByEquipmentId && edgesByEquipmentId.has(candidate)) {
-                        targets.add(candidate);
+                    const cleanPart = part.replace(/_(inc|dec)\d+$/, '');
+                    if (edgesByEquipmentId && edgesByEquipmentId.has(cleanPart)) {
+                        targets.add(cleanPart);
+                    } else if (edgesByEquipmentId && edgesByEquipmentId.has(part)) {
+                        targets.add(part);
+                    } else {
+                        const subParts = cleanPart.split('_');
+                        const last = subParts[subParts.length - 1];
+                        if (edgesByEquipmentId && edgesByEquipmentId.has(last)) {
+                            targets.add(last);
+                        }
                     }
                 });
             }
@@ -967,9 +1004,16 @@
 
             if (actionId && !isLineReconnection) {
                 actionId.split('+').forEach(part => {
-                    const subParts = part.split('_');
-                    const candidate = subParts[subParts.length - 1];
-                    if (nodesByEquipmentId.has(candidate)) targets.add(candidate);
+                    const cleanPart = part.replace(/_(inc|dec)\d+$/, '');
+                    if (nodesByEquipmentId.has(cleanPart)) {
+                        targets.add(cleanPart);
+                    } else if (nodesByEquipmentId.has(part)) {
+                        targets.add(part);
+                    } else {
+                        const subParts = cleanPart.split('_');
+                        const last = subParts[subParts.length - 1];
+                        if (nodesByEquipmentId.has(last)) targets.add(last);
+                    }
                 });
             }
             return [...targets];
@@ -1057,7 +1101,7 @@
             });
         };
 
-        // Apply yellow fluo halo to the disconnected branch in the N-1 state.
+        // Apply orange halo to the disconnected branch in the N-1 state.
         const applyContingencyHighlight = (container, metaIndex, disconnectedElement) => {
             if (!container || !metaIndex || !disconnectedElement) return;
 
@@ -1084,7 +1128,7 @@
 
             const clone = el.cloneNode(true);
             clone.removeAttribute('id');
-            clone.classList.add('nad-action-target');
+            clone.classList.add('nad-contingency-highlight');
             clone.classList.add('nad-highlight-clone');
 
             try {
@@ -3361,8 +3405,14 @@
                             }
 
                             applyActionTargetHighlights(actionSvgContainerRef.current, actionMetaIndex, actionDetail, selectedActionId);
+                            // Also highlight the contingency in the action view
+                            applyContingencyHighlight(actionSvgContainerRef.current, actionMetaIndex, selectedBranch);
                         } else {
-                            if (actionSvgContainerRef.current) applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+                            if (actionSvgContainerRef.current) {
+                                applyActionTargetHighlights(actionSvgContainerRef.current, null, null, null);
+                                // Clear contingency highlight if no action selected
+                                actionSvgContainerRef.current.querySelectorAll('.nad-highlight-clone.nad-contingency-highlight').forEach(el => el.remove());
+                            }
                         }
                     }
 
@@ -4036,6 +4086,7 @@
                                             : Array.from(new Set([
                                                 ...Object.keys(details.action_topology?.lines_ex_bus || {}),
                                                 ...Object.keys(details.action_topology?.lines_or_bus || {}),
+                                                ...Object.keys(details.action_topology?.pst_tap || {}),
                                             ]));
 
                                         lineNames.forEach(name => {
@@ -5286,94 +5337,95 @@
                                                         ...simulatedOnly.map(([id, data]) => [id, data]),
                                                     ];
                                                     return allPairs
-                                                    .sort((a, b) => ((a[1].estimated_max_rho ?? a[1].max_rho) ?? 999) - ((b[1].estimated_max_rho ?? b[1].max_rho) ?? 999))
-                                                    .map(([id, data]) => {
-                                                        const parts = id.split('+').map(p => p.trim());
-                                                        const simData = data._simData || result?.actions?.[id] || result?.actions?.[canonicalizeId(id)];
-                                                        const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
-                                                        const estMaxRho = data.estimated_max_rho ?? data.max_rho;
-                                                        const estMaxRhoLine = data.estimated_max_rho_line ?? data.max_rho_line;
+                                                        .sort((a, b) => ((a[1].estimated_max_rho ?? a[1].max_rho) ?? 999) - ((b[1].estimated_max_rho ?? b[1].max_rho) ?? 999))
+                                                        .map(([id, data]) => {
+                                                            const parts = id.split('+').map(p => p.trim());
+                                                            const simData = data._simData || result?.actions?.[id] || result?.actions?.[canonicalizeId(id)];
+                                                            const isSimulated = simData && !simData.is_estimated && simData.rho_after && simData.rho_after.length > 0;
+                                                            const estMaxRho = data.estimated_max_rho ?? data.max_rho;
+                                                            const estMaxRhoLine = data.estimated_max_rho_line ?? data.max_rho_line;
 
-                                                        return (
-                                                            <tr key={id}>
-                                                                <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[0]}</td>
-                                                                <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[1]}</td>
-                                                                <td style={{ fontSize: '11px', fontFamily: 'monospace', color: '#666' }}>
-                                                                    {data.betas ? (Array.isArray(data.betas) ? data.betas : Object.values(data.betas)).map(b => b.toFixed(2)).join(', ') : '-'}
-                                                                </td>
-                                                                <td>
-                                                                    <span className="metric-badge metric-rho" style={{
-                                                                        background: estMaxRho > monitoringFactor ? '#ffebee' : estMaxRho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
-                                                                        color: estMaxRho > monitoringFactor ? '#c62828' : estMaxRho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32',
-                                                                        fontWeight: 'bold',
-                                                                        opacity: 0.9,
-                                                                        border: estMaxRho > monitoringFactor ? '1px solid #c62828' : estMaxRho > (monitoringFactor - 0.05) ? '1px solid #856404' : '1px dashed #2e7d32'
-                                                                    }}>
-                                                                        {estMaxRho != null && !isNaN(estMaxRho) ? `${(estMaxRho * 100).toFixed(1)}%` : '—'}
-                                                                        {data.is_islanded && (
-                                                                            <span style={{ marginLeft: '4px' }} title="Estimation suspect due to islanding or linear superposition breakdown">⚠️</span>
-                                                                        )}
-                                                                    </span>
-                                                                </td>
-                                                                <td style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>{estMaxRhoLine || 'N/A'}</td>
-
-                                                                <td style={{ textAlign: 'center' }}>
-                                                                    {isSimulated ? (
+                                                            return (
+                                                                <tr key={id}>
+                                                                    <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[0]}</td>
+                                                                    <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{parts[1]}</td>
+                                                                    <td style={{ fontSize: '11px', fontFamily: 'monospace', color: '#666' }}>
+                                                                        {data.betas ? (Array.isArray(data.betas) ? data.betas : Object.values(data.betas)).map(b => b.toFixed(2)).join(', ') : '-'}
+                                                                    </td>
+                                                                    <td>
                                                                         <span className="metric-badge metric-rho" style={{
+                                                                            background: estMaxRho > monitoringFactor ? '#ffebee' : estMaxRho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
+                                                                            color: estMaxRho > monitoringFactor ? '#c62828' : estMaxRho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32',
                                                                             fontWeight: 'bold',
-                                                                            fontSize: '13px',
-                                                                            background: simData.max_rho > monitoringFactor ? '#ffebee' : simData.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
-                                                                            color: simData.max_rho > monitoringFactor ? '#c62828' : simData.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
+                                                                            opacity: 0.9,
+                                                                            border: estMaxRho > monitoringFactor ? '1px solid #c62828' : estMaxRho > (monitoringFactor - 0.05) ? '1px solid #856404' : '1px dashed #2e7d32'
                                                                         }}>
-                                                                            {(simData.max_rho * 100).toFixed(1)}%
-                                                                            {simData.is_islanded && (
-                                                                                <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${simData.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
+                                                                            {estMaxRho != null && !isNaN(estMaxRho) ? `${(estMaxRho * 100).toFixed(1)}%` : '—'}
+                                                                            {data.is_islanded && (
+                                                                                <span style={{ marginLeft: '4px' }} title="Estimation suspect due to islanding or linear superposition breakdown">⚠️</span>
                                                                             )}
                                                                         </span>
-                                                                    ) : (
-                                                                        <span style={{ color: '#aaa', fontSize: '11px' }}>Not simulated</span>
-                                                                    )}
-                                                                </td>
-                                                                <td style={{ fontSize: '11px', color: '#333', fontWeight: isSimulated ? 'bold' : 'normal' }}>
-                                                                    {isSimulated ? simData.max_rho_line : '-'}
-                                                                </td>
+                                                                    </td>
+                                                                    <td style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>{estMaxRhoLine || 'N/A'}</td>
 
-                                                                <td>
-                                                                    <button
-                                                                        onClick={(e) => {
-                                                                            e.stopPropagation();
-                                                                            handleAddManualAction(id);
-                                                                        }}
-                                                                        disabled={!!simulatingActionId}
-                                                                        style={{
-                                                                            padding: '6px 14px',
-                                                                            background: isSimulated ? '#007bff' : '#28a745',
-                                                                            color: 'white',
-                                                                            border: 'none',
-                                                                            borderRadius: '4px',
-                                                                            cursor: simulatingActionId ? 'not-allowed' : 'pointer',
-                                                                            fontSize: '11px',
-                                                                            fontWeight: 'bold',
-                                                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                                                            opacity: simulatingActionId ? 0.6 : 1,
-                                                                            minWidth: '100px'
-                                                                        }}
-                                                                    >
-                                                                        {simulatingActionId === canonicalizeId(id) ? '⌛' : (isSimulated ? 'Re-Simulate' : 'Simulate')}
-                                                                    </button>
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    });}
+                                                                    <td style={{ textAlign: 'center' }}>
+                                                                        {isSimulated ? (
+                                                                            <span className="metric-badge metric-rho" style={{
+                                                                                fontWeight: 'bold',
+                                                                                fontSize: '13px',
+                                                                                background: simData.max_rho > monitoringFactor ? '#ffebee' : simData.max_rho > (monitoringFactor - 0.05) ? '#fff3cd' : '#e8f5e9',
+                                                                                color: simData.max_rho > monitoringFactor ? '#c62828' : simData.max_rho > (monitoringFactor - 0.05) ? '#856404' : '#2e7d32'
+                                                                            }}>
+                                                                                {(simData.max_rho * 100).toFixed(1)}%
+                                                                                {simData.is_islanded && (
+                                                                                    <span style={{ fontSize: '10px', marginLeft: '4px', border: '1px solid #721c24', padding: '1px 3px', borderRadius: '3px', color: '#721c24', background: '#f8d7da' }} title={`Islanding: ${simData.disconnected_mw?.toFixed(1)} MW disconnected`}>🏝️</span>
+                                                                                )}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span style={{ color: '#aaa', fontSize: '11px' }}>Not simulated</span>
+                                                                        )}
+                                                                    </td>
+                                                                    <td style={{ fontSize: '11px', color: '#333', fontWeight: isSimulated ? 'bold' : 'normal' }}>
+                                                                        {isSimulated ? simData.max_rho_line : '-'}
+                                                                    </td>
+
+                                                                    <td>
+                                                                        <button
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleAddManualAction(id);
+                                                                            }}
+                                                                            disabled={!!simulatingActionId}
+                                                                            style={{
+                                                                                padding: '6px 14px',
+                                                                                background: isSimulated ? '#007bff' : '#28a745',
+                                                                                color: 'white',
+                                                                                border: 'none',
+                                                                                borderRadius: '4px',
+                                                                                cursor: simulatingActionId ? 'not-allowed' : 'pointer',
+                                                                                fontSize: '11px',
+                                                                                fontWeight: 'bold',
+                                                                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                                                                opacity: simulatingActionId ? 0.6 : 1,
+                                                                                minWidth: '100px'
+                                                                            }}
+                                                                        >
+                                                                            {simulatingActionId === canonicalizeId(id) ? '⌛' : (isSimulated ? 'Re-Simulate' : 'Simulate')}
+                                                                        </button>
+                                                                    </td>
+                                                                </tr>
+                                                            );
+                                                        });
+                                                }
                                                 )()}
                                                 {Object.keys(result?.combined_actions || {}).length === 0 &&
-                                                 Object.entries(result?.actions || {}).filter(([id]) => id.includes('+')).length === 0 && (
-                                                    <tr>
-                                                        <td colSpan="6" style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
-                                                            No computed combinations found.<br />Go to <strong>Explore Pairs</strong> to create new ones.
-                                                        </td>
-                                                    </tr>
-                                                )}
+                                                    Object.entries(result?.actions || {}).filter(([id]) => id.includes('+')).length === 0 && (
+                                                        <tr>
+                                                            <td colSpan="6" style={{ textAlign: 'center', color: '#888', fontStyle: 'italic', padding: '40px 20px' }}>
+                                                                No computed combinations found.<br />Go to <strong>Explore Pairs</strong> to create new ones.
+                                                            </td>
+                                                        </tr>
+                                                    )}
                                             </tbody>
                                         </table>
                                     </div>

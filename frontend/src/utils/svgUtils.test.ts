@@ -257,6 +257,63 @@ describe('getActionTargetLines', () => {
         expect(result).toContain('LINE_B');
         expect(result).toHaveLength(2);
     });
+
+    it('extracts lines from pst_tap in topology', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Change PST tap',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                pst_tap: { PST_LINE_1: 5 },
+                lines_ex_bus: {},
+                lines_or_bus: {},
+                gens_bus: {},
+                loads_bus: {},
+            },
+        };
+
+        const result = getActionTargetLines(detail, null, makeEdgeMap('PST_LINE_1'));
+        expect(result).toEqual(['PST_LINE_1']);
+    });
+
+    it('strips _inc/_dec suffixes from action ID parts', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'PST action with suffix',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        // pst_tap_.ARKA TD 661_inc2 -> stripped to pst_tap_.ARKA TD 661
+        // then parsed to .ARKA TD 661
+        const result = getActionTargetLines(detail, 'pst_tap_LINE_PST_inc2', makeEdgeMap('LINE_PST'));
+        expect(result).toEqual(['LINE_PST']);
+    });
+
+    it('handles combined PST actions with suffixes', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Combined PST and Line',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        const result = getActionTargetLines(
+            detail,
+            'pst_tap_PST_A_inc1+disco_LINE_B',
+            makeEdgeMap('PST_A', 'LINE_B')
+        );
+        expect(result).toContain('PST_A');
+        expect(result).toContain('LINE_B');
+        expect(result).toHaveLength(2);
+    });
 });
 
 describe('getActionTargetVoltageLevels', () => {
@@ -380,6 +437,20 @@ describe('getActionTargetVoltageLevels', () => {
         // because it's a line reconnection (lines with bus >= 0, no gen/load)
         const result = getActionTargetVoltageLevels(detail, 'reco_VL1', makeNodeMap('VL1'));
         expect(result).toEqual([]);
+    });
+
+    it('strips _inc/_dec suffixes in fallback ID parsing', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'No description available',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+        };
+
+        const result = getActionTargetVoltageLevels(detail, 'open_coupling_VL1_inc2', makeNodeMap('VL1'));
+        expect(result).toEqual(['VL1']);
     });
 });
 
