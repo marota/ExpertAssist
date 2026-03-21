@@ -13,13 +13,40 @@ import {
 import { processSvgAsync } from './utils/svgWorkerClient';
 import type { ActionDetail, AnalysisResult, DiagramData, ViewBox, MetadataIndex, TabId, SettingsBackup, VlOverlay, SldTab, FlowDelta, AssetDelta, SessionResult, CombinedAction } from './types';
 import { buildSessionResult } from './utils/sessionUtils';
+import { useSettings } from './hooks/useSettings';
+import { useActions } from './hooks/useActions';
+import { useAnalysis } from './hooks/useAnalysis';
+import { useDiagrams } from './hooks/useDiagrams';
+import { useSession } from './hooks/useSession';
 
 function App() {
-  // ===== Configuration State =====
-  const [networkPath, setNetworkPath] = useState('');
-  const [actionPath, setActionPath] = useState('');
-  const [layoutPath, setLayoutPath] = useState('');
-  const [outputFolderPath, setOutputFolderPath] = useState('');
+  // ===== Settings Hook =====
+  const settings = useSettings();
+  const {
+    networkPath, setNetworkPath, actionPath, setActionPath,
+    layoutPath, setLayoutPath, outputFolderPath, setOutputFolderPath,
+    minLineReconnections, setMinLineReconnections,
+    minCloseCoupling, setMinCloseCoupling,
+    minOpenCoupling, setMinOpenCoupling,
+    minLineDisconnections, setMinLineDisconnections,
+    nPrioritizedActions, setNPrioritizedActions,
+    minPst, setMinPst,
+    ignoreReconnections, setIgnoreReconnections,
+    linesMonitoringPath, setLinesMonitoringPath,
+    monitoredLinesCount, setMonitoredLinesCount: _setMonitoredLinesCount,
+    totalLinesCount, setTotalLinesCount: _setTotalLinesCount,
+    showMonitoringWarning, setShowMonitoringWarning,
+    monitoringFactor, setMonitoringFactor,
+    preExistingOverloadThreshold, setPreExistingOverloadThreshold,
+    pypowsyblFastMode, setPypowsyblFastMode,
+    actionDictFileName, actionDictStats,
+    isSettingsOpen, setIsSettingsOpen,
+    settingsTab, setSettingsTab,
+    settingsBackup, setSettingsBackup,
+    pickSettingsPath,
+    handleOpenSettings, handleCloseSettings,
+    buildConfigRequest, applyConfigResponse, createCurrentBackup,
+  } = settings;
 
   const [branches, setBranches] = useState<string[]>([]);
   const [voltageLevels, setVoltageLevels] = useState<string[]>([]);
@@ -27,39 +54,8 @@ function App() {
   const [configLoading, setConfigLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Settings State
-  const [minLineReconnections, setMinLineReconnections] = useState<number>(2.0);
-  const [minCloseCoupling, setMinCloseCoupling] = useState<number>(3.0);
-  const [minOpenCoupling, setMinOpenCoupling] = useState<number>(2.0);
-  const [minLineDisconnections, setMinLineDisconnections] = useState<number>(3.0);
-  const [nPrioritizedActions, setNPrioritizedActions] = useState<number>(10);
-  const [linesMonitoringPath, setLinesMonitoringPath] = useState('');
-  const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
-  const [totalLinesCount, setTotalLinesCount] = useState(0);
-  const [showMonitoringWarning, setShowMonitoringWarning] = useState(false);
-  const [monitoringFactor, setMonitoringFactor] = useState(0.95);
-  const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState<number>(0.02);
-  const [ignoreReconnections, setIgnoreReconnections] = useState<boolean>(false);
-  const [pypowsyblFastMode, setPypowsyblFastMode] = useState<boolean>(true);
-  const [minPst, setMinPst] = useState<number>(1.0);
-  const [actionDictFileName, setActionDictFileName] = useState<string | null>(null);
-  const [actionDictStats, setActionDictStats] = useState<{ reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null>(null);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations' | 'paths'>('paths');
-  const [settingsBackup, setSettingsBackup] = useState<SettingsBackup | null>(null);
-
   // Confirmation dialog state for contingency change / load study
   const [confirmDialog, setConfirmDialog] = useState<{ type: 'contingency' | 'loadStudy'; pendingBranch?: string } | null>(null);
-
-
-  const pickSettingsPath = async (type: 'file' | 'dir', setter: (path: string) => void) => {
-    try {
-      const path = await api.pickPath(type);
-      if (path) setter(path);
-    } catch {
-      console.error('Failed to open file picker');
-    }
-  };
 
   // Nominal voltage filter state
   const [nominalVoltageMap, setNominalVoltageMap] = useState<Record<string, number>>({});
@@ -141,46 +137,7 @@ function App() {
     }
   }, []);
 
-  const handleOpenSettings = useCallback((tab: 'recommender' | 'configurations' | 'paths' = 'paths') => {
-    setSettingsBackup({
-      networkPath,
-      actionPath,
-      layoutPath,
-      outputFolderPath,
-      minLineReconnections,
-      minCloseCoupling,
-      minOpenCoupling,
-      minLineDisconnections,
-      nPrioritizedActions,
-      linesMonitoringPath,
-      monitoringFactor,
-      preExistingOverloadThreshold,
-      ignoreReconnections,
-      pypowsyblFastMode
-    });
-    setSettingsTab(tab);
-    setIsSettingsOpen(true);
-  }, [networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
-
-  const handleCloseSettings = useCallback(() => {
-    if (settingsBackup) {
-      if (settingsBackup.networkPath !== undefined) setNetworkPath(settingsBackup.networkPath);
-      if (settingsBackup.actionPath !== undefined) setActionPath(settingsBackup.actionPath);
-      if (settingsBackup.layoutPath !== undefined) setLayoutPath(settingsBackup.layoutPath);
-      if (settingsBackup.outputFolderPath !== undefined) setOutputFolderPath(settingsBackup.outputFolderPath);
-      setMinLineReconnections(settingsBackup.minLineReconnections);
-      setMinCloseCoupling(settingsBackup.minCloseCoupling);
-      setMinOpenCoupling(settingsBackup.minOpenCoupling);
-      setMinLineDisconnections(settingsBackup.minLineDisconnections);
-      setNPrioritizedActions(settingsBackup.nPrioritizedActions);
-      setLinesMonitoringPath(settingsBackup.linesMonitoringPath);
-      setMonitoringFactor(settingsBackup.monitoringFactor);
-      setPreExistingOverloadThreshold(settingsBackup.preExistingOverloadThreshold);
-      setIgnoreReconnections(settingsBackup.ignoreReconnections ?? false);
-      setPypowsyblFastMode(settingsBackup.pypowsyblFastMode ?? true);
-    }
-    setIsSettingsOpen(false);
-  }, [settingsBackup]);
+  // handleOpenSettings and handleCloseSettings come from useSettings hook
 
   const handleApplySettings = useCallback(async () => {
     try {
@@ -214,53 +171,13 @@ function App() {
       setShowMonitoringWarning(false);
 
       if (!networkPath || !actionPath) {
-        setSettingsBackup({
-          networkPath,
-          actionPath,
-          layoutPath,
-          outputFolderPath,
-          minLineReconnections,
-          minCloseCoupling,
-          minOpenCoupling,
-          minLineDisconnections,
-          nPrioritizedActions,
-          linesMonitoringPath,
-          monitoringFactor,
-          preExistingOverloadThreshold,
-          ignoreReconnections,
-          pypowsyblFastMode,
-        });
+        setSettingsBackup(createCurrentBackup());
         setIsSettingsOpen(false);
         return;
       }
 
-      const configRes = await api.updateConfig({
-        network_path: networkPath,
-        action_file_path: actionPath,
-        layout_path: layoutPath,
-        min_line_reconnections: minLineReconnections,
-        min_close_coupling: minCloseCoupling,
-        min_open_coupling: minOpenCoupling,
-        min_line_disconnections: minLineDisconnections,
-        min_pst: minPst,
-        n_prioritized_actions: nPrioritizedActions,
-        lines_monitoring_path: linesMonitoringPath,
-        monitoring_factor: monitoringFactor,
-        pre_existing_overload_threshold: preExistingOverloadThreshold,
-        ignore_reconnections: ignoreReconnections,
-        pypowsybl_fast_mode: pypowsyblFastMode,
-      });
-
-      if (configRes && configRes.total_lines_count !== undefined) {
-        setMonitoredLinesCount(configRes.monitored_lines_count);
-        setTotalLinesCount(configRes.total_lines_count);
-        if (configRes.monitored_lines_count < configRes.total_lines_count) {
-          setShowMonitoringWarning(true);
-        }
-      }
-      if (configRes?.action_dict_file_name) setActionDictFileName(configRes.action_dict_file_name);
-      if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats);
-
+      const configRes = await api.updateConfig(buildConfigRequest());
+      applyConfigResponse(configRes as Record<string, unknown>);
 
       // Fetch study-related data (branches, nominal voltages etc.)
       const [branchesList, vlRes, nomVRes] = await Promise.all([
@@ -281,49 +198,15 @@ function App() {
 
       fetchBaseDiagram(vlRes.length);
 
-      setSettingsBackup({
-        networkPath,
-        actionPath,
-        layoutPath,
-        outputFolderPath,
-        minLineReconnections,
-        minCloseCoupling,
-        minOpenCoupling,
-        minLineDisconnections,
-        nPrioritizedActions,
-        linesMonitoringPath,
-        monitoringFactor,
-        preExistingOverloadThreshold,
-        ignoreReconnections,
-        pypowsyblFastMode
-      });
+      setSettingsBackup(createCurrentBackup());
       setIsSettingsOpen(false);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, minPst, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
+  }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, fetchBaseDiagram]);
 
-  // Load paths from localStorage on initial mount
-  useEffect(() => {
-    const savedNetwork = localStorage.getItem('networkPath');
-    const savedAction = localStorage.getItem('actionPath');
-    const savedLayout = localStorage.getItem('layoutPath');
-    const savedOutput = localStorage.getItem('outputFolderPath');
-
-    setNetworkPath(savedNetwork || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
-    setActionPath(savedAction || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
-    setLayoutPath(savedLayout || '');
-    setOutputFolderPath(savedOutput || '');
-  }, []);
-
-  // Persist paths to localStorage
-  useEffect(() => {
-    localStorage.setItem('networkPath', networkPath);
-    localStorage.setItem('actionPath', actionPath);
-    localStorage.setItem('layoutPath', layoutPath);
-    localStorage.setItem('outputFolderPath', outputFolderPath);
-  }, [networkPath, actionPath, layoutPath, outputFolderPath]);
+  // localStorage load/persist is handled by useSettings hook
 
   // ===== Contingency Change Confirmation Helpers =====
   // Check if there is any analysis state that would be lost on contingency change
@@ -398,32 +281,8 @@ function App() {
     setShowMonitoringWarning(false);
 
     try {
-      const configRes = await api.updateConfig({
-        network_path: networkPath,
-        action_file_path: actionPath,
-        min_line_reconnections: minLineReconnections,
-        min_close_coupling: minCloseCoupling,
-        min_open_coupling: minOpenCoupling,
-        min_line_disconnections: minLineDisconnections,
-        min_pst: minPst,
-        n_prioritized_actions: nPrioritizedActions,
-        lines_monitoring_path: linesMonitoringPath,
-        monitoring_factor: monitoringFactor,
-        pre_existing_overload_threshold: preExistingOverloadThreshold,
-        ignore_reconnections: ignoreReconnections,
-        pypowsybl_fast_mode: pypowsyblFastMode,
-      });
-
-      if (configRes && configRes.total_lines_count !== undefined) {
-        setMonitoredLinesCount(configRes.monitored_lines_count);
-        setTotalLinesCount(configRes.total_lines_count);
-        if (configRes.monitored_lines_count < configRes.total_lines_count) {
-          setShowMonitoringWarning(true);
-        }
-      }
-      if (configRes?.action_dict_file_name) setActionDictFileName(configRes.action_dict_file_name);
-      if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats);
-
+      const configRes = await api.updateConfig(buildConfigRequest());
+      applyConfigResponse(configRes as Record<string, unknown>);
 
       const [branchesList, vlRes, nomVRes] = await Promise.all([
         api.getBranches(),
@@ -450,7 +309,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [networkPath, actionPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, nPrioritizedActions, minPst, monitoringFactor, linesMonitoringPath, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode, fetchBaseDiagram]);
+  }, [buildConfigRequest, applyConfigResponse, fetchBaseDiagram]);
 
   // Handle Load Study with confirmation when analysis state exists
   const handleLoadStudyClick = useCallback(() => {
