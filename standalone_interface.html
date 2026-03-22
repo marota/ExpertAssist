@@ -134,12 +134,6 @@
             vector-effect: non-scaling-stroke;
         }
 
-        /* During active pan/zoom interaction disable pointer-events on all SVG
-           children to skip expensive hit-testing during drag/zoom. */
-        .svg-container.svg-interacting svg * {
-            pointer-events: none !important;
-        }
-
         .error {
             color: red;
             margin-top: 5px;
@@ -168,13 +162,6 @@
         /* Apply drop-shadow to the parent clone group to create a glowing halo effect */
         .nad-action-target {
             filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
-        }
-
-        /* Suppress expensive drop-shadow filters during active interaction.
-           The compositing cost of multiple drop-shadows on cloned highlight
-           elements is high — skip it while the viewBox is changing rapidly. */
-        .svg-container.svg-interacting .nad-action-target {
-            filter: none !important;
         }
 
         /* Contingency highlight in orange */
@@ -233,6 +220,15 @@
         /* Hide text and foreignObjects in the background clone to avoid messy overlays */
         .nad-action-target text,
         .nad-action-target foreignObject {
+            display: none !important;
+        }
+
+        /* Hide text on large grids at full zoom — revealed by removing this class.
+           display:none removes elements from layout entirely, so the browser
+           skips layout/paint for thousands of text nodes at initial load. */
+        .svg-container.text-hidden foreignObject,
+        .svg-container.text-hidden .nad-edge-infos,
+        .svg-container.text-hidden .nad-text-edges {
             display: none !important;
         }
 
@@ -565,25 +561,15 @@
             // Mutable ref for the hot path — updated every frame, no React render
             const viewBoxRef = useRef(null);
             const isDragging = useRef(false);
-            const startPoint = useRef({ x: 0, y: 0, pendingX: 0, pendingY: 0 });
+            const startPoint = useRef({ x: 0, y: 0 });
             const wheelTimerId = useRef(null);
             const rafId = useRef(null);
             // Cached SVG element ref — avoids querySelector on every event
             const svgElRef = useRef(null);
             const activeRef = useRef(active);
             activeRef.current = active;
-            // Cached getScreenCTM() — invalidated after each viewBox change
-            const ctmCacheRef = useRef(null);
-            // Wheel zoom rAF batching: accumulate scale factor + last cursor position
-            const wheelRafId = useRef(null);
-            const pendingWheelScale = useRef(1);
-            const pendingWheelCursor = useRef({ x: 0, y: 0 });
-
-            // Toggle svg-interacting class to disable pointer-events + filter during interaction
-            const setInteracting = (interacting) => {
-                const container = svgRef.current;
-                if (container) container.classList.toggle('svg-interacting', interacting);
-            };
+            // Original viewBox max dimension — used for relative text visibility threshold
+            const initialMaxDimRef = useRef(null);
 
             // Direct DOM update — no React involved
             const applyViewBox = (vb) => {
@@ -591,8 +577,16 @@
                 if (svg && vb) {
                     svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
                 }
-                // Invalidate CTM cache after every viewBox change
-                ctmCacheRef.current = null;
+                // Toggle text visibility based on zoom level (large grids only).
+                // Show text when zoomed in to < 50% of original viewBox (2x+ zoom).
+                // This scales with grid size: zoomToElement typically zooms to
+                // 10-30% of the grid, so text always appears on element focus.
+                const container = svgRef.current;
+                if (container && vb && svg && svg.hasAttribute('data-large-grid')) {
+                    const origMax = initialMaxDimRef.current;
+                    const shouldHide = !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5;
+                    container.classList.toggle('text-hidden', shouldHide);
+                }
             };
 
             // Flush ref -> React state for downstream consumers
@@ -603,9 +597,20 @@
             };
 
             // Cache SVG element when container content changes.
+            // Also hide text immediately on large grids to prevent a flash
+            // of unreadable text before the first applyViewBox call.
+            // Runs only when a new diagram loads (initialViewBox changes),
+            // NOT on every render — otherwise it blocks paint on tab switch.
             useLayoutEffect(() => {
                 if (svgRef.current) {
                     svgElRef.current = svgRef.current.querySelector('svg');
+                    if (svgElRef.current && svgElRef.current.hasAttribute('data-large-grid')) {
+                        const vb = viewBoxRef.current;
+                        const origMax = initialMaxDimRef.current;
+                        if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5) {
+                            svgRef.current.classList.add('text-hidden');
+                        }
+                    }
                 } else {
                     svgElRef.current = null;
                 }
@@ -615,6 +620,7 @@
             useEffect(() => {
                 if (initialViewBox) {
                     viewBoxRef.current = initialViewBox;
+                    initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
                     applyViewBox(initialViewBox);
                     setViewBox(initialViewBox);
                     // Diagnostic: log effective scaling
@@ -628,74 +634,39 @@
                 }
             }, [initialViewBox]);
 
-            // Get (or reuse cached) screen CTM — invalidated by applyViewBox after each viewBox change
-            const getCTM = () => {
-                if (ctmCacheRef.current) return ctmCacheRef.current;
-                const svg = svgElRef.current;
-                if (!svg) return null;
-                const ctm = svg.getScreenCTM();
-                if (ctm) ctmCacheRef.current = ctm;
-                return ctm;
-            };
-
             const handleWheel = (e) => {
                 if (!activeRef.current || !viewBoxRef.current) return;
                 e.preventDefault();
-
-                // Accumulate scale factor (multiplicative) and record latest cursor position.
-                // Multiple wheel events fire before the next rAF; accumulating avoids dropped frames.
+                const vb = viewBoxRef.current;
                 const scaleFactor = e.deltaY > 0 ? 1.1 : 0.9;
-                pendingWheelScale.current *= scaleFactor;
-                pendingWheelCursor.current = { x: e.clientX, y: e.clientY };
 
-                // Mark as interacting (disables pointer-events + drop-shadow filters)
-                setInteracting(true);
+                const svg = svgElRef.current;
+                if (!svg) return;
 
-                // Schedule a single rAF per burst — snapshot the CTM now (still valid)
-                if (!wheelRafId.current) {
-                    const ctm = getCTM();
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
 
-                    wheelRafId.current = requestAnimationFrame(() => {
-                        wheelRafId.current = null;
+                const newVb = {
+                    x: vb.x + (svgP.x - vb.x) * (1 - scaleFactor),
+                    y: vb.y + (svgP.y - vb.y) * (1 - scaleFactor),
+                    w: vb.w * scaleFactor,
+                    h: vb.h * scaleFactor
+                };
 
-                        const vb = viewBoxRef.current;
-                        const svg = svgElRef.current;
-                        if (!vb || !svg || !ctm) return;
+                viewBoxRef.current = newVb;
+                applyViewBox(newVb);
 
-                        const accumulatedScale = pendingWheelScale.current;
-                        pendingWheelScale.current = 1; // reset accumulator
-
-                        const cursor = pendingWheelCursor.current;
-                        const pt = svg.createSVGPoint();
-                        pt.x = cursor.x;
-                        pt.y = cursor.y;
-                        const svgP = pt.matrixTransform(ctm.inverse());
-
-                        const newVb = {
-                            x: vb.x + (svgP.x - vb.x) * (1 - accumulatedScale),
-                            y: vb.y + (svgP.y - vb.y) * (1 - accumulatedScale),
-                            w: vb.w * accumulatedScale,
-                            h: vb.h * accumulatedScale
-                        };
-
-                        viewBoxRef.current = newVb;
-                        applyViewBox(newVb);
-                    });
-                }
-
-                // Debounced commit: sync to React + clear interacting after scrolling stops
+                // Debounced commit: sync to React after scrolling stops
                 clearTimeout(wheelTimerId.current);
-                wheelTimerId.current = setTimeout(() => {
-                    setInteracting(false);
-                    commitViewBox();
-                }, 150);
+                wheelTimerId.current = setTimeout(commitViewBox, 150);
             };
 
             const handleMouseDown = (e) => {
                 if (!activeRef.current || !viewBoxRef.current) return;
                 isDragging.current = true;
                 startPoint.current = { x: e.clientX, y: e.clientY, pendingX: e.clientX, pendingY: e.clientY };
-                setInteracting(true);
             };
 
             // rAF-throttled drag: at most one DOM update per display frame
@@ -734,7 +705,6 @@
 
             const handleMouseUp = () => {
                 isDragging.current = false;
-                setInteracting(false);
                 if (rafId.current) {
                     cancelAnimationFrame(rafId.current);
                     rafId.current = null;
@@ -770,7 +740,6 @@
                     window.removeEventListener('mouseup', handleMouseUp);
                     clearTimeout(wheelTimerId.current);
                     if (rafId.current) cancelAnimationFrame(rafId.current);
-                    if (wheelRafId.current) cancelAnimationFrame(wheelRafId.current);
                 };
             }, [active, initialViewBox]);
 
@@ -882,33 +851,6 @@
             }
             _boostCache.set(cacheKey, result);
             return result;
-        };
-
-        // ===== SVG Processing (sync fallback + async Worker) =====
-        // processSvg: synchronous — used as fallback when Worker unavailable
-        const processSvg = (rawSvg, vlCount) => {
-            try {
-                const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
-                let vb = null;
-                if (match) {
-                    const parts = match[1].split(/\s+|,/).map(parseFloat);
-                    if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
-                }
-                const svgTag = rawSvg.match(/<svg[^>]*>/)?.[0] || '';
-                const widthMatch = svgTag.match(/\bwidth=["']([^"']+)["']/);
-                const heightMatch = svgTag.match(/\bheight=["']([^"']+)["']/);
-                console.log(`[SVG processSvg] vlCount=${vlCount}, viewBox=${vb ? `${vb.w.toFixed(0)}x${vb.h.toFixed(0)}` : 'none'} @ ${widthMatch?.[1] || 'none'}x${heightMatch?.[1] || 'none'}`);
-                const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
-                return { svg, viewBox: vb };
-            } catch (err) {
-                console.error('[processSvg] error:', err);
-                return { svg: rawSvg, viewBox: null };
-            }
-        };
-
-        // processSvgAsync: wraps sync processSvg in a Promise for consistent async API
-        const processSvgAsync = (rawSvg, vlCount) => {
-            return Promise.resolve(processSvg(rawSvg, vlCount));
         };
 
         // ===== Cached DOM ID Map =====
@@ -1645,8 +1587,30 @@
                 } finally { setConfigLoading(false); }
             };
 
-            // We no longer automatically reload config when settings close,
+            // We no longer automatically reload config when settings close, 
             // the user must explicitly click Apply in settings.
+
+            const processSvg = (rawSvg, vlCount) => {
+                try {
+                    const match = rawSvg.match(/viewBox=["']([^"']+)["']/);
+                    let vb = null;
+                    if (match) {
+                        const parts = match[1].split(/\s+|,/).map(parseFloat);
+                        if (parts.length === 4) vb = { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
+                    }
+
+                    const svgTag = rawSvg.match(/<svg[^>]*>/)?.[0] || '';
+                    const widthMatch = svgTag.match(/\bwidth=["']([^"']+)["']/);
+                    const heightMatch = svgTag.match(/\bheight=["']([^"']+)["']/);
+                    console.log(`[SVG processSvg] vlCount=${vlCount}, viewBox=${vb ? `${vb.w.toFixed(0)}x${vb.h.toFixed(0)}` : 'none'} @ ${widthMatch?.[1] || 'none'}x${heightMatch?.[1] || 'none'}`);
+
+                    const svg = boostSvgForLargeGrid(rawSvg, vb, vlCount);
+                    return { svg, viewBox: vb };
+                } catch (err) {
+                    console.error('[processSvg] error:', err);
+                    return { svg: rawSvg, viewBox: null };
+                }
+            };
             const handleManualZoomIn = () => {
                 const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
                 const vb = currentPZ?.viewBox;
@@ -1698,7 +1662,7 @@
             const fetchBaseDiagram = async (vlCount) => {
                 try {
                     const res = await axios.get(API_BASE + '/api/network-diagram');
-                    const { svg, viewBox } = await processSvgAsync(res.data.svg, vlCount || 0);
+                    const { svg, viewBox } = processSvg(res.data.svg, vlCount || 0);
                     if (viewBox) setOriginalViewBox(viewBox);
                     setNDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) { console.error('Failed to fetch diagram:', err); }
@@ -1773,7 +1737,7 @@
                     setActiveTab('n-1'); // Switch immediately → shows "Generating N-1 Diagram..."
                     try {
                         const res = await axios.post(API_BASE + '/api/n1-diagram', { disconnected_element: selectedBranch });
-                        const { svg, viewBox } = await processSvgAsync(res.data.svg, voltageLevels.length);
+                        const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                         setN1Diagram({ ...res.data, svg, originalViewBox: viewBox }); // Embed viewBox
                     } catch (err) {
                         console.error("Failed to fetch N-1 diagram", err);
@@ -2337,7 +2301,7 @@
                 setActiveTab('action');
                 try {
                     const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
-                    const { svg, viewBox } = await processSvgAsync(res.data.svg, voltageLevels.length);
+                    const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                     setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) {
                     // Diagram not in backend memory (e.g. after session restore) — simulate first
@@ -2394,7 +2358,7 @@
                             });
                             // Now try fetching the diagram again
                             const res2 = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
-                            const { svg, viewBox } = await processSvgAsync(res2.data.svg, voltageLevels.length);
+                            const { svg, viewBox } = processSvg(res2.data.svg, voltageLevels.length);
                             setActionDiagram({ ...res2.data, svg, originalViewBox: viewBox });
                         } catch (simErr) {
                             console.error('Failed to simulate and fetch diagram for', actionId, simErr);
@@ -2972,7 +2936,7 @@
                     // Fetch the action diagram AFTER simulation completes (ensures post-action state is ready)
                     try {
                         const diagRes = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
-                        const { svg, viewBox } = await processSvgAsync(diagRes.data.svg, voltageLevels.length);
+                        const { svg, viewBox } = processSvg(diagRes.data.svg, voltageLevels.length);
                         const prefetched = { ...diagRes.data, svg, originalViewBox: viewBox };
 
                         actionSyncSourceRef.current =
