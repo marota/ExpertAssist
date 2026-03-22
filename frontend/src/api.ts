@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { ConfigRequest, AnalysisResult, BranchResponse, DiagramData, FlowDelta, AssetDelta, AvailableAction, SessionResult } from './types';
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://127.0.0.1:8000';
 
 export const api = {
     updateConfig: async (config: ConfigRequest) => {
