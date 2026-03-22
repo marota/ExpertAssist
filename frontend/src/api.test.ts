@@ -29,7 +29,7 @@ describe('api client', () => {
 
             const result = await api.updateConfig(config);
             expect(mockedAxios.post).toHaveBeenCalledWith(
-                'http://localhost:8000/api/config',
+                'http://127.0.0.1:8000/api/config',
                 config,
             );
             expect(result).toEqual({ status: 'success' });
@@ -44,7 +44,7 @@ describe('api client', () => {
 
             const result = await api.getBranches();
             expect(mockedAxios.get).toHaveBeenCalledWith(
-                'http://localhost:8000/api/branches',
+                'http://127.0.0.1:8000/api/branches',
             );
             expect(result).toEqual(['LINE_A', 'LINE_B']);
         });
@@ -91,7 +91,7 @@ describe('api client', () => {
 
             const result = await api.getN1Diagram('LINE_A');
             expect(mockedAxios.post).toHaveBeenCalledWith(
-                'http://localhost:8000/api/n1-diagram',
+                'http://127.0.0.1:8000/api/n1-diagram',
                 { disconnected_element: 'LINE_A' },
             );
             expect(result).toEqual(diagramData);
@@ -106,7 +106,7 @@ describe('api client', () => {
 
             const result = await api.getActionVariantDiagram('act_1');
             expect(mockedAxios.post).toHaveBeenCalledWith(
-                'http://localhost:8000/api/action-variant-diagram',
+                'http://127.0.0.1:8000/api/action-variant-diagram',
                 { action_id: 'act_1' },
             );
             expect(result.action_id).toBe('act_1');
@@ -141,7 +141,7 @@ describe('api client', () => {
 
             const result = await api.simulateManualAction('act_1', 'LINE_B');
             expect(mockedAxios.post).toHaveBeenCalledWith(
-                'http://localhost:8000/api/simulate-manual-action',
+                'http://127.0.0.1:8000/api/simulate-manual-action',
                 { action_id: 'act_1', disconnected_element: 'LINE_B', action_content: null, lines_overloaded: null },
             );
             expect(result).toEqual(responseData);
@@ -156,7 +156,7 @@ describe('api client', () => {
 
             const result = await api.pickPath('file');
             expect(mockedAxios.get).toHaveBeenCalledWith(
-                'http://localhost:8000/api/pick-path?type=file',
+                'http://127.0.0.1:8000/api/pick-path?type=file',
             );
             expect(result).toBe('/home/user/test.xiidm');
         });
@@ -168,7 +168,7 @@ describe('api client', () => {
 
             const result = await api.pickPath('dir');
             expect(mockedAxios.get).toHaveBeenCalledWith(
-                'http://localhost:8000/api/pick-path?type=dir',
+                'http://127.0.0.1:8000/api/pick-path?type=dir',
             );
             expect(result).toBe('/home/user/networks');
         });
