@@ -329,6 +329,7 @@ export function useDiagrams(
   // ===== Tab Synchronization =====
   useLayoutEffect(() => {
     const prevTab = prevTabRef.current;
+    if (prevTab === activeTab) return;
     prevTabRef.current = activeTab;
 
     if (prevTab === 'overflow' || activeTab === 'overflow') return;
@@ -684,7 +685,7 @@ export function useDiagrams(
 
   }, [activeTab, nDiagram, n1Diagram, actionDiagram, inspectQuery, selectedBranch, handleManualReset, zoomToElement]);
 
-  return {
+  return useMemo(() => ({
     activeTab, setActiveTab,
     nDiagram, setNDiagram,
     n1Diagram, setN1Diagram,
@@ -717,5 +718,16 @@ export function useDiagrams(
     zoomToElement,
     inspectableItems,
     selectedBranchForSld,
-  };
+  }), [
+    activeTab, nDiagram, n1Diagram, n1Loading,
+    selectedActionId, actionDiagram, actionDiagramLoading, actionViewMode, handleViewModeChange,
+    originalViewBox, inspectQuery,
+    nPZ, n1PZ, actionPZ,
+    nMetaIndex, n1MetaIndex, actionMetaIndex,
+    nominalVoltageMap, uniqueVoltages, voltageRange,
+    vlOverlay, fetchBaseDiagram, handleActionSelect,
+    handleManualZoomIn, handleManualZoomOut, handleManualReset,
+    handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose,
+    handleAssetClick, zoomToElement, inspectableItems
+  ]);
 }

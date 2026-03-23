@@ -1,4 +1,4 @@
-import { useState, useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useState, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
 import type { ActionDetail, AnalysisResult } from '../types';
 
 export interface ActionsState {
@@ -108,7 +108,7 @@ export function useActions(): ActionsState {
     setSuggestedByRecommenderIds(new Set());
   }, []);
 
-  return {
+  return useMemo(() => ({
     selectedActionIds, setSelectedActionIds,
     manuallyAddedIds, setManuallyAddedIds,
     rejectedActionIds, setRejectedActionIds,
@@ -117,5 +117,8 @@ export function useActions(): ActionsState {
     handleActionReject,
     handleManualActionAdded,
     clearActionState,
-  };
+  }), [
+    selectedActionIds, manuallyAddedIds, rejectedActionIds, suggestedByRecommenderIds,
+    handleActionFavorite, handleActionReject, handleManualActionAdded, clearActionState
+  ]);
 }

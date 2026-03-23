@@ -351,41 +351,15 @@ function App() {
   }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState, clearContingencyState, analysisLoading, n1Diagram, n1Loading, setError, diagrams]);
 
   useEffect(() => {
-    if (n1Diagram?.lines_overloaded) {
-      analysis.setSelectedOverloads(new Set(n1Diagram.lines_overloaded));
-    } else {
-      analysis.setSelectedOverloads(new Set());
+    const nextSet = n1Diagram?.lines_overloaded ? new Set(n1Diagram.lines_overloaded) : new Set<string>();
+    const currentSet = analysis.selectedOverloads;
+    if (nextSet.size === currentSet.size && [...nextSet].every(x => currentSet.has(x))) {
+      return;
     }
+    analysis.setSelectedOverloads(nextSet);
   }, [n1Diagram, analysisLoading, n1Loading, analysis]);
 
 
-  useEffect(() => {
-    if (activeTab === 'overflow') return;
-
-    const queryChanged = inspectQuery !== diagrams.lastZoomState.current.query;
-    const branchChanged = !inspectQuery && selectedBranch !== diagrams.lastZoomState.current.branch;
-
-    if (!queryChanged && !branchChanged) return;
-
-    const targetId = inspectQuery || selectedBranch;
-
-    if (!targetId && queryChanged) {
-      diagrams.lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-      handleManualReset();
-      return;
-    }
-
-    if (!targetId) return;
-
-    if (branchChanged && activeTab === 'n') return;
-
-    const container = activeTab === 'action' ? diagrams.actionSvgContainerRef.current
-      : activeTab === 'n' ? diagrams.nSvgContainerRef.current : diagrams.n1SvgContainerRef.current;
-    if (!container || !container.querySelector('svg')) return;
-
-    diagrams.lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-    zoomToElement(targetId);
-  }, [activeTab, nDiagram, n1Diagram, actionDiagram, inspectQuery, selectedBranch, zoomToElement, handleManualReset, diagrams]);
 
 
   const staleHighlights = useRef<Set<TabId>>(new Set());

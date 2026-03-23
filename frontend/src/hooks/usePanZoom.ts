@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, type RefObject } from 'react';
 import type { ViewBox } from '../types';
 
 /**
@@ -277,11 +277,18 @@ export const usePanZoom = (
     }, [active, initialViewBox]);
 
     // Public API: updates ref + DOM + React state immediately
-    const setViewBoxPublic = (vb: ViewBox) => {
+    const setViewBoxPublic = useCallback((vb: ViewBox) => {
         viewBoxRef.current = vb;
         applyViewBox(vb);
-        setViewBox(vb);
-    };
+        setViewBox(prev => {
+            if (prev && vb &&
+                prev.x === vb.x && prev.y === vb.y &&
+                prev.w === vb.w && prev.h === vb.h) {
+                return prev;
+            }
+            return vb;
+        });
+    }, []);
 
-    return { viewBox, setViewBox: setViewBoxPublic };
+    return useMemo(() => ({ viewBox, setViewBox: setViewBoxPublic }), [viewBox, setViewBoxPublic]);
 };

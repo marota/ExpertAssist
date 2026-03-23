@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
 import type { ActionDetail, AnalysisResult } from '../types';
 
 export interface AnalysisState {
@@ -198,7 +198,7 @@ export function useAnalysis(): AnalysisState {
     });
   }, []);
 
-  return {
+  return useMemo(() => ({
     result, setResult,
     pendingAnalysisResult, setPendingAnalysisResult,
     analysisLoading, setAnalysisLoading,
@@ -210,5 +210,9 @@ export function useAnalysis(): AnalysisState {
     handleRunAnalysis,
     handleDisplayPrioritizedActions,
     handleToggleOverload,
-  };
+  }), [
+    result, pendingAnalysisResult, analysisLoading, infoMessage, error,
+    selectedOverloads, monitorDeselected,
+    handleRunAnalysis, handleDisplayPrioritizedActions, handleToggleOverload,
+  ]);
 }
