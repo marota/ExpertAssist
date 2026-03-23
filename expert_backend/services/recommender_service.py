@@ -699,15 +699,13 @@ class RecommenderService:
         )
 
     def _generate_diagram(self, network, voltage_level_ids=None, depth=0):
-        """Generate NAD and return svg + metadata dict.
-
-        Args:
-            network: pypowsybl network object
-            voltage_level_ids: list of VL IDs to center on (None = full grid)
-            depth: number of hops from center VLs to include
-        """
+        """Generate NAD and return svg + metadata dict."""
         from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
+        import time
 
+        print(f"[RECO] Generating diagram (VLs={voltage_level_ids}, depth={depth})...")
+        t0 = time.time()
+        
         df_layout = self._load_layout()
         npars = self._default_nad_parameters()
 
@@ -719,10 +717,19 @@ class RecommenderService:
             kwargs['depth'] = depth
 
         diagram = network.get_network_area_diagram(**kwargs)
+        t1 = time.time()
+        
+        svg = _get_svg_string(diagram)
+        t2 = time.time()
+        
+        meta = _get_svg_metadata(diagram)
+        t3 = time.time()
+        
+        print(f"[RECO] Diagram generated: NAD {t1-t0:.2f}s, SVG {t2-t1:.2f}s, Meta {t3-t2:.2f}s (SVG length={len(svg)})")
 
         return {
-            "svg": _get_svg_string(diagram),
-            "metadata": _get_svg_metadata(diagram),
+            "svg": svg,
+            "metadata": meta,
         }
 
     def get_network_diagram(self, voltage_level_ids=None, depth=0):
@@ -732,70 +739,79 @@ class RecommenderService:
         n_variant_id = self._get_n_variant()
         n.set_working_variant(n_variant_id)
 
-        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
-        diagram["lines_overloaded"] = self._get_overloaded_lines(n, lines_we_care_about=self._get_lines_we_care_about())
-        # Cache N-state element currents for N-1 comparison
-        self._n_state_currents = self._get_element_max_currents(n)
-        
-        n.set_working_variant(original_variant) # Restore original variant
-        return diagram
+        try:
+            diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+            diagram["lines_overloaded"] = self._get_overloaded_lines(n, lines_we_care_about=self._get_lines_we_care_about())
+            # Cache N-state element currents for N-1 comparison
+            self._n_state_currents = self._get_element_max_currents(n)
+            return diagram
+        finally:
+            n.set_working_variant(original_variant) # Restore original variant
 
     def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
+        import time
+
+        print(f"[RECO] Generating N-1 diagram for {disconnected_element} (VLs={voltage_level_ids}, depth={depth})...")
+        t_start = time.time()
 
         n = self._get_base_network()
         original_variant = n.get_working_variant_id()
         n1_variant_id = self._get_n1_variant(disconnected_element)
         n.set_working_variant(n1_variant_id)
 
-        # Check convergence — partial AC results are still better than DC
-        # (DC only computes angles/power, not voltage magnitudes).
-        # We need to re-run AC to get the results object for status
-        params = create_olf_rte_parameter()
-        results = self._run_ac_with_fallback(n, params)
-        converged = any(r.status.name == 'CONVERGED' for r in results)
-        lf_status = results[0].status.name if results else "UNKNOWN"
-        if not converged:
-            print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}): {lf_status}")
-
-        diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
-        diagram["lf_converged"] = converged
-        diagram["lf_status"] = lf_status
-
-        # Include flow deltas vs base (N) state
         try:
-            # IMPORTANT: Extract N-1 flows while N-1 variant is STILL ACTIVE on 'n'
-            n1_flows = self._get_network_flows(n)
-            n1_assets = self._get_asset_flows(n)
+            # Check convergence — partial AC results are still better than DC
+            # (DC only computes angles/power, not voltage magnitudes).
+            # We need to re-run AC to get the results object for status
+            t0 = time.time()
+            params = create_olf_rte_parameter()
+            results = self._run_ac_with_fallback(n, params)
+            converged = any(r.status.name == 'CONVERGED' for r in results)
+            lf_status = results[0].status.name if results else "UNKNOWN"
+            if not converged:
+                print(f"Warning: AC load flow did not converge for N-1 ({disconnected_element}): {lf_status}")
+            print(f"[RECO] N-1 LF check {disconnected_element}: {time.time()-t0:.2f}s")
 
-            n_base = self._get_base_network()
-            original_variant_base = n_base.get_working_variant_id()
-            n_variant_id_base = self._get_n_variant()
-            n_base.set_working_variant(n_variant_id_base)
+            diagram = self._generate_diagram(n, voltage_level_ids=voltage_level_ids, depth=depth)
+            diagram["lf_converged"] = converged
+            diagram["lf_status"] = lf_status
 
-            base_flows = self._get_network_flows(n_base)
-            base_assets = self._get_asset_flows(n_base)
+            # Include flow deltas vs base (N) state
+            try:
+                t0 = time.time()
+                # IMPORTANT: Extract N-1 flows while N-1 variant is STILL ACTIVE on 'n'
+                n1_flows = self._get_network_flows(n)
+                n1_assets = self._get_asset_flows(n)
 
-            deltas = self._compute_deltas(n1_flows, base_flows, voltage_level_ids=voltage_level_ids)
-            diagram["flow_deltas"] = deltas["flow_deltas"]
-            diagram["reactive_flow_deltas"] = deltas["reactive_flow_deltas"]
-            diagram["asset_deltas"] = self._compute_asset_deltas(n1_assets, base_assets)
-            
-            n_base.set_working_variant(original_variant_base) # Restore original variant for base network
-        except Exception as e:
-            print(f"Warning: Failed to compute N-1 flow deltas: {e}")
-            diagram["flow_deltas"] = {}
-            diagram["reactive_flow_deltas"] = {}
-            diagram["asset_deltas"] = {}
+                n_base = self._get_base_network()
+                original_variant_base = n_base.get_working_variant_id()
+                n_variant_id_base = self._get_n_variant()
+                n_base.set_working_variant(n_variant_id_base)
 
-        # Exclude pre-existing overloads (already overloaded in N) unless worsened
-        n_state_currents = getattr(self, '_n_state_currents', None)
-        diagram["lines_overloaded"] = self._get_overloaded_lines(
-            n, n_state_currents=n_state_currents, lines_we_care_about=self._get_lines_we_care_about()
-        )
-        
-        n.set_working_variant(original_variant) # Restore original variant
-        return diagram
+                base_flows = self._get_network_flows(n_base)
+                base_assets = self._get_asset_flows(n_base)
+
+                deltas = self._compute_deltas(n1_flows, base_flows, voltage_level_ids=voltage_level_ids)
+                diagram["flow_deltas"] = deltas["flow_deltas"]
+                diagram["reactive_flow_deltas"] = deltas["reactive_flow_deltas"]
+                diagram["asset_deltas"] = self._compute_asset_deltas(n1_assets, base_assets)
+                
+                n_base.set_working_variant(original_variant_base) # Restore original variant for base network
+            except Exception as e:
+                print(f"Warning: Failed to compute N-1 flow deltas: {e}")
+                diagram["flow_deltas"] = {}
+                diagram["reactive_flow_deltas"] = {}
+                diagram["asset_deltas"] = {}
+
+            # Exclude pre-existing overloads (already overloaded in N) unless worsened
+            n_state_currents = getattr(self, '_n_state_currents', None)
+            diagram["lines_overloaded"] = self._get_overloaded_lines(
+                n, n_state_currents=n_state_currents, lines_we_care_about=self._get_lines_we_care_about()
+            )
+            return diagram
+        finally:
+            n.set_working_variant(original_variant) # Restore original variant
 
     def get_action_variant_diagram(self, action_id, voltage_level_ids=None, depth=0, mode="network"):
         """Generate a NAD showing the network state after applying a remedial action.

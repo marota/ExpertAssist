@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult } from '../types';
+import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction } from '../types';
 import { api } from '../api';
 import { getActionTargetVoltageLevels, getActionTargetLines } from '../utils/svgUtils';
 import CombinedActionsModal from './CombinedActionsModal';
@@ -35,6 +35,7 @@ interface ActionFeedProps {
     onOpenSettings?: (tab?: 'recommender' | 'configurations' | 'paths') => void;
     actionDictFileName?: string | null;
     actionDictStats?: { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null;
+    combinedActions: Record<string, CombinedAction> | null;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -68,6 +69,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     onOpenSettings,
     actionDictFileName,
     actionDictStats,
+    combinedActions,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -325,6 +327,16 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         return sortedActionEntries.filter(([id]) => rejectedActionIds.has(id));
     }, [sortedActionEntries, rejectedActionIds]);
 
+    const activeAnalysisResult = useMemo(() => {
+        if (pendingAnalysisResult) return pendingAnalysisResult;
+        return {
+            actions,
+            combined_actions: combinedActions || {},
+            lines_overloaded: linesOverloaded,
+            action_scores: actionScores,
+        } as AnalysisResult;
+    }, [pendingAnalysisResult, actions, combinedActions, linesOverloaded, actionScores]);
+
     const renderActionList = (entries: [string, ActionDetail][]) => {
         return entries.map(([id, details], index) => {
             if (!details) return null;
@@ -496,21 +508,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                 <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
                 <button
-                    onClick={() => setCombineModalOpen(true)}
-                    style={{
-                        background: '#17a2b8',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        padding: '4px 10px',
-                        cursor: 'pointer',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                    }}
-                >
-                    Combine
-                </button>
-                <button
                     onClick={handleOpenSearch}
                     style={{
                         background: searchOpen ? '#007bff' : '#e9ecef',
@@ -521,9 +518,25 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         cursor: 'pointer',
                         fontSize: '13px',
                         fontWeight: 600,
+                        marginRight: '6px'
                     }}
                 >
                     + Manual Selection
+                </button>
+                <button
+                    onClick={() => setCombineModalOpen(true)}
+                    style={{
+                        background: combineModalOpen ? '#007bff' : '#e9ecef',
+                        color: combineModalOpen ? 'white' : '#333',
+                        border: 'none',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                    }}
+                >
+                    ++ Combine
                 </button>
 
                 {/* Search dropdown */}
@@ -942,7 +955,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             <CombinedActionsModal
                 isOpen={combineModalOpen}
                 onClose={() => setCombineModalOpen(false)}
-                analysisResult={pendingAnalysisResult}
+                analysisResult={activeAnalysisResult}
                 simulatedActions={actions}
                 disconnectedElement={disconnectedElement}
                 onSimulateCombined={onManualActionAdded}

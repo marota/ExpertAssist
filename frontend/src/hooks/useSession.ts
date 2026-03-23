@@ -1,4 +1,4 @@
-import { useState, useCallback, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
+import { useState, useCallback, useMemo, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
 import { api } from '../api';
 import { buildSessionResult } from '../utils/sessionUtils';
 import type { AnalysisResult, CombinedAction, ActionDetail, SessionResult } from '../types';
@@ -291,7 +291,7 @@ export function useSession(): SessionState {
           pdf_path: session.overflow_graph?.pdf_path ?? null,
           pdf_url: session.overflow_graph?.pdf_url ?? null,
           actions: restoredActions,
-          action_scores: a.action_scores,
+          action_scores: a.action_scores as Record<string, { scores: Record<string, number> }>,
           lines_overloaded: session.overloads.resolved_overloads,
           combined_actions: restoredCombinedActions,
           message: a.message,
@@ -326,7 +326,7 @@ export function useSession(): SessionState {
     }
   }, []);
 
-  return {
+  return useMemo(() => ({
     showReloadModal, setShowReloadModal,
     sessionList,
     sessionListLoading,
@@ -334,5 +334,8 @@ export function useSession(): SessionState {
     handleSaveResults,
     handleOpenReloadModal,
     handleRestoreSession,
-  };
+  }), [
+    showReloadModal, sessionList, sessionListLoading, sessionRestoring,
+    handleSaveResults, handleOpenReloadModal, handleRestoreSession,
+  ]);
 }

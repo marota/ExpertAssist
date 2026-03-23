@@ -95,8 +95,24 @@ function boostSvgForLargeGrid(
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     const { id, rawSvg, vlCount } = e.data;
-    const viewBox = parseViewBox(rawSvg);
-    const svg = boostSvgForLargeGrid(rawSvg, viewBox, vlCount);
-    const response: WorkerResponse = { id, svg, viewBox };
-    self.postMessage(response);
+    const start = Date.now();
+    try {
+        const viewBox = parseViewBox(rawSvg);
+        const parseEnd = Date.now();
+        
+        console.log(`[SVG Worker] ID ${id} start: rawSvg length ${rawSvg.length}, vlCount ${vlCount}`);
+        
+        const svg = boostSvgForLargeGrid(rawSvg, viewBox, vlCount);
+        const boostEnd = Date.now();
+        
+        console.log(`[SVG Worker] ID ${id} done: parse ${parseEnd - start}ms, boost ${boostEnd - parseEnd}ms, total ${boostEnd - start}ms`);
+        
+        const response: WorkerResponse = { id, svg, viewBox };
+        self.postMessage(response);
+    } catch (err) {
+        console.error(`[SVG Worker] ID ${id} failed:`, err);
+        // Fallback: send rawSvg if processing fails
+        const viewBox = parseViewBox(rawSvg);
+        self.postMessage({ id, svg: rawSvg, viewBox });
+    }
 };

@@ -40,9 +40,10 @@ function App() {
     buildConfigRequest, applyConfigResponse, createCurrentBackup, setSettingsBackup
   } = settings;
 
+  const [selectedBranch, setSelectedBranch] = useState<string>('');
   const [branches, setBranches] = useState<string[]>([]);
   const [voltageLevels, setVoltageLevels] = useState<string[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState('');
+  const diagrams = useDiagrams(branches, voltageLevels, selectedBranch);
   const [configLoading, setConfigLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -61,14 +62,13 @@ function App() {
     infoMessage, selectedOverloads, monitorDeselected
   } = analysis;
 
-  const diagrams = useDiagrams(branches, voltageLevels);
   const {
     activeTab, setActiveTab, nDiagram, n1Diagram, n1Loading,
     selectedActionId, actionDiagram, actionDiagramLoading, actionViewMode,
     inspectQuery, setInspectQuery, uniqueVoltages, voltageRange, setVoltageRange,
     vlOverlay, handleViewModeChange, handleManualZoomIn, handleManualZoomOut,
     handleManualReset, handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose,
-    zoomToElement, inspectableItems,
+    inspectableItems,
     nSvgContainerRef, n1SvgContainerRef, actionSvgContainerRef
   } = diagrams;
 
@@ -96,14 +96,13 @@ function App() {
     actionsHook.clearActionState();
     diagrams.setSelectedActionId(null);
     diagrams.setActionDiagram(null);
-    diagrams.setN1Diagram(null);
     diagrams.setActiveTab('n');
     diagrams.setVlOverlay(null);
     setError('');
     analysis.setInfoMessage('');
     diagrams.setInspectQuery('');
     diagrams.lastZoomState.current = { query: '', branch: '' };
-  }, [setError]);
+  }, [setError, actionsHook, analysis, diagrams]);
 
   const wrappedRunAnalysis = () =>
     analysis.handleRunAnalysis(selectedBranch, clearContingencyState, actionsHook.setSuggestedByRecommenderIds);
@@ -219,7 +218,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setResult, setError, setShowMonitoringWarning, setSettingsBackup, setIsSettingsOpen]);
+  }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setResult, setError, setShowMonitoringWarning, setSettingsBackup, setIsSettingsOpen, actionsHook, analysis, diagrams]);
 
 
   const handleLoadConfig = useCallback(async () => {
@@ -275,7 +274,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [buildConfigRequest, applyConfigResponse, setResult, setError, setShowMonitoringWarning]);
+  }, [buildConfigRequest, applyConfigResponse, setResult, setError, setShowMonitoringWarning, actionsHook, analysis, diagrams]);
 
   const handleLoadStudyClick = useCallback(() => {
     if (hasAnalysisState()) {
@@ -307,7 +306,7 @@ function App() {
     if (result?.pdf_url && analysisLoading) {
       diagrams.setActiveTab('overflow');
     }
-  }, [result?.pdf_url, analysisLoading]);
+  }, [result?.pdf_url, analysisLoading, diagrams]);
 
 
   useEffect(() => {
@@ -332,6 +331,7 @@ function App() {
 
     diagrams.committedBranchRef.current = selectedBranch;
     clearContingencyState();
+    diagrams.setN1Diagram(null);
 
     const fetchN1 = async () => {
       diagrams.setN1Loading(true);
@@ -348,44 +348,18 @@ function App() {
       }
     };
     fetchN1();
-  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState, clearContingencyState, analysisLoading, n1Diagram, n1Loading, setError]);
+  }, [selectedBranch, branches, voltageLevels.length, hasAnalysisState, clearContingencyState, analysisLoading, n1Diagram, n1Loading, setError, diagrams]);
 
   useEffect(() => {
-    if (n1Diagram?.lines_overloaded) {
-      analysis.setSelectedOverloads(new Set(n1Diagram.lines_overloaded));
-    } else {
-      analysis.setSelectedOverloads(new Set());
-    }
-  }, [n1Diagram, analysisLoading, n1Loading]);
-
-
-  useEffect(() => {
-    if (activeTab === 'overflow') return;
-
-    const queryChanged = inspectQuery !== diagrams.lastZoomState.current.query;
-    const branchChanged = !inspectQuery && selectedBranch !== diagrams.lastZoomState.current.branch;
-
-    if (!queryChanged && !branchChanged) return;
-
-    const targetId = inspectQuery || selectedBranch;
-
-    if (!targetId && queryChanged) {
-      diagrams.lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-      handleManualReset();
+    const nextSet = n1Diagram?.lines_overloaded ? new Set(n1Diagram.lines_overloaded) : new Set<string>();
+    const currentSet = analysis.selectedOverloads;
+    if (nextSet.size === currentSet.size && [...nextSet].every(x => currentSet.has(x))) {
       return;
     }
+    analysis.setSelectedOverloads(nextSet);
+  }, [n1Diagram, analysisLoading, n1Loading, analysis]);
 
-    if (!targetId) return;
 
-    if (branchChanged && activeTab === 'n') return;
-
-    const container = activeTab === 'action' ? diagrams.actionSvgContainerRef.current
-      : activeTab === 'n' ? diagrams.nSvgContainerRef.current : diagrams.n1SvgContainerRef.current;
-    if (!container || !container.querySelector('svg')) return;
-
-    diagrams.lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-    zoomToElement(targetId);
-  }, [activeTab, nDiagram, n1Diagram, actionDiagram, inspectQuery, selectedBranch, zoomToElement, handleManualReset]);
 
 
   const staleHighlights = useRef<Set<TabId>>(new Set());
@@ -439,7 +413,7 @@ function App() {
         }
       }
     }
-  }, [n1Diagram, actionDiagram, result, selectedActionId, actionViewMode, selectedBranch]);
+  }, [n1Diagram, actionDiagram, result, selectedActionId, actionViewMode, selectedBranch, diagrams]);
 
   useEffect(() => {
     const isTabSwitch = prevHighlightTabRef.current !== activeTab;
@@ -826,6 +800,7 @@ function App() {
               selectedActionIds={selectedActionIds}
               rejectedActionIds={rejectedActionIds}
               manuallyAddedIds={manuallyAddedIds}
+              combinedActions={result?.combined_actions ?? null}
               pendingAnalysisResult={pendingAnalysisResult}
               onDisplayPrioritizedActions={wrappedDisplayPrioritized}
               onActionSelect={wrappedActionSelect}

@@ -29,6 +29,7 @@ export const boostSvgForLargeGrid = (svgString: string, viewBox: ViewBox | null,
     // Skip boost entirely for grids with < 500 voltage levels
     if (!vlCount || vlCount < 500) return svgString;
 
+    const start = Date.now();
     const diagramSize = Math.max(viewBox.w, viewBox.h);
     const REFERENCE_SIZE = 1250;
     const BOOST_THRESHOLD = 3;
@@ -36,58 +37,79 @@ export const boostSvgForLargeGrid = (svgString: string, viewBox: ViewBox | null,
     if (ratio <= BOOST_THRESHOLD) return svgString;
 
     const boost = Math.sqrt(ratio / BOOST_THRESHOLD);
-    console.log(`[SVG] vlCount=${vlCount}, viewBox ${diagramSize.toFixed(0)}, ratio ${ratio.toFixed(2)}, boost ${boost.toFixed(2)}`);
+    const boostStr = boost.toFixed(2);
+    
+    try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgString, 'image/svg+xml');
+        const svgEl = doc.documentElement;
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(svgString, 'image/svg+xml');
-    const svgEl = doc.documentElement;
+        if (ratio > 6) {
+            svgEl.setAttribute('data-large-grid', 'true');
+        }
 
-    if (ratio > 6) {
-        svgEl.setAttribute('data-large-grid', 'true');
-    }
-
-    // === 1. Scale CSS values in <style> blocks ===
-    const styles = svgEl.querySelectorAll('style');
-    styles.forEach(style => {
-        let css = style.textContent || '';
-        css = css.replace(/font:\s*25px\s+serif/, `font: ${Math.round(25 * boost)}px serif`);
-        css = css.replace(
-            'padding: 10px; border-radius: 10px;',
-            `padding: ${Math.round(10 * boost)}px; border-radius: ${Math.round(10 * boost)}px;`
-        );
-        css = css.replace(
-            'margin-right: 10px; width: 20px; height: 20px;',
-            `margin-right: ${Math.round(10 * boost)}px; width: ${Math.round(20 * boost)}px; height: ${Math.round(20 * boost)}px;`
-        );
-        style.textContent = css;
-    });
-
-    // === 2. Scale node groups (circles + inner bus sectors/paths) ===
-    const scaledGroups = new Set<Element>();
-    svgEl.querySelectorAll('circle').forEach(circle => {
-        const g = circle.parentElement;
-        if (!g || g.tagName !== 'g' || scaledGroups.has(g)) return;
-        if (g.querySelector('foreignObject')) return;
-        scaledGroups.add(g);
-        const cx = parseFloat(circle.getAttribute('cx') || '0');
-        const cy = parseFloat(circle.getAttribute('cy') || '0');
-        const t = g.getAttribute('transform') || '';
-        g.setAttribute('transform',
-            `${t} translate(${cx},${cy}) scale(${boost.toFixed(2)}) translate(${-cx},${-cy})`);
-    });
-
-    // === 3. Scale edge-info group transforms (flow arrows + values) ===
-    const edgeInfoGroup = svgEl.querySelector('.nad-edge-infos');
-    if (edgeInfoGroup) {
-        edgeInfoGroup.querySelectorAll(':scope > g[transform]').forEach(g => {
-            const t = g.getAttribute('transform');
-            if (t && t.includes('translate(') && !t.includes('scale(')) {
-                g.setAttribute('transform', t + ` scale(${boost.toFixed(2)})`);
-            }
+        // === 1. Scale CSS values in <style> blocks ===
+        const styles = svgEl.querySelectorAll('style');
+        styles.forEach(style => {
+            let css = style.textContent || '';
+            css = css.replace(/font:\s*25px\s+serif/, `font: ${Math.round(25 * boost)}px serif`);
+            css = css.replace(
+                'padding: 10px; border-radius: 10px;',
+                `padding: ${Math.round(10 * boost)}px; border-radius: ${Math.round(10 * boost)}px;`
+            );
+            css = css.replace(
+                'margin-right: 10px; width: 20px; height: 20px;',
+                `margin-right: ${Math.round(10 * boost)}px; width: ${Math.round(20 * boost)}px; height: ${Math.round(20 * boost)}px;`
+            );
+            style.textContent = css;
         });
-    }
 
-    return new XMLSerializer().serializeToString(svgEl);
+        // === 2. Scale node groups (circles + inner bus sectors/paths) ===
+        // OPTIMIZATION: Use a single pass and check parent type once.
+        const circles = svgEl.querySelectorAll('circle');
+        const scaledGroups = new Set<Element>();
+        
+        for (let i = 0; i < circles.length; i++) {
+            const circle = circles[i];
+            const g = circle.parentElement;
+            if (!g || g.tagName !== 'g' || scaledGroups.has(g)) continue;
+            
+            // Skip foreignObject as it usually contains text that shouldn't be scaled this way
+            if (g.children.length > 5 && g.querySelector('foreignObject')) continue;
+            
+            scaledGroups.add(g);
+            const cx = circle.getAttribute('cx') || '0';
+            const cy = circle.getAttribute('cy') || '0';
+            const t = g.getAttribute('transform') || '';
+            g.setAttribute('transform', `${t} translate(${cx},${cy}) scale(${boostStr}) translate(${-parseFloat(cx)},${-parseFloat(cy)})`);
+            
+            // Performance guard: stop if taking too long (e.g. 2s for boosting stage)
+            if (i % 100 === 0 && Date.now() - start > 2000) {
+                console.warn('[SVG] Boosting taking too long, aborting optimization pass.');
+                return svgString;
+            }
+        }
+
+        // === 3. Scale edge-info group transforms (flow arrows + values) ===
+        const edgeInfoGroup = svgEl.querySelector('.nad-edge-infos');
+        if (edgeInfoGroup) {
+            const infoGs = edgeInfoGroup.querySelectorAll(':scope > g[transform]');
+            for (let i = 0; i < infoGs.length; i++) {
+                const g = infoGs[i];
+                const t = g.getAttribute('transform');
+                if (t && t.includes('translate(') && !t.includes('scale(')) {
+                    g.setAttribute('transform', t + ` scale(${boostStr})`);
+                }
+            }
+        }
+
+        const result = new XMLSerializer().serializeToString(svgEl);
+        console.log(`[SVG] Boosted vlCount=${vlCount}, ratio ${ratio.toFixed(2)}, boost ${boostStr} in ${Date.now() - start}ms`);
+        return result;
+    } catch (err) {
+        console.error('[SVG] Failed to boost SVG:', err);
+        return svgString;
+    }
 };
 
 /**

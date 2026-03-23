@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import type { SettingsBackup } from '../types';
 
@@ -84,13 +84,11 @@ export interface SettingsState {
 }
 
 export function useSettings(): SettingsState {
-  // Paths
-  const [networkPath, setNetworkPath] = useState('');
-  const [actionPath, setActionPath] = useState('');
-  const [layoutPath, setLayoutPath] = useState('');
-  const [outputFolderPath, setOutputFolderPath] = useState('');
+  const [networkPath, setNetworkPath] = useState(() => localStorage.getItem('networkPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
+  const [actionPath, setActionPath] = useState(() => localStorage.getItem('actionPath') || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
+  const [layoutPath, setLayoutPath] = useState(() => localStorage.getItem('layoutPath') || '');
+  const [outputFolderPath, setOutputFolderPath] = useState(() => localStorage.getItem('outputFolderPath') || '');
 
-  // Recommender
   const [minLineReconnections, setMinLineReconnections] = useState(2.0);
   const [minCloseCoupling, setMinCloseCoupling] = useState(3.0);
   const [minOpenCoupling, setMinOpenCoupling] = useState(2.0);
@@ -99,7 +97,6 @@ export function useSettings(): SettingsState {
   const [minPst, setMinPst] = useState(1.0);
   const [ignoreReconnections, setIgnoreReconnections] = useState(false);
 
-  // Monitoring
   const [linesMonitoringPath, setLinesMonitoringPath] = useState('');
   const [monitoredLinesCount, setMonitoredLinesCount] = useState(0);
   const [totalLinesCount, setTotalLinesCount] = useState(0);
@@ -108,31 +105,14 @@ export function useSettings(): SettingsState {
   const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState(0.02);
   const [pypowsyblFastMode, setPypowsyblFastMode] = useState(true);
 
-  // Action dict info
   const [actionDictFileName, setActionDictFileName] = useState<string | null>(null);
   const [actionDictStats, setActionDictStats] = useState<{ reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null>(null);
 
-  // Settings modal
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'recommender' | 'configurations' | 'paths'>('paths');
   const [settingsBackup, setSettingsBackup] = useState<SettingsBackup | null>(null);
 
-  // Load paths from localStorage on initial mount
-  useEffect(() => {
-    const savedNetwork = localStorage.getItem('networkPath');
-    const savedAction = localStorage.getItem('actionPath');
-    const savedLayout = localStorage.getItem('layoutPath');
-    const savedOutput = localStorage.getItem('outputFolderPath');
 
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setNetworkPath(savedNetwork || '/home/marotant/dev/Expert_op4grid_recommender/data/bare_env_20240828T0100Z_dijon_only');
-    setActionPath(savedAction || '/home/marotant/dev/Expert_op4grid_recommender/data/action_space/reduced_model_actions_20240828T0100Z_new_dijon.json');
-    setLayoutPath(savedLayout || '');
-    setOutputFolderPath(savedOutput || '');
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, []);
-
-  // Persist paths to localStorage
   useEffect(() => {
     localStorage.setItem('networkPath', networkPath);
     localStorage.setItem('actionPath', actionPath);
@@ -221,7 +201,7 @@ export function useSettings(): SettingsState {
     if (configRes?.action_dict_stats) setActionDictStats(configRes.action_dict_stats as { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number });
   }, []);
 
-  return {
+  return useMemo(() => ({
     networkPath, setNetworkPath,
     actionPath, setActionPath,
     layoutPath, setLayoutPath,
@@ -251,5 +231,13 @@ export function useSettings(): SettingsState {
     buildConfigRequest,
     applyConfigResponse,
     createCurrentBackup,
-  };
+  }), [
+    networkPath, actionPath, layoutPath, outputFolderPath,
+    minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections,
+    nPrioritizedActions, minPst, ignoreReconnections,
+    linesMonitoringPath, monitoredLinesCount, totalLinesCount, showMonitoringWarning, monitoringFactor, preExistingOverloadThreshold, pypowsyblFastMode,
+    actionDictFileName, actionDictStats,
+    isSettingsOpen, settingsTab, settingsBackup,
+    pickSettingsPath, handleOpenSettings, handleCloseSettings, buildConfigRequest, applyConfigResponse, createCurrentBackup
+  ]);
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, type RefObject } from 'react';
 import type { ViewBox } from '../types';
 
 /**
@@ -59,7 +59,7 @@ export const usePanZoom = (
     };
 
     // Direct DOM update — no React involved
-    const applyViewBox = (vb: ViewBox | null) => {
+    const applyViewBox = useCallback((vb: ViewBox | null) => {
         const svg = svgElRef.current;
         if (svg && vb) {
             svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
@@ -88,7 +88,7 @@ export const usePanZoom = (
                 }
             }
         }
-    };
+    }, [svgRef]);
 
     // Flush ref -> React state for downstream consumers
     const commitViewBox = () => {
@@ -277,11 +277,18 @@ export const usePanZoom = (
     }, [active, initialViewBox]);
 
     // Public API: updates ref + DOM + React state immediately
-    const setViewBoxPublic = (vb: ViewBox) => {
+    const setViewBoxPublic = useCallback((vb: ViewBox) => {
         viewBoxRef.current = vb;
         applyViewBox(vb);
-        setViewBox(vb);
-    };
+        setViewBox(prev => {
+            if (prev && vb &&
+                prev.x === vb.x && prev.y === vb.y &&
+                prev.w === vb.w && prev.h === vb.h) {
+                return prev;
+            }
+            return vb;
+        });
+    }, [applyViewBox]);
 
-    return { viewBox, setViewBox: setViewBoxPublic };
+    return useMemo(() => ({ viewBox, setViewBox: setViewBoxPublic }), [viewBox, setViewBoxPublic]);
 };

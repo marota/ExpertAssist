@@ -59,6 +59,7 @@ export const api = {
         disconnected_mw?: number;
         non_convergence: string | null;
         lines_overloaded: string[];
+        action_topology?: import('./types').ActionTopology;
     }> => {
         const response = await axios.post(
             `${API_BASE_URL}/api/simulate-manual-action`,
