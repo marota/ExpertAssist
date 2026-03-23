@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import CombinedActionsModal from './CombinedActionsModal';
 import { api } from '../api';
@@ -38,6 +38,15 @@ describe('CombinedActionsModal', () => {
                 rho_after: [0.72]
             }
         },
+        action_scores: {
+            'disco': {
+                scores: {
+                    'act1': 10,
+                    'act2': 20,
+                    'act3': 15
+                }
+            }
+        },
         lines_overloaded: [],
         message: 'done',
         dc_fallback: false,
@@ -55,6 +64,10 @@ describe('CombinedActionsModal', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        cleanup();
     });
 
     const getExploreTab = () => screen.getAllByText('Explore Pairs')[0];
@@ -199,14 +212,14 @@ describe('CombinedActionsModal', () => {
 
         fireEvent.click(getExploreTab());
 
-        expect(screen.getByText('Action 1')).toBeInTheDocument();
-        expect(screen.getByText('Action 2')).toBeInTheDocument();
+        expect(screen.getByText('act1')).toBeInTheDocument();
+        expect(screen.getByText('act2')).toBeInTheDocument();
 
         fireEvent.click(screen.getByText('act1'));
         fireEvent.click(screen.getByText('act2'));
 
         await waitFor(() => {
-            expect(screen.getByText('Combined action result')).toBeInTheDocument();
+            expect(screen.getByText('Explore Pairs Comparison')).toBeInTheDocument();
             expect(screen.getByText('75.0%')).toBeInTheDocument();
         });
 
@@ -222,7 +235,7 @@ describe('CombinedActionsModal', () => {
         fireEvent.click(screen.getByText('act1'));
 
         await waitFor(() => {
-            expect(screen.getByText('Combined action result')).toBeInTheDocument();
+            expect(screen.getByText('Explore Pairs Comparison')).toBeInTheDocument();
             expect(screen.getByText('75.0%')).toBeInTheDocument();
         });
         expect(api.computeSuperposition).not.toHaveBeenCalled();
@@ -303,7 +316,7 @@ describe('CombinedActionsModal', () => {
         fireEvent.click(simButton);
 
         await waitFor(() => {
-            const simulatingButton = screen.getAllByRole('button').find(b => b.textContent === 'Simulating...');
+            const simulatingButton = screen.getAllByRole('button').find(b => b.textContent?.includes('Simulating...'));
             expect(simulatingButton).toBeInTheDocument();
             expect(simulatingButton).toBeDisabled();
         });
@@ -311,7 +324,7 @@ describe('CombinedActionsModal', () => {
         resolveSim!({});
     });
 
-    it('displays suspect indicator (⚠️) for islanded estimations', () => {
+    it('displays suspect indicator (⚠️) for islanded estimations', async () => {
         const resultWithIslanded: AnalysisResult = {
             ...mockAnalysisResult,
             combined_actions: {
@@ -331,6 +344,213 @@ describe('CombinedActionsModal', () => {
         fireEvent.click(screen.getByText('act1'));
         fireEvent.click(screen.getByText('act2'));
 
-        expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText(/⚠️/)).toBeInTheDocument();
+        });
+    });
+
+    it('filters actions by category in explore tab', async () => {
+        const resultWithTypes: AnalysisResult = {
+            ...mockAnalysisResult,
+            actions: {
+                ...mockAnalysisResult.actions,
+                'disco1': { description_unitaire: 'Disco 1', max_rho: 0.8, rho_before: [0.8], rho_after: [0.7], max_rho_line: 'L1', is_rho_reduction: true, action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} } },
+                'reco1': { description_unitaire: 'Reco 1', max_rho: 0.9, rho_before: [0.9], rho_after: [0.8], max_rho_line: 'L2', is_rho_reduction: true, action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} } },
+            },
+            action_scores: {
+                'disco': { scores: { 'disco1': 10 } },
+                'reco': { scores: { 'reco1': 20 } }
+            }
+        };
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes as AnalysisResult} />);
+
+        fireEvent.click(getExploreTab());
+
+        // Initially both should show
+        expect(screen.getByText('disco1')).toBeInTheDocument();
+        expect(screen.getByText('reco1')).toBeInTheDocument();
+
+        // Filter for disconnections
+        fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
+        expect(screen.getByText('disco1')).toBeInTheDocument();
+        expect(screen.queryByText('reco1')).not.toBeInTheDocument();
+
+        // Filter for reconnections
+        fireEvent.click(screen.getByRole('button', { name: 'RECO' }));
+        expect(screen.queryByText('disco1')).not.toBeInTheDocument();
+        expect(screen.getByText('reco1')).toBeInTheDocument();
+    });
+
+    it('groups actions by type in explore tab table', async () => {
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+
+        // Header should be there (uppercase match, might be multiple if it's also a filter)
+        expect(screen.getAllByText('DISCO').length).toBeGreaterThan(0);
+        const rows = screen.getAllByRole('row');
+        // Headers + action rows
+        expect(rows.length).toBeGreaterThan(1);
+    });
+
+    it('falls back to max_rho if estimated_max_rho is missing', () => {
+        const resultWithMissingEst: AnalysisResult = {
+            ...mockAnalysisResult,
+            combined_actions: {
+                'act1+act2': {
+                    ...mockAnalysisResult.combined_actions!['act1+act2'],
+                    estimated_max_rho: undefined,
+                    max_rho: 0.99
+                }
+            }
+        };
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithMissingEst} />);
+        
+        // Should show 99.0% (max_rho) as fallback for estimation column
+        expect(screen.getByText('99.0%')).toBeInTheDocument();
+    });
+
+    it('handles superposition API error gracefully', async () => {
+        vi.mocked(api.computeSuperposition).mockResolvedValueOnce({ error: 'Backend exploded' } as any);
+        const emptyResult = { ...mockAnalysisResult, combined_actions: {} };
+        
+        render(<CombinedActionsModal {...defaultProps} analysisResult={emptyResult as AnalysisResult} />);
+        fireEvent.click(getExploreTab());
+        fireEvent.click(screen.getByText('act1'));
+        fireEvent.click(screen.getByText('act3'));
+
+        await waitFor(() => {
+            expect(screen.getByText(/Backend exploded/i)).toBeInTheDocument();
+        });
+    });
+
+    it('handles simulation API failure gracefully', async () => {
+        vi.mocked(api.simulateManualAction).mockRejectedValueOnce(new Error('Simulation timed out'));
+        
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+        fireEvent.click(screen.getByText('act1'));
+        fireEvent.click(screen.getByText('act2'));
+
+        const simButton = await screen.findByText('Simulate Combined');
+        fireEvent.click(simButton);
+
+        await waitFor(() => {
+            expect(screen.getByText(/Simulation timed out/)).toBeInTheDocument();
+        });
+    });
+
+    it('sorts computed pairs by estimated max rho (lowest first)', () => {
+        const resultUnsorted: AnalysisResult = {
+            ...mockAnalysisResult,
+            combined_actions: {
+                'p_worst': { ...mockAnalysisResult.combined_actions!['act1+act2'], estimated_max_rho: 0.95 },
+                'p_best': { ...mockAnalysisResult.combined_actions!['act1+act2'], estimated_max_rho: 0.65 },
+            }
+        };
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultUnsorted} />);
+        
+        const rows = screen.getAllByRole('row');
+        // Row 1 is header, Row 2 should be 'p_best', Row 3 should be 'p_worst'
+        expect(within(rows[1]).getByText('65.0%')).toBeInTheDocument();
+        expect(within(rows[2]).getByText('95.0%')).toBeInTheDocument();
+    });
+
+    it('removes individual action from selection chips', async () => {
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+        const act1Row = screen.getByText('act1').closest('tr');
+        const act2Row = screen.getByText('act2').closest('tr');
+        fireEvent.click(act1Row!);
+        fireEvent.click(act2Row!);
+
+        // Chips should be there in the "Selected Actions" area
+        const chip1 = screen.getByTestId('chip-act1');
+        const removeBtn1 = within(chip1).getByText('×');
+        fireEvent.click(removeBtn1);
+
+        expect(screen.queryByTestId('chip-act1')).not.toBeInTheDocument();
+        expect(screen.getByTestId('chip-act2')).toBeInTheDocument();
+    });
+
+    it('clears all selected actions via Clear All button', async () => {
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+        const act1Row = screen.getByText('act1').closest('tr');
+        const act2Row = screen.getByText('act2').closest('tr');
+        fireEvent.click(act1Row!);
+        fireEvent.click(act2Row!);
+
+        fireEvent.click(screen.getByText('Clear All'));
+        expect(screen.queryByTestId('chip-act1')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('chip-act2')).not.toBeInTheDocument();
+    });
+
+    it('simulates individual action from Explore tab table', async () => {
+        vi.mocked(api.simulateManualAction).mockResolvedValueOnce({
+            action_id: 'act1',
+            description_unitaire: 'Description',
+            rho_before: [0.8],
+            rho_after: [0.75],
+            max_rho: 0.75,
+            max_rho_line: 'L1',
+            is_rho_reduction: true,
+            non_convergence: null,
+            lines_overloaded: []
+        });
+
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+
+        // Find Re-run button in act1 row (since it's pre-simulated in mockAnalysisResult)
+        const row = screen.getByText('act1').closest('tr');
+        const simButton = within(row!).getByText('Re-run');
+        fireEvent.click(simButton);
+
+        await waitFor(() => {
+            expect(within(row!).getByText('75.0%')).toBeInTheDocument();
+            expect(within(row!).getByText('Re-run')).toBeInTheDocument();
+        });
+    });
+
+    it('displays scores with two decimal places in Explore tab', () => {
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+        
+        // act1 has score 10 in mockAnalysisResult
+        // In the new 2nd decimal rounding, it should show '10.00'
+        expect(screen.getByText('10.00')).toBeInTheDocument();
+    });
+
+    it('renders comparison card with side-by-side estimated and actual effects', async () => {
+        vi.mocked(api.simulateManualAction).mockResolvedValueOnce({
+            action_id: 'act1+act2',
+            description_unitaire: 'Combined',
+            rho_before: [0.75],
+            rho_after: [0.73],
+            max_rho: 0.73,
+            max_rho_line: 'L_RES',
+            is_rho_reduction: true,
+            non_convergence: null,
+            lines_overloaded: []
+        });
+
+        render(<CombinedActionsModal {...defaultProps} />);
+        fireEvent.click(getExploreTab());
+        const act1Row = screen.getByText('act1').closest('tr');
+        const act2Row = screen.getByText('act2').closest('tr');
+        fireEvent.click(act1Row!);
+        fireEvent.click(act2Row!);
+
+        // Card should be visible
+        const card = screen.getByTestId('comparison-card');
+        expect(within(card).getByText(/Estimated Effect/i)).toBeInTheDocument();
+        
+        const simButton = within(card).getByText('Simulate Combined');
+        fireEvent.click(simButton);
+
+        // Simulation result should appear
+        expect(await within(card).findByText(/Simulation Result/i)).toBeInTheDocument();
+        // Use a more flexible matcher for the percentage to avoid whitespace issues
+        expect(await within(card).findByText((content) => content.includes('73.0%'))).toBeInTheDocument();
     });
 });
