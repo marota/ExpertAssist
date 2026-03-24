@@ -526,9 +526,30 @@ describe('getActionTargetVoltageLevels', () => {
         expect(result).toEqual(['MICQ P7']);
     });
 
-    it('recognizes French "couplage" keyword for coupling detection', () => {
+    it('recognizes "coupl" substring (e.g. in COUCH6COUPL) for coupling detection', () => {
         const detail: ActionDetail = {
-            description_unitaire: "Ouverture couplage DJ_OC",
+            description_unitaire: "Ouverture OC 'COUCH6COUPL DJ_OC' dans le poste 'COUCHP6'",
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                lines_ex_bus: { LINE1: -1 },
+                lines_or_bus: {},
+                gens_bus: {},
+                loads_bus: {},
+            }
+        } as unknown as ActionDetail;
+
+        const result = getActionTargetLines(detail, 'f344..._COUCHP6', makeEdgeMap('LINE1'));
+        // Should suppress LINE1 because it's a coupling action (detected "COUPL")
+        expect(result).not.toContain('LINE1');
+    });
+
+    it('recognizes French "noeud" keyword for coupling detection', () => {
+        const detail: ActionDetail = {
+            description_unitaire: "Reconfiguration au noeud",
             rho_before: null,
             rho_after: null,
             max_rho: null,
@@ -543,7 +564,6 @@ describe('getActionTargetVoltageLevels', () => {
         } as unknown as ActionDetail;
 
         const result = getActionTargetLines(detail, 'some_uuid', makeEdgeMap('LINE1'));
-        // Should suppress LINE1 because it's a coupling action
         expect(result).not.toContain('LINE1');
     });
 });

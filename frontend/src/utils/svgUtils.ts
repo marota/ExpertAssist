@@ -185,7 +185,7 @@ export const applyOverloadedHighlights = (
  */
 export const isCouplingAction = (actionId: string | null, description?: string): boolean => {
     const q = ((actionId || '') + ' ' + (description || '')).toLowerCase();
-    return q.includes('coupling') || q.includes('busbar') || q.includes('couplage') || q.includes('noeud');
+    return q.includes('coupling') || q.includes('busbar') || q.includes('coupl') || q.includes('noeud') || q.includes('node');
 };
 
 /**
