@@ -418,6 +418,12 @@ export const applyContingencyHighlight = (
 ) => {
     if (!container || !metaIndex || !disconnectedElement) return;
 
+    // Exhaustive cleanup of existing contingency highlights
+    container.querySelectorAll('.nad-contingency-highlight').forEach(el => el.remove());
+    container.querySelectorAll('.nad-highlight-clone').forEach(el => {
+        if (el.classList.contains('nad-contingency-highlight')) el.remove();
+    });
+
     const { edgesByEquipmentId } = metaIndex;
     const edge = edgesByEquipmentId.get(disconnectedElement);
     if (!edge || !edge.svgId) return;
@@ -446,9 +452,7 @@ export const applyContingencyHighlight = (
 
     try {
         const elCTM = (el as SVGGraphicsElement).getScreenCTM();
-        // Cache bgCTM on the DOM element — constant for a given SVG
-        const bgSvgEl = backgroundLayer as unknown as SVGGraphicsElement & { _cachedScreenCTM?: DOMMatrix | null };
-        const bgCTM = bgSvgEl._cachedScreenCTM || (bgSvgEl._cachedScreenCTM = bgSvgEl.getScreenCTM());
+        const bgCTM = (backgroundLayer as unknown as SVGGraphicsElement).getScreenCTM();
         if (elCTM && bgCTM) {
             const relativeCTM = bgCTM.inverse().multiply(elCTM);
             const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;

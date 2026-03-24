@@ -503,7 +503,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     };
 
     return (
-        <div style={{ padding: '15px', height: '100%', overflowY: 'auto' }}>
+        <div style={{ padding: '15px' }}>
             {/* Header with search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', position: 'relative' }}>
                 <h3 style={{ margin: 0, flex: 1 }}>Simulated Actions</h3>
