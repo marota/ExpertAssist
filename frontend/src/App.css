@@ -132,14 +132,6 @@ circle.nad-highlight {
     display: none !important;
 }
 
-/* Hide text on large grids at full zoom — revealed by removing this class.
-   display:none removes elements from layout entirely, so the browser
-   skips layout/paint for thousands of text nodes at initial load. */
-.svg-container.text-hidden foreignObject,
-.svg-container.text-hidden .nad-edge-infos,
-.svg-container.text-hidden .nad-text-edges {
-    display: none !important;
-}
 
 /* Suppress expensive drop-shadow filters during active interaction.
    The compositing cost of multiple drop-shadows on cloned highlight

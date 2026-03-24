@@ -74,13 +74,25 @@ describe('boostSvgForLargeGrid', () => {
         expect(result).toBe(svg);
     });
 
-    it('boosts SVG for large grids with high ratio', () => {
-        // ratio = 10000/1250 = 8 > 3, should boost
-        const svg = '<svg viewBox="0 0 10000 10000"><style>font: 25px serif</style><circle cx="100" cy="100" r="5"/></svg>';
+    it('preserves foreignObject content and namespaces', () => {
+        const svg = `
+            <svg viewBox="0 0 10000 10000">
+                <g>
+                    <circle cx="100" cy="100" r="5"/>
+                    <foreignObject x="90" y="90" width="20" height="20">
+                        <div xmlns="http://www.w3.org/1999/xhtml" class="label">Test Label</div>
+                    </foreignObject>
+                </g>
+            </svg>
+        `.trim();
         const vb = { x: 0, y: 0, w: 10000, h: 10000 };
         const result = boostSvgForLargeGrid(svg, vb, 600);
-        expect(result).not.toBe(svg);
-        expect(result).toContain('data-large-grid');
+        
+        expect(result).toContain('foreignObject');
+        expect(result).toContain('http://www.w3.org/1999/xhtml');
+        expect(result).toContain('Test Label');
+        // Ensure it doesn't get double-encoded or corrupted
+        expect(result).not.toContain('&lt;div');
     });
 });
 

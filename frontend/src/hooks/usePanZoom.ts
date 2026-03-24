@@ -12,7 +12,8 @@ import type { ViewBox } from '../types';
  * - getScreenCTM() cached and reused within a zoom burst
  * - Pointer-events disabled on SVG children during interaction
  *   (eliminates expensive hit-testing on thousands of elements)
- * - Text-visibility toggle uses hysteresis to avoid flicker
+ * - Pointer-events disabled on SVG children during interaction
+ *   (eliminates expensive hit-testing on thousands of elements)
  */
 export const usePanZoom = (
     svgRef: RefObject<HTMLDivElement | null>,
@@ -31,8 +32,6 @@ export const usePanZoom = (
     const svgElRef = useRef<SVGSVGElement | null>(null);
     const activeRef = useRef(active);
     activeRef.current = active;
-    // Original viewBox max dimension — used for relative text visibility threshold
-    const initialMaxDimRef = useRef<number | null>(null);
 
     // Cached getScreenCTM() — invalidated after each rAF viewBox apply
     const ctmCacheRef = useRef<DOMMatrix | null>(null);
@@ -42,13 +41,6 @@ export const usePanZoom = (
     const pendingWheelScale = useRef(1);
     const pendingWheelCursor = useRef({ x: 0, y: 0 });
 
-    // Track whether text is currently hidden (for hysteresis)
-    const textHiddenRef = useRef(true);
-
-    // Text visibility thresholds (hysteresis to prevent flicker near boundary).
-    // Hide when zoomed out past 55%, show when zoomed in past 45%.
-    const TEXT_HIDE_RATIO = 0.55;
-    const TEXT_SHOW_RATIO = 0.45;
 
     // Toggle interaction class on container to disable pointer-events on SVG children
     const setInteracting = (interacting: boolean) => {
@@ -67,27 +59,6 @@ export const usePanZoom = (
         // Invalidate CTM cache after viewBox change
         ctmCacheRef.current = null;
 
-        // Toggle text visibility with hysteresis (large grids only).
-        const container = svgRef.current;
-        if (container && vb && svg && svg.hasAttribute('data-large-grid')) {
-            const origMax = initialMaxDimRef.current;
-            if (origMax) {
-                const ratio = Math.max(vb.w, vb.h) / origMax;
-                if (textHiddenRef.current && ratio < TEXT_SHOW_RATIO) {
-                    textHiddenRef.current = false;
-                    container.classList.remove('text-hidden');
-                } else if (!textHiddenRef.current && ratio >= TEXT_HIDE_RATIO) {
-                    textHiddenRef.current = true;
-                    container.classList.add('text-hidden');
-                }
-            } else {
-                // No origMax yet — default to hidden
-                if (!textHiddenRef.current) {
-                    textHiddenRef.current = true;
-                    container.classList.add('text-hidden');
-                }
-            }
-        }
     }, [svgRef]);
 
     // Flush ref -> React state for downstream consumers
@@ -105,14 +76,6 @@ export const usePanZoom = (
     useLayoutEffect(() => {
         if (svgRef.current) {
             svgElRef.current = svgRef.current.querySelector('svg');
-            if (svgElRef.current && svgElRef.current.hasAttribute('data-large-grid')) {
-                const vb = viewBoxRef.current;
-                const origMax = initialMaxDimRef.current;
-                if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= TEXT_SHOW_RATIO) {
-                    textHiddenRef.current = true;
-                    svgRef.current.classList.add('text-hidden');
-                }
-            }
         } else {
             svgElRef.current = null;
         }
@@ -123,8 +86,6 @@ export const usePanZoom = (
     useEffect(() => {
         if (initialViewBox) {
             viewBoxRef.current = initialViewBox;
-            initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
-            textHiddenRef.current = true; // reset to hidden on new diagram
             applyViewBox(initialViewBox);
             setViewBox(initialViewBox);
         }

@@ -58,15 +58,6 @@ describe('Critical CSS: CSS containment', () => {
     });
 });
 
-describe('Critical CSS: text-hidden class', () => {
-    it('App.css hides foreignObject elements when text-hidden is active', () => {
-        expect(APP_CSS).toMatch(/\.svg-container\.text-hidden\s+foreignObject[\s\S]*?display:\s*none/);
-    });
-
-    it('standalone_interface.html hides foreignObject elements when text-hidden is active', () => {
-        expect(STANDALONE_CSS).toMatch(/\.svg-container\.text-hidden\s+foreignObject[\s\S]*?display:\s*none/);
-    });
-});
 
 describe('Critical CSS: svg-interacting pointer-events + filter suppression', () => {
     it('App.css disables pointer-events on SVG children during interaction', () => {
@@ -154,5 +145,25 @@ describe('Critical rendering: boost cache', () => {
     it('standalone caches boosted SVG to avoid redundant DOMParser work', () => {
         expect(STANDALONE_HTML).toContain('_boostCache');
         expect(STANDALONE_HTML).toContain('BOOST_CACHE_MAX');
+    });
+});
+describe('Critical CSS: node/label visibility (regression guard)', () => {
+    it('App.css does NOT contain .text-hidden rules that hide content', () => {
+        expect(APP_CSS).not.toContain('text-hidden');
+    });
+
+    it('App.css does NOT hide foreignObject or text elements (except clones)', () => {
+        // We allow display:none for nad-highlight-clone to avoid messy overlays,
+        // but it should NOT be applied globally or to .svg-container children by default.
+        const globalHide = APP_CSS.match(/(?:^|[^.])(foreignObject|text)\s*\{[^}]*display:\s*none/);
+        if (globalHide) {
+           // If we find a match, ensure it's scoped to .nad-action-target or similar
+           expect(APP_CSS).toMatch(/\.nad-action-target\s+(text|foreignObject)/);
+        }
+    });
+
+    it('standalone_interface.html does NOT contain .text-hidden or data-large-grid logic', () => {
+        expect(STANDALONE_CSS).not.toContain('text-hidden');
+        expect(STANDALONE_HTML).not.toContain('data-large-grid');
     });
 });

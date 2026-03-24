@@ -5,7 +5,7 @@ import {
   buildMetadataIndex,
   getIdMap, invalidateIdMapCache,
 } from '../utils/svgUtils';
-import { processSvgAsync } from '../utils/svgWorkerClient';
+import { processSvg } from '../utils/svgUtils';
 import type { DiagramData, ViewBox, MetadataIndex, TabId, VlOverlay, SldTab, FlowDelta, AssetDelta, AnalysisResult, ActionDetail } from '../types';
 
 export interface DiagramsState {
@@ -182,7 +182,7 @@ export function useDiagrams(
   const fetchBaseDiagram = useCallback(async (vlCount: number) => {
     try {
       const res = await api.getNetworkDiagram();
-      const { svg, viewBox } = await processSvgAsync(res.svg, vlCount || 0);
+      const { svg, viewBox } = processSvg(res.svg, vlCount || 0);
       if (viewBox) setOriginalViewBox(viewBox);
       setNDiagram({ ...res, svg, originalViewBox: viewBox });
     } catch (err) {
@@ -219,7 +219,7 @@ export function useDiagrams(
     setActiveTab('action');
     try {
       const res = await api.getActionVariantDiagram(actionId);
-      const { svg, viewBox } = await processSvgAsync(res.svg, voltageLevelsLength);
+      const { svg, viewBox } = processSvg(res.svg, voltageLevelsLength);
       setActionDiagram({ ...res, svg, originalViewBox: viewBox });
     } catch {
       if (selectedBranch) {
@@ -264,7 +264,7 @@ export function useDiagrams(
             };
           });
           const res = await api.getActionVariantDiagram(actionId);
-          const { svg, viewBox } = await processSvgAsync(res.svg, voltageLevelsLength);
+          const { svg, viewBox } = processSvg(res.svg, voltageLevelsLength);
           setActionDiagram({ ...res, svg, originalViewBox: viewBox });
         } catch (simErr) {
           console.error('Failed to simulate and fetch diagram for', actionId, simErr);

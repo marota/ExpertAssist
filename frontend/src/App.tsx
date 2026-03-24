@@ -4,8 +4,7 @@ import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
 import OverloadPanel from './components/OverloadPanel';
 import { api } from './api';
-import { applyOverloadedHighlights, applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight } from './utils/svgUtils';
-import { processSvgAsync } from './utils/svgWorkerClient';
+import { applyOverloadedHighlights, applyDeltaVisuals, applyActionTargetHighlights, applyContingencyHighlight, processSvg } from './utils/svgUtils';
 import type { ActionDetail, TabId } from './types';
 import { useSettings } from './hooks/useSettings';
 import { useActions } from './hooks/useActions';
@@ -339,7 +338,7 @@ function App() {
       diagrams.setActiveTab('n-1');
       try {
         const res = await api.getN1Diagram(selectedBranch);
-        const { svg, viewBox } = await processSvgAsync(res.svg, voltageLevels.length);
+        const { svg, viewBox } = processSvg(res.svg, voltageLevels.length);
         diagrams.setN1Diagram({ ...res, svg, originalViewBox: viewBox });
       } catch (err) {
         console.error('Failed to fetch N-1 diagram', err);

@@ -223,14 +223,6 @@
             display: none !important;
         }
 
-        /* Hide text on large grids at full zoom — revealed by removing this class.
-           display:none removes elements from layout entirely, so the browser
-           skips layout/paint for thousands of text nodes at initial load. */
-        .svg-container.text-hidden foreignObject,
-        .svg-container.text-hidden .nad-edge-infos,
-        .svg-container.text-hidden .nad-text-edges {
-            display: none !important;
-        }
 
         /* ===== Delta flow visualization ===== */
 
@@ -568,24 +560,12 @@
             const svgElRef = useRef(null);
             const activeRef = useRef(active);
             activeRef.current = active;
-            // Original viewBox max dimension — used for relative text visibility threshold
-            const initialMaxDimRef = useRef(null);
 
             // Direct DOM update — no React involved
             const applyViewBox = (vb) => {
                 const svg = svgElRef.current;
                 if (svg && vb) {
                     svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
-                }
-                // Toggle text visibility based on zoom level (large grids only).
-                // Show text when zoomed in to < 50% of original viewBox (2x+ zoom).
-                // This scales with grid size: zoomToElement typically zooms to
-                // 10-30% of the grid, so text always appears on element focus.
-                const container = svgRef.current;
-                if (container && vb && svg && svg.hasAttribute('data-large-grid')) {
-                    const origMax = initialMaxDimRef.current;
-                    const shouldHide = !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5;
-                    container.classList.toggle('text-hidden', shouldHide);
                 }
             };
 
@@ -604,13 +584,7 @@
             useLayoutEffect(() => {
                 if (svgRef.current) {
                     svgElRef.current = svgRef.current.querySelector('svg');
-                    if (svgElRef.current && svgElRef.current.hasAttribute('data-large-grid')) {
-                        const vb = viewBoxRef.current;
-                        const origMax = initialMaxDimRef.current;
-                        if (!vb || !origMax || Math.max(vb.w, vb.h) / origMax >= 0.5) {
-                            svgRef.current.classList.add('text-hidden');
-                        }
-                    }
+                    svgElRef.current = svgRef.current.querySelector('svg');
                 } else {
                     svgElRef.current = null;
                 }
@@ -620,7 +594,6 @@
             useEffect(() => {
                 if (initialViewBox) {
                     viewBoxRef.current = initialViewBox;
-                    initialMaxDimRef.current = Math.max(initialViewBox.w, initialViewBox.h);
                     applyViewBox(initialViewBox);
                     setViewBox(initialViewBox);
                     // Diagnostic: log effective scaling
@@ -788,12 +761,6 @@
             const doc = parser.parseFromString(svgString, 'image/svg+xml');
             const svgEl = doc.documentElement;
 
-            // Only enable text-hiding for genuinely large grids where text is
-            // unreadable at full zoom-out (~4px on screen). Decoupled from
-            // the boost threshold so medium-large grids keep text always visible.
-            if (ratio > 6) {
-                svgEl.setAttribute('data-large-grid', 'true');
-            }
 
             // === 1. Scale CSS values in <style> blocks ===
             const styles = svgEl.querySelectorAll('style');

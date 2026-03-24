@@ -44,9 +44,7 @@ export const boostSvgForLargeGrid = (svgString: string, viewBox: ViewBox | null,
         const doc = parser.parseFromString(svgString, 'image/svg+xml');
         const svgEl = doc.documentElement;
 
-        if (ratio > 6) {
-            svgEl.setAttribute('data-large-grid', 'true');
-        }
+        // svgEl.setAttribute('data-large-grid', 'true'); // Removed: handled by CSS-less scaling
 
         // === 1. Scale CSS values in <style> blocks ===
         const styles = svgEl.querySelectorAll('style');
@@ -74,7 +72,7 @@ export const boostSvgForLargeGrid = (svgString: string, viewBox: ViewBox | null,
             const g = circle.parentElement;
             if (!g || g.tagName !== 'g' || scaledGroups.has(g)) continue;
             
-            // Skip foreignObject as it usually contains text that shouldn't be scaled this way
+            // Skip scaling for groups that are already scaled or are action targets
             if (g.children.length > 5 && g.querySelector('foreignObject')) continue;
             
             scaledGroups.add(g);
