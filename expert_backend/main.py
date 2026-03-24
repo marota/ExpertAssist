@@ -3,12 +3,51 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
+import json as json_module
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from expert_backend.services.network_service import network_service
 from expert_backend.services.recommender_service import recommender_service
 
 app = FastAPI()
+
+# --- User config file management ---
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CONFIG_DEFAULT = _PROJECT_ROOT / "config.default.json"
+_CONFIG_USER = _PROJECT_ROOT / "config.json"
+
+
+def _ensure_user_config() -> None:
+    """Copy config.default.json -> config.json if user config does not exist."""
+    if not _CONFIG_USER.exists() and _CONFIG_DEFAULT.exists():
+        shutil.copy2(_CONFIG_DEFAULT, _CONFIG_USER)
+
+
+def _load_user_config() -> dict:
+    """Load user config, falling back to defaults."""
+    _ensure_user_config()
+    try:
+        with open(_CONFIG_USER, "r", encoding="utf-8") as f:
+            return json_module.load(f)
+    except (FileNotFoundError, json_module.JSONDecodeError):
+        # Fall back to defaults
+        if _CONFIG_DEFAULT.exists():
+            with open(_CONFIG_DEFAULT, "r", encoding="utf-8") as f:
+                return json_module.load(f)
+        return {}
+
+
+def _save_user_config(data: dict) -> None:
+    """Persist user config to config.json."""
+    with open(_CONFIG_USER, "w", encoding="utf-8") as f:
+        json_module.dump(data, f, indent=4, ensure_ascii=False)
+        f.write("\n")
+
+
+# Ensure config.json exists on startup
+_ensure_user_config()
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,6 +62,22 @@ app.add_middleware(
 # Since the directory name is 'Overflow_Graph', we ensure it exists.
 os.makedirs("Overflow_Graph", exist_ok=True)
 app.mount("/results/pdf", StaticFiles(directory="Overflow_Graph"), name="pdfs")
+
+@app.get("/api/user-config")
+def get_user_config():
+    """Return the persisted user configuration."""
+    return _load_user_config()
+
+
+@app.post("/api/user-config")
+def save_user_config(config: dict = Body(...)):
+    """Save user configuration to config.json."""
+    try:
+        _save_user_config(config)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 class ConfigRequest(BaseModel):
     network_path: str
