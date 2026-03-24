@@ -57,9 +57,11 @@ circle.nad-highlight {
     filter: drop-shadow(0 0 8px #fffb00) drop-shadow(0 0 15px #fffb00) !important;
 }
 
-/* Contingency highlight in orange */
+
+
+/* Contingency highlight in orange (vibrant #ff6600) */
 .nad-contingency-highlight {
-    filter: drop-shadow(0 0 8px #ff8c00) drop-shadow(0 0 15px #ff8c00) !important;
+    filter: drop-shadow(0 0 10px #ff6600) !important;
 }
 
 /* For lines and paths, use grid units for stroke-width so the halo is always
@@ -76,19 +78,16 @@ circle.nad-highlight {
     stroke-linecap: round !important;
     stroke-linejoin: round !important;
 }
-/* Contingency highlight in orange */
-.nad-contingency-highlight {
-    filter: drop-shadow(0 0 8px #ff8c00) drop-shadow(0 0 15px #ff8c00) !important;
-}
+
 
 .nad-contingency-highlight path,
 .nad-contingency-highlight line,
 .nad-contingency-highlight polyline,
 .nad-contingency-highlight rect,
 .nad-contingency-highlight polygon {
-    stroke: #ff8c00 !important;
-    stroke-width: 150px !important;
-    stroke-opacity: 0.8 !important;
+    stroke: #ff6600 !important;
+    stroke-width: 110px !important;
+    stroke-opacity: 1 !important;
     fill: none !important;
     stroke-linecap: round !important;
     stroke-linejoin: round !important;
@@ -112,11 +111,11 @@ circle.nad-highlight {
 
 .nad-contingency-highlight circle,
 .nad-contingency-highlight rect {
-    stroke: #ff8c00 !important;
-    stroke-width: 45px !important;
-    stroke-opacity: 0.6 !important;
-    fill: #ff8c00 !important;
-    fill-opacity: 0.8 !important;
+    stroke: #ff6600 !important;
+    stroke-width: 35px !important;
+    stroke-opacity: 1 !important;
+    fill: #ff6600 !important;
+    fill-opacity: 1 !important;
     vector-effect: non-scaling-stroke !important;
 }
 
@@ -149,7 +148,7 @@ circle.nad-highlight {
 .nad-delta-positive path,
 .nad-delta-positive line,
 .nad-delta-positive polyline {
-    stroke: #ff8c00 !important;
+    stroke: #ff6600 !important;
     stroke-width: 3px !important;
 }
 
