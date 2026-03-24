@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
 import type { AnalysisResult, CombinedAction, ActionDetail } from '../types';
 
@@ -48,6 +48,7 @@ const CombinedActionsModal: React.FC<Props> = ({
     const [simulationFeedback, setSimulationFeedback] = useState<SimulationFeedback | null>(null);
     // Per-pair simulation results tracked within this modal session
     const [sessionSimResults, setSessionSimResults] = useState<Record<string, SimulationFeedback>>({});
+    const lastSelectionRef = useRef<string>('');
 
     // Scored actions for exploration, derived from analysisResult.action_scores
     const scoredActionsList = useMemo(() => {
@@ -141,6 +142,10 @@ const CombinedActionsModal: React.FC<Props> = ({
 
     // Only handle automatic preview for pre-computed actions or resetting
     useEffect(() => {
+        const currentSelection = Array.from(selectedIds).sort().join('+');
+        const selectionChanged = currentSelection !== lastSelectionRef.current;
+        lastSelectionRef.current = currentSelection;
+
         if (activeTab === 'explore' && selectedIds.size === 2 && disconnectedElement) {
             const [id1, id2] = Array.from(selectedIds);
             const pairKey = [id1, id2].sort().join('+');
@@ -149,13 +154,15 @@ const CombinedActionsModal: React.FC<Props> = ({
             if (preComputed) {
                 setPreview(preComputed);
                 setError(null);
-            } else {
-                // If not pre-computed, wait for manual click
+            } else if (selectionChanged) {
+                // If not pre-computed, ONLY clear if selection actually changed
                 setPreview(null);
+                setSimulationFeedback(null);
             }
         } else {
             setPreview(null);
             setError(null);
+            setSimulationFeedback(null);
         }
     }, [selectedIds, disconnectedElement, analysisResult, activeTab]);
 

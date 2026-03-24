@@ -589,4 +589,34 @@ describe('CombinedActionsModal', () => {
         // Use a more flexible matcher for the percentage to avoid whitespace issues
         expect(await within(card).findByText((content) => content.includes('73.0%'))).toBeInTheDocument();
     }, 15000);
+
+    it('preserves comparison card for explored pair when analysisResult updates', async () => {
+        const emptyResult = { ...mockAnalysisResult, combined_actions: {} };
+        vi.mocked(api.computeSuperposition).mockResolvedValueOnce({
+            action1_id: 'act1',
+            action2_id: 'act3',
+            estimated_max_rho: 0.85,
+            estimated_max_rho_line: 'L_NEW_EST'
+        } as unknown as CombinedAction);
+
+        const { rerender } = render(<CombinedActionsModal {...defaultProps} analysisResult={emptyResult as any} />);
+        fireEvent.click(getExploreTab());
+        fireEvent.click(screen.getByText('act1'));
+        expect(await screen.findByTestId('chip-act1')).toBeInTheDocument();
+        fireEvent.click(screen.getByText('act3'));
+        expect(await screen.findByTestId('chip-act3')).toBeInTheDocument();
+
+        // Manual estimate
+        fireEvent.click(screen.getByTestId('estimate-button'));
+        expect(await screen.findByTestId('comparison-card')).toBeInTheDocument();
+
+        // Simulate a prop update (e.g. from parent simulation result)
+        const updatedResult = { ...emptyResult, message: 'Updated' };
+        rerender(<CombinedActionsModal {...defaultProps} analysisResult={updatedResult as any} />);
+
+        // Card should STILL be there!
+        const finalCard = screen.getByTestId('comparison-card');
+        expect(finalCard).toBeInTheDocument();
+        expect(within(finalCard).getByText('85.0%')).toBeInTheDocument();
+    });
 });
