@@ -80,7 +80,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [loadingActions, setLoadingActions] = useState(false);
     const [simulating, setSimulating] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true });
+    const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true });
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
@@ -132,12 +132,14 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const isOpenCoupling = t.includes('open_coupling');
                 const isCloseCoupling = t.includes('close_coupling');
                 const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
+                const isLoadShedding = (actionId.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
 
                 if (isDisco) return typeFilters.disco;
                 if (isReco) return typeFilters.reco;
                 if (isOpenCoupling) return typeFilters.open;
                 if (isCloseCoupling) return typeFilters.close;
                 if (isPstAction) return typeFilters.pst;
+                if (isLoadShedding) return typeFilters.ls;
 
                 // Handle unknown or categories not explicitly listed above
                 return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
@@ -163,11 +165,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             if (isOpenType && !typeFilters.open) continue;
             if (isCloseType && !typeFilters.close) continue;
             if (isPstType && !typeFilters.pst) continue;
+            if ((type === 'load_shedding' || type.includes('load_shedding')) && !typeFilters.ls) continue;
 
             // If it's a known type but its filter is off, it's already skipped.
             // If it's an unknown type, we show it only if ALL filters are active.
-            const isKnownType = isDiscoType || isRecoType || isOpenType || isCloseType || isPstType;
-            if (!isKnownType && !(typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst)) {
+            const isKnownType = isDiscoType || isRecoType || isOpenType || isCloseType || isPstType || type === 'load_shedding' || type.includes('load_shedding');
+            if (!isKnownType && !(typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls)) {
                 continue;
             }
 
@@ -184,6 +187,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const isOpenCoupling = t.includes('open_coupling');
                 const isCloseCoupling = t.includes('close_coupling');
                 const isPstAction = (aid.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
+                const isLoadShedding = (aid.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
 
                 let shouldShow = false;
                 if (isDisco) shouldShow = typeFilters.disco;
@@ -191,7 +195,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 else if (isOpenCoupling) shouldShow = typeFilters.open;
                 else if (isCloseCoupling) shouldShow = typeFilters.close;
                 else if (isPstAction) shouldShow = typeFilters.pst;
-                else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
+                else if (isLoadShedding) shouldShow = typeFilters.ls;
+                else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
 
                 if (!shouldShow) continue;
 
@@ -223,14 +228,36 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     }, [searchOpen]);
 
     const handleAddAction = async (actionId: string) => {
+        const trimmedId = actionId.trim();
         if (!disconnectedElement) {
             setError('Select a contingency first.');
             return;
         }
-        setSimulating(actionId);
+        setSimulating(trimmedId);
         setError(null);
         try {
-            const result = await api.simulateManualAction(actionId, disconnectedElement);
+            // Build actionContent from topologies if available (especially for combined actions)
+            let actionContent: Record<string, unknown> | null = null;
+            if (trimmedId.includes('+')) {
+                const parts = trimmedId.split('+').map(p => p.trim());
+                const perAction: Record<string, unknown> = {};
+                for (const part of parts) {
+                    const partDetail = actions[part];
+                    if (partDetail?.action_topology) {
+                        perAction[part] = partDetail.action_topology;
+                    }
+                }
+                if (Object.keys(perAction).length > 0) {
+                    actionContent = perAction;
+                }
+            } else {
+                const detail = actions[trimmedId];
+                if (detail?.action_topology) {
+                    actionContent = detail.action_topology as unknown as Record<string, unknown>;
+                }
+            }
+
+            const result = await api.simulateManualAction(trimmedId, disconnectedElement, actionContent, linesOverloaded);
             const detail: ActionDetail = {
                 description_unitaire: result.description_unitaire,
                 rho_before: result.rho_before,
@@ -244,7 +271,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 non_convergence: result.non_convergence,
                 load_shedding_details: result.load_shedding_details,
             };
-            onManualActionAdded(actionId, detail, result.lines_overloaded || []);
+            onManualActionAdded(trimmedId, detail, result.lines_overloaded || []);
             setSearchOpen(false);
             setSearchQuery('');
         } catch (e: unknown) {
@@ -611,12 +638,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         </div>
                         {/* Action type filter checkboxes */}
                         <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
-                            {([['disco', 'Disconnections'], ['reco', 'Reconnections'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling']] as const).map(([key, label]) => (
+                            {([['disco', 'Disconnections'], ['reco', 'Reconnections'], ['ls', 'Load Shedding'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling']] as const).map(([key, label]) => (
                                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
                                     <input
                                         type="checkbox"
-                                        checked={typeFilters[key as keyof typeof typeFilters]}
-                                        onChange={() => setTypeFilters(prev => ({ ...prev, [key]: !prev[key as keyof typeof prev] }))}
+                                        checked={typeFilters[key]}
+                                        onChange={() => setTypeFilters(prev => ({ ...prev, [key]: !prev[key] }))}
                                         style={{ margin: 0, cursor: 'pointer' }}
                                     />
                                     {label}
@@ -757,9 +784,28 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             All actions already added
                                         </div>
                                     )}
-                                    {(searchQuery && filteredActions.length === 0) && (
+                                    {searchQuery && !filteredActions.some(a => a.id === searchQuery) && (
+                                        <div
+                                            data-testid={`manual-id-option-${searchQuery}`}
+                                            onClick={() => handleAddAction(searchQuery)}
+                                            style={{
+                                                padding: '8px 10px',
+                                                cursor: simulating ? 'wait' : 'pointer',
+                                                borderTop: '1px solid #eee',
+                                                backgroundColor: '#f8f9fa',
+                                                color: '#007bff',
+                                                fontSize: '12px',
+                                                fontWeight: 600,
+                                            }}
+                                            onMouseEnter={(e) => (e.currentTarget as HTMLDivElement).style.backgroundColor = '#eef6ff'}
+                                            onMouseLeave={(e) => (e.currentTarget as HTMLDivElement).style.backgroundColor = '#f8f9fa'}
+                                        >
+                                            ✨ Simulate manual ID: <strong>{searchQuery}</strong>
+                                        </div>
+                                    )}
+                                    {(searchQuery && filteredActions.length === 0 && searchQuery !== (filteredActions[0]?.id)) && (
                                         <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
-                                            No matching actions
+                                            No other matching actions
                                         </div>
                                     )}
                                     {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredActions.map(a => (

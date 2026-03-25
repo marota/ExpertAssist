@@ -1402,7 +1402,7 @@
             const [loadingAvailableActions, setLoadingAvailableActions] = useState(false);
             const [simulatingActionId, setSimulatingActionId] = useState(null);
             const [searchError, setSearchError] = useState('');
-            const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true });
+            const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true });
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
             const [scoreTooltip, setScoreTooltip] = useState(null);
@@ -2341,7 +2341,7 @@
                 setActionDiagramLoading(true);
                 setActiveTab('action');
                 try {
-                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
+                    const res = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId.trim() });
                     const { svg, viewBox } = processSvg(res.data.svg, voltageLevels.length);
                     setActionDiagram({ ...res.data, svg, originalViewBox: viewBox });
                 } catch (err) {
@@ -2900,8 +2900,10 @@
             };
 
             const canonicalizeId = (id) => {
-                if (!id || typeof id !== 'string' || !id.includes('+')) return id;
-                return id.split('+').map(p => p.trim()).sort().join('+');
+                if (!id || typeof id !== 'string') return id;
+                const trimmed = id.trim();
+                if (!trimmed.includes('+')) return trimmed;
+                return trimmed.split('+').map(p => p.trim()).sort().join('+');
             };
 
             const handleAddManualAction = async (rawActionId) => {
@@ -3194,14 +3196,16 @@
                         const isOpenCoupling = t.includes('open_coupling');
                         const isCloseCoupling = t.includes('close_coupling');
                         const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
+                        const isLoadShedding = t.includes('load_shedding') || actionId.startsWith('load_shedding_') || actionDesc.includes('effacement');
 
                         if (isDisco) return typeFilters.disco;
                         if (isReco) return typeFilters.reco;
                         if (isOpenCoupling) return typeFilters.open;
                         if (isCloseCoupling) return typeFilters.close;
                         if (isPstAction) return typeFilters.pst;
+                        if (isLoadShedding) return typeFilters.ls;
 
-                        return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
+                        return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
                     })
                     .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
                     .slice(0, 20);
@@ -3224,6 +3228,7 @@
                         const isOpenCoupling = t.includes('open_coupling');
                         const isCloseCoupling = t.includes('close_coupling');
                         const isPstAction = (aid.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
+                        const isLoadShedding = t.includes('load_shedding') || aid.startsWith('load_shedding_') || actionDesc.includes('effacement');
 
                         let shouldShow = false;
                         if (isDisco) shouldShow = typeFilters.disco;
@@ -3231,7 +3236,8 @@
                         else if (isOpenCoupling) shouldShow = typeFilters.open;
                         else if (isCloseCoupling) shouldShow = typeFilters.close;
                         else if (isPstAction) shouldShow = typeFilters.pst;
-                        else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
+                        else if (isLoadShedding) shouldShow = typeFilters.ls;
+                        else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
 
                         if (!shouldShow) continue;
 
@@ -4784,7 +4790,7 @@
                                             />
                                         </div>
                                         <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
-                                            {[['disco', 'Disconnections'], ['reco', 'Reconnections'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling']].map(([key, label]) => (
+                                            {[['disco', 'Disconnections'], ['reco', 'Reconnections'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling'], ['ls', 'Load shedding']].map(([key, label]) => (
                                                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
                                                     <input
                                                         type="checkbox"
@@ -4907,9 +4913,27 @@
                                                             All actions already added
                                                         </div>
                                                     )}
-                                                    {(searchQuery && filteredSearchActions.length === 0) && (
+                                                    {searchQuery && !filteredSearchActions.some(a => a.id === searchQuery) && (
+                                                        <div
+                                                            onClick={() => handleAddManualAction(searchQuery)}
+                                                            style={{
+                                                                padding: '8px 10px',
+                                                                cursor: simulatingActionId ? 'wait' : 'pointer',
+                                                                borderTop: '1px solid #eee',
+                                                                backgroundColor: '#f8f9fa',
+                                                                color: '#007bff',
+                                                                fontSize: '12px',
+                                                                fontWeight: 600,
+                                                            }}
+                                                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#eef6ff'}
+                                                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                                                        >
+                                                            ✨ Simulate manual ID: <strong>{searchQuery}</strong>
+                                                        </div>
+                                                    )}
+                                                    {(searchQuery && filteredSearchActions.length === 0 && searchQuery !== (filteredSearchActions[0]?.id)) && (
                                                         <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>
-                                                            No matching actions
+                                                            No other matching actions
                                                         </div>
                                                     )}
                                                     {((!searchQuery && scoredActionsList.length === 0) || searchQuery) && filteredSearchActions.map(a => (
@@ -5580,7 +5604,7 @@
                                         </div>
 
                                         <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                            {['all', 'disco', 'reco', 'open', 'close', 'pst'].map(f => (
+                                            {['all', 'disco', 'reco', 'open', 'close', 'pst', 'ls'].map(f => (
                                                 <button
                                                     key={f}
                                                     onClick={() => setExploreFilter(f)}
@@ -5604,7 +5628,7 @@
 
                                         <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px' }}>
                                             {Array.from(new Set(scoredActionsList.map(item => item.type)))
-                                                .filter(type => exploreFilter === 'all' || type.includes(exploreFilter))
+                                                .filter(type => exploreFilter === 'all' || type.includes(exploreFilter) || (exploreFilter === 'ls' && type === 'load_shedding'))
                                                 .map(type => (
                                                     <div key={type} style={{ marginBottom: '1px' }}>
                                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#444', backgroundColor: '#f0f2f5', padding: '4px 8px', borderBottom: '1px solid #e1e4e8', display: 'flex', justifyContent: 'space-between' }}>

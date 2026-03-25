@@ -35,7 +35,7 @@ describe('ActionFeed', () => {
     const defaultProps = {
         actions: {} as Record<string, ActionDetail>,
         actionScores: {} as Record<string, Record<string, unknown>>,
-        linesOverloaded: [] as string[],
+        linesOverloaded: ['LINE_1'] as string[],
         selectedActionId: null,
         selectedActionIds: new Set<string>(),
         rejectedActionIds: new Set<string>(),
@@ -46,7 +46,7 @@ describe('ActionFeed', () => {
         onDisplayPrioritizedActions: vi.fn(),
         nodesByEquipmentId: new Map(),
         edgesByEquipmentId: new Map(),
-        disconnectedElement: null,
+        disconnectedElement: 'LINE_1',
         onManualActionAdded: vi.fn(),
         analysisLoading: false,
         monitoringFactor: 0.95,
@@ -346,7 +346,11 @@ describe('ActionFeed', () => {
 
         // PST action should NOT be visible even if it matches search query
         expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
-        expect(screen.getByText('No matching actions')).toBeInTheDocument();
+        expect(screen.getByText('No other matching actions')).toBeInTheDocument();
+        
+        // Manual simulation option should be visible
+        expect(screen.getByText(/Simulate manual ID:/)).toBeInTheDocument();
+        expect(screen.getByText('pst')).toBeInTheDocument();
     });
 
     it('shows ONLY PST actions when only PST filter is checked', async () => {
@@ -373,6 +377,58 @@ describe('ActionFeed', () => {
         // Disco and Unknown should NOT be visible
         expect(screen.queryByText('abc')).not.toBeInTheDocument();
         expect(screen.queryByText('xyz')).not.toBeInTheDocument();
+    });
+    
+    it('shows Load shedding actions when Load shedding filter is checked', async () => {
+        const lsAction = { id: 'load_shedding_LOAD1', description: 'Load shedding LOAD1' };
+        const regularAction = { id: 'line_reco_1', description: 'Reconnexion' };
+
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([lsAction, regularAction]);
+
+        render(<ActionFeed {...defaultProps} />);
+
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+
+        // Both visible initially
+        expect(await screen.findByText('load_shedding_LOAD1')).toBeInTheDocument();
+        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+
+        // Uncheck Load shedding filter
+        const lsCheckbox = screen.getByLabelText('Load Shedding');
+        fireEvent.click(lsCheckbox);
+
+        // Load shedding should be hidden
+        expect(screen.queryByText('load_shedding_LOAD1')).not.toBeInTheDocument();
+        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+    });
+
+    it('triggers manual simulation when "Simulate manual ID" is clicked', async () => {
+        render(<ActionFeed {...defaultProps} />);
+
+        // Open search
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+
+        // Type something that doesn't exist
+        const searchInput = screen.getByPlaceholderText(/Search action/);
+        fireEvent.change(searchInput, { target: { value: 'custom_action_123' } });
+
+        // Wait for loading to finish
+        await waitFor(() => {
+            expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
+        });
+
+        // Click "Simulate manual ID"
+        const manualOption = screen.getByText(/Simulate manual ID:/);
+        fireEvent.click(manualOption);
+
+        // Verify simulateManualAction was called
+        expect(api.simulateManualAction).toHaveBeenCalledWith(
+            'custom_action_123',
+            'LINE_1',
+            null,
+            ['LINE_1']
+        );
     });
 
     it('hides disconnections on PST branches when Disconnections filter is off but PST is on', async () => {

@@ -1589,6 +1589,11 @@ class RecommenderService:
         if switches:
             content["switches"] = switches
 
+        # Include PST tap if present
+        pst_tap = topo.get("pst_tap") or {}
+        if pst_tap:
+            content["pst_tap"] = pst_tap
+
         entry["content"] = content if content else {}
         return entry
 
@@ -1605,7 +1610,9 @@ class RecommenderService:
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
 
-        action_id = self._canonicalize_id(raw_action_id)
+        action_id = self._canonicalize_id(raw_action_id.strip())
+        if lines_overloaded is None:
+            lines_overloaded = []
 
         action_ids = action_id.split("+")
         recent_actions = self._last_result.get("prioritized_actions", {}) if self._last_result else {}
@@ -1633,6 +1640,47 @@ class RecommenderService:
                     entry = self._build_action_entry_from_topology(aid, topo)
                     self._dict_action[aid] = entry
                     print(f"[simulate_manual_action] Injected restored action '{aid}' into dict")
+
+        # Handle dynamic action creation for special prefixes (load shedding, PST)
+        for aid in action_ids:
+            if aid not in self._dict_action and aid not in recent_actions:
+                # Try to create on-the-fly
+                if aid.startswith("load_shedding_"):
+                    load_name = aid[len("load_shedding_"):]
+                    topo = {"loads_bus": {load_name: -1}} # _build_action_entry_from_topology expects loads_bus
+                    entry = self._build_action_entry_from_topology(aid, topo)
+                    entry["description"] = f"Load shedding for load {load_name}"
+                    entry["description_unitaire"] = f"Effacement {load_name}"
+                    self._dict_action[aid] = entry
+                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}'")
+
+                elif aid.startswith("pst_tap_") or aid.startswith("pst_"):
+                    # Example: pst_tap_PST_ID_inc1 or pst_tap_PST_ID_dec2
+                    import re
+                    # Look for pattern pst_tap_<id>_(inc|dec)<val> or pst_<id>_(inc|dec)<val>
+                    match = re.match(r'(pst(?:_tap)?_(.+))_(inc|dec)(\d+)$', aid)
+                    if match:
+                        _, pst_id, direction, val_str = match.groups()
+                        val = int(val_str)
+                        
+                        # Get current tap info from network
+                        env = self._get_simulation_env()
+                        nm = env.network_manager
+                        pst_info = nm.get_pst_tap_info(pst_id)
+                        
+                        if pst_info:
+                            current_tap = pst_info['tap']
+                            variation = val if direction == 'inc' else -val
+                            new_tap = current_tap + variation
+                            # Clamp to bounds
+                            new_tap = max(pst_info['low_tap'], min(pst_info['high_tap'], new_tap))
+                            
+                            topo = {"pst_tap": {pst_id: new_tap}}
+                            entry = self._build_action_entry_from_topology(aid, topo)
+                            entry["description"] = f"PST tap change for {pst_id} (tap: {current_tap} -> {new_tap})"
+                            entry["description_unitaire"] = f"Variation PST {pst_id}"
+                            self._dict_action[aid] = entry
+                            print(f"[simulate_manual_action] Created dynamic PST action '{aid}'")
 
         for aid in action_ids:
             if aid not in self._dict_action and aid not in recent_actions:
