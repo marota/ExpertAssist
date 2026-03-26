@@ -293,50 +293,65 @@
 
         /* ===== SLD impact highlights ===== */
         /* Contingency element on N-1 SLD (orange glow) */
-        .sld-highlight-contingency {
+        .sld-highlight-clone.sld-highlight-contingency {
             filter: drop-shadow(0 0 4px #ff9800) drop-shadow(0 0 8px #ff9800);
         }
-        .sld-highlight-contingency path,
-        .sld-highlight-contingency line,
-        .sld-highlight-contingency polyline,
-        .sld-highlight-contingency rect,
-        .sld-highlight-contingency circle {
+        .sld-highlight-clone.sld-highlight-contingency path,
+        .sld-highlight-clone.sld-highlight-contingency line,
+        .sld-highlight-clone.sld-highlight-contingency polyline,
+        .sld-highlight-clone.sld-highlight-contingency rect,
+        .sld-highlight-clone.sld-highlight-contingency circle {
             stroke: #ff9800 !important;
-            stroke-width: 3px !important;
+            stroke-width: 6px !important;
+            stroke-opacity: 0.7 !important;
+            fill: none !important;
         }
 
-        /* Action target on action SLD (yellow glow) */
-        .sld-highlight-action {
+        /* Action target on action SLD (yellow halo behind) */
+        .sld-highlight-clone.sld-highlight-action {
             filter: drop-shadow(0 0 4px #fffb00) drop-shadow(0 0 8px #fffb00);
         }
-        .sld-highlight-action path,
-        .sld-highlight-action line,
-        .sld-highlight-action polyline,
-        .sld-highlight-action rect,
-        .sld-highlight-action circle {
+        .sld-highlight-clone.sld-highlight-action path,
+        .sld-highlight-clone.sld-highlight-action line,
+        .sld-highlight-clone.sld-highlight-action polyline,
+        .sld-highlight-clone.sld-highlight-action rect,
+        .sld-highlight-clone.sld-highlight-action circle {
             stroke: #fffb00 !important;
-            stroke-width: 3px !important;
+            stroke-width: 6px !important;
+            stroke-opacity: 0.7 !important;
+            fill: none !important;
         }
 
-        /* Overloaded lines on SLD (dashed orange) */
-        .sld-highlight-overloaded path,
-        .sld-highlight-overloaded line,
-        .sld-highlight-overloaded polyline {
+        /* Overloaded lines on SLD (dashed orange halo behind) */
+        .sld-highlight-clone.sld-highlight-overloaded path,
+        .sld-highlight-clone.sld-highlight-overloaded line,
+        .sld-highlight-clone.sld-highlight-overloaded polyline {
             stroke: #ff8c00 !important;
-            stroke-width: 3px !important;
+            stroke-width: 5px !important;
             stroke-dasharray: 6 3 !important;
+            stroke-opacity: 0.7 !important;
+            fill: none !important;
         }
 
-        /* Affected breakers/switches on SLD (purple glow) */
-        .sld-highlight-breaker {
+        /* Affected breakers/switches on SLD (purple halo behind) */
+        .sld-highlight-clone.sld-highlight-breaker {
             filter: drop-shadow(0 0 3px #e040fb) drop-shadow(0 0 6px #e040fb);
         }
-        .sld-highlight-breaker path,
-        .sld-highlight-breaker line,
-        .sld-highlight-breaker rect,
-        .sld-highlight-breaker circle {
+        .sld-highlight-clone.sld-highlight-breaker path,
+        .sld-highlight-clone.sld-highlight-breaker line,
+        .sld-highlight-clone.sld-highlight-breaker rect,
+        .sld-highlight-clone.sld-highlight-breaker circle {
             stroke: #e040fb !important;
-            stroke-width: 3px !important;
+            stroke-width: 6px !important;
+            stroke-opacity: 0.7 !important;
+            fill: none !important;
+        }
+
+        /* Hide text/labels in cloned highlight elements */
+        .sld-highlight-clone text,
+        .sld-highlight-clone .sld-label,
+        .sld-highlight-clone foreignObject {
+            display: none !important;
         }
 
         /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
@@ -2898,19 +2913,14 @@
             vlOverlay?.flow_deltas, vlOverlay?.reactive_flow_deltas, vlOverlay?.asset_deltas]);
 
             // ===== Highlight impacted assets on the SLD =====
-            // Highlights contingency element (N-1), action targets (action), overloaded lines,
-            // and affected breakers/switches — independently of the delta flow coloring.
+            // Uses clone-behind technique: clones target elements into a background
+            // layer so the original SLD rendering is not affected.
             useEffect(() => {
                 const container = overlayBodyRef.current;
                 if (!container || !vlOverlay?.svg) return;
 
-                // Clear previous highlights
-                const HIGHLIGHT_CLASSES = [
-                    'sld-highlight-contingency', 'sld-highlight-action',
-                    'sld-highlight-overloaded', 'sld-highlight-breaker',
-                ];
-                container.querySelectorAll(HIGHLIGHT_CLASSES.map(c => '.' + c).join(','))
-                    .forEach(el => el.classList.remove(...HIGHLIGHT_CLASSES));
+                // Remove previous highlight clones
+                container.querySelectorAll('.sld-highlight-clone').forEach(el => el.remove());
 
                 // Build equipmentId → SVG element ID map from SLD metadata
                 const equipIdToSvgIds = new Map();
@@ -2935,7 +2945,18 @@
                 }
                 if (equipIdToSvgIds.size === 0) return;
 
-                // Build element ID → DOM element map
+                const svg = container.querySelector('svg');
+                if (!svg) return;
+
+                // Create or reuse background layer
+                let bgLayer = svg.querySelector('#sld-highlight-layer');
+                if (!bgLayer) {
+                    bgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                    bgLayer.setAttribute('id', 'sld-highlight-layer');
+                    if (svg.firstChild) svg.insertBefore(bgLayer, svg.firstChild);
+                    else svg.appendChild(bgLayer);
+                }
+
                 const elMap = new Map();
                 container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
@@ -2960,7 +2981,6 @@
                 };
 
                 const findCellForEquipment = (equipId) => {
-                    // 1. Exact metadata lookup (with dot/underscore variants)
                     const svgIds = equipIdToSvgIds.get(equipId)
                         ?? equipIdToSvgIds.get(equipId.replace(/\./g, '_'))
                         ?? equipIdToSvgIds.get(equipId.replace(/_/g, '.'));
@@ -2970,7 +2990,6 @@
                             if (el) return walkUpToCell(el);
                         }
                     }
-                    // 2. Check if equipId is a substring of any metadata equipmentId
                     for (const [metaEquipId, metaSvgIds] of equipIdToSvgIds) {
                         if (metaEquipId.includes(equipId) || equipId.includes(metaEquipId)) {
                             for (const svgId of metaSvgIds) {
@@ -2979,7 +2998,6 @@
                             }
                         }
                     }
-                    // 3. Substring fallback against SVG element IDs
                     const sanitized = equipId.replace(/\./g, '_');
                     for (const [eid, el] of elMap) {
                         if (eid.includes(equipId) || (sanitized !== equipId && eid.includes(sanitized))) {
@@ -2989,19 +3007,38 @@
                     return null;
                 };
 
+                // Clone element into the background layer with a highlight class
+                let cachedBgCTM = null;
+                const cloneHighlight = (el, highlightClass) => {
+                    const clone = el.cloneNode(true);
+                    clone.removeAttribute('id');
+                    clone.classList.add('sld-highlight-clone', highlightClass);
+                    try {
+                        const elCTM = el.getScreenCTM();
+                        if (!cachedBgCTM) cachedBgCTM = bgLayer.getScreenCTM();
+                        if (elCTM && cachedBgCTM) {
+                            const rel = cachedBgCTM.inverse().multiply(elCTM);
+                            clone.setAttribute('transform', `matrix(${rel.a},${rel.b},${rel.c},${rel.d},${rel.e},${rel.f})`);
+                        }
+                    } catch (e) { /* CTM unavailable */ }
+                    bgLayer.appendChild(clone);
+                };
+
                 const highlightedCells = new Set();
-
-                // Use vlOverlay.actionId (set when the overlay was opened)
                 const actionId = vlOverlay.actionId;
-
-                // Resolve the action detail from the result
                 const actionDetail = (actionId && result?.actions) ? result.actions[actionId] : undefined;
+
+                // Coupling detection (inline)
+                const checkCoupling = (aid, desc) => {
+                    const q = ((aid || '') + ' ' + (desc || '')).toLowerCase();
+                    return q.includes('coupling') || q.includes('busbar') || q.includes('coupl') || q.includes('noeud') || q.includes('node');
+                };
 
                 // --- Contingency highlight (N-1 and action tabs) ---
                 if (vlOverlay.tab !== 'n' && selectedBranch) {
                     const cell = findCellForEquipment(selectedBranch);
                     if (cell) {
-                        cell.classList.add('sld-highlight-contingency');
+                        cloneHighlight(cell, 'sld-highlight-contingency');
                         highlightedCells.add(cell);
                     }
                 }
@@ -3009,29 +3046,34 @@
                 // --- Action target highlights (action tab) ---
                 if (vlOverlay.tab === 'action' && actionDetail) {
                     const topo = actionDetail.action_topology;
-                    if (topo) {
-                        const targetEquipIds = new Set();
-                        for (const id of Object.keys(topo.lines_ex_bus || {})) targetEquipIds.add(id);
-                        for (const id of Object.keys(topo.lines_or_bus || {})) targetEquipIds.add(id);
-                        for (const id of Object.keys(topo.gens_bus || {})) targetEquipIds.add(id);
-                        for (const id of Object.keys(topo.loads_bus || {})) targetEquipIds.add(id);
-                        for (const id of Object.keys(topo.pst_tap || {})) targetEquipIds.add(id);
+                    const isCoupling = checkCoupling(actionId, actionDetail.description_unitaire);
 
-                        for (const equipId of targetEquipIds) {
-                            const cell = findCellForEquipment(equipId);
-                            if (cell && !highlightedCells.has(cell)) {
-                                cell.classList.add('sld-highlight-action');
-                                highlightedCells.add(cell);
+                    if (topo) {
+                        // For coupling actions: only highlight breaker, not branches
+                        if (!isCoupling) {
+                            const targetEquipIds = new Set();
+                            for (const id of Object.keys(topo.lines_ex_bus || {})) targetEquipIds.add(id);
+                            for (const id of Object.keys(topo.lines_or_bus || {})) targetEquipIds.add(id);
+                            for (const id of Object.keys(topo.gens_bus || {})) targetEquipIds.add(id);
+                            for (const id of Object.keys(topo.loads_bus || {})) targetEquipIds.add(id);
+                            for (const id of Object.keys(topo.pst_tap || {})) targetEquipIds.add(id);
+
+                            for (const equipId of targetEquipIds) {
+                                const cell = findCellForEquipment(equipId);
+                                if (cell && !highlightedCells.has(cell)) {
+                                    cloneHighlight(cell, 'sld-highlight-action');
+                                    highlightedCells.add(cell);
+                                }
                             }
                         }
 
-                        // Highlight affected breakers/switches from topology
+                        // Highlight affected breakers/switches
                         const switches = topo.switches;
                         if (switches) {
                             for (const switchId of Object.keys(switches)) {
                                 const cell = findCellForEquipment(switchId);
                                 if (cell && !highlightedCells.has(cell)) {
-                                    cell.classList.add('sld-highlight-breaker');
+                                    cloneHighlight(cell, 'sld-highlight-breaker');
                                     highlightedCells.add(cell);
                                 }
                             }
@@ -3041,23 +3083,20 @@
                     // Fallback: parse description for breaker/switch names
                     const desc = actionDetail.description_unitaire;
                     if (desc && highlightedCells.size === 0) {
-                        // Extract quoted OC name like 'COUCH6COUPL DJ_OC'
                         const ocMatch = desc.match(/OC\s+'([^']+)'/);
                         if (ocMatch) {
                             const ocName = ocMatch[1].replace(/\s+DJ_OC$/, '');
                             const cell = findCellForEquipment(ocName);
                             if (cell && !highlightedCells.has(cell)) {
-                                cell.classList.add('sld-highlight-breaker');
+                                cloneHighlight(cell, 'sld-highlight-breaker');
                                 highlightedCells.add(cell);
                             }
                         }
-                        // Extract line/element name like "Ouverture LOUHAP3_LOUHA3SSUSU.1 DJ_OC"
                         const lineMatch = desc.match(/(?:Ouverture|Fermeture)\s+(\S+)\s+DJ_OC/);
                         if (lineMatch) {
-                            const fullName = lineMatch[1];
-                            const cell = findCellForEquipment(fullName);
+                            const cell = findCellForEquipment(lineMatch[1]);
                             if (cell && !highlightedCells.has(cell)) {
-                                cell.classList.add('sld-highlight-breaker');
+                                cloneHighlight(cell, 'sld-highlight-breaker');
                                 highlightedCells.add(cell);
                             }
                         }
@@ -3070,7 +3109,7 @@
                     for (const lineId of overloadedLines) {
                         const cell = findCellForEquipment(lineId);
                         if (cell && !highlightedCells.has(cell)) {
-                            cell.classList.add('sld-highlight-overloaded');
+                            cloneHighlight(cell, 'sld-highlight-overloaded');
                             highlightedCells.add(cell);
                         }
                     }

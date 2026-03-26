@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, type RefObject } from 'react';
 import type { DiagramData, AnalysisResult, ActionDetail, TabId, VlOverlay, SldTab, SldFeederNode } from '../types';
+import { isCouplingAction } from '../utils/svgUtils';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -411,19 +412,14 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
     vlOverlay.flow_deltas, vlOverlay.reactive_flow_deltas, vlOverlay.asset_deltas]);
 
     // ===== Highlight impacted assets on the SLD =====
-    // Highlights contingency element (N-1), action targets (action), overloaded lines,
-    // and affected breakers/switches — independently of the delta flow coloring.
+    // Uses a clone-behind technique (like NAD highlights): clones target elements
+    // into a background layer so the original SLD rendering is not affected.
     useEffect(() => {
         const container = overlayBodyRef.current;
         if (!container || !vlOverlay.svg) return;
 
-        // Clear previous highlights
-        const HIGHLIGHT_CLASSES = [
-            'sld-highlight-contingency', 'sld-highlight-action',
-            'sld-highlight-overloaded', 'sld-highlight-breaker',
-        ];
-        container.querySelectorAll(HIGHLIGHT_CLASSES.map(c => '.' + c).join(','))
-            .forEach(el => el.classList.remove(...HIGHLIGHT_CLASSES));
+        // Remove previous highlight clones
+        container.querySelectorAll('.sld-highlight-clone').forEach(el => el.remove());
 
         // Build equipmentId → SVG element ID map from SLD metadata
         const equipIdToSvgIds = new Map<string, string[]>();
@@ -452,17 +448,27 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
         }
         if (equipIdToSvgIds.size === 0) return;
 
+        const svg = container.querySelector('svg');
+        if (!svg) return;
+
+        // Create or reuse background layer at the root of the SVG
+        let bgLayer = svg.querySelector('#sld-highlight-layer') as SVGGElement | null;
+        if (!bgLayer) {
+            bgLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            bgLayer.setAttribute('id', 'sld-highlight-layer');
+            if (svg.firstChild) svg.insertBefore(bgLayer, svg.firstChild);
+            else svg.appendChild(bgLayer);
+        }
+
         // Build element ID → DOM element map
         const elMap = new Map<string, Element>();
         container.querySelectorAll('[id]').forEach(el => elMap.set(el.id, el));
 
-        /** Lookup with dot/underscore sanitization variants. */
         const lookupById = (svgId: string): Element | undefined =>
             elMap.get(svgId)
             ?? elMap.get(svgId.replace(/\./g, '_'))
             ?? elMap.get(svgId.replace(/_/g, '.'));
 
-        /** Walk up to the enclosing SLD cell ancestor. */
         const walkUpToCell = (el: Element): Element => {
             let cellEl: Element = el;
             let cur: Element | null = el.parentElement;
@@ -478,10 +484,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             return cellEl;
         };
 
-        /** Find the cell element for an equipment ID, trying sanitization variants
-         *  and also a substring match against SVG element IDs. */
         const findCellForEquipment = (equipId: string): Element | null => {
-            // 1. Exact metadata lookup (with dot/underscore variants)
             const svgIds = equipIdToSvgIds.get(equipId)
                 ?? equipIdToSvgIds.get(equipId.replace(/\./g, '_'))
                 ?? equipIdToSvgIds.get(equipId.replace(/_/g, '.'));
@@ -491,8 +494,6 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                     if (el) return walkUpToCell(el);
                 }
             }
-            // 2. Check if equipId is a substring of any metadata equipmentId
-            //    (e.g. "COUCH6COUPL DJ_OC" inside "COUCHP6_COUCH6COUPL DJ_OC")
             for (const [metaEquipId, metaSvgIds] of equipIdToSvgIds) {
                 if (metaEquipId.includes(equipId) || equipId.includes(metaEquipId)) {
                     for (const svgId of metaSvgIds) {
@@ -501,7 +502,6 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                     }
                 }
             }
-            // 3. Substring fallback against SVG element IDs
             const sanitized = equipId.replace(/\./g, '_');
             for (const [eid, el] of elMap) {
                 if (eid.includes(equipId) || (sanitized !== equipId && eid.includes(sanitized))) {
@@ -511,13 +511,26 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             return null;
         };
 
+        // Clone an element into the background layer with the given highlight class
+        let cachedBgCTM: DOMMatrix | null = null;
+        const cloneHighlight = (el: Element, highlightClass: string) => {
+            const clone = el.cloneNode(true) as SVGGraphicsElement;
+            clone.removeAttribute('id');
+            clone.classList.add('sld-highlight-clone', highlightClass);
+            try {
+                const elCTM = (el as SVGGraphicsElement).getScreenCTM();
+                if (!cachedBgCTM) cachedBgCTM = (bgLayer as SVGGraphicsElement).getScreenCTM();
+                if (elCTM && cachedBgCTM) {
+                    const rel = cachedBgCTM.inverse().multiply(elCTM);
+                    clone.setAttribute('transform', `matrix(${rel.a},${rel.b},${rel.c},${rel.d},${rel.e},${rel.f})`);
+                }
+            } catch { /* CTM unavailable */ }
+            bgLayer!.appendChild(clone);
+        };
+
         const highlightedCells = new Set<Element>();
 
-        // Use vlOverlay.actionId (set when the overlay was opened) rather than
-        // the component-level selectedActionId which may differ.
         const actionId = vlOverlay.actionId;
-
-        // Resolve the action detail from the result
         const actionDetail: ActionDetail | undefined =
             (actionId && result?.actions) ? result.actions[actionId] : undefined;
 
@@ -525,7 +538,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
         if (vlOverlay.tab !== 'n' && selectedBranch) {
             const cell = findCellForEquipment(selectedBranch);
             if (cell) {
-                cell.classList.add('sld-highlight-contingency');
+                cloneHighlight(cell, 'sld-highlight-contingency');
                 highlightedCells.add(cell);
             }
         }
@@ -533,20 +546,25 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
         // --- Action target highlights (action tab) ---
         if (vlOverlay.tab === 'action' && actionDetail) {
             const topo = actionDetail.action_topology;
-            if (topo) {
-                // Collect all equipment IDs affected by the action
-                const targetEquipIds = new Set<string>();
-                for (const id of Object.keys(topo.lines_ex_bus || {})) targetEquipIds.add(id);
-                for (const id of Object.keys(topo.lines_or_bus || {})) targetEquipIds.add(id);
-                for (const id of Object.keys(topo.gens_bus || {})) targetEquipIds.add(id);
-                for (const id of Object.keys(topo.loads_bus || {})) targetEquipIds.add(id);
-                for (const id of Object.keys(topo.pst_tap || {})) targetEquipIds.add(id);
+            const isCoupling = isCouplingAction(actionId, actionDetail.description_unitaire);
 
-                for (const equipId of targetEquipIds) {
-                    const cell = findCellForEquipment(equipId);
-                    if (cell && !highlightedCells.has(cell)) {
-                        cell.classList.add('sld-highlight-action');
-                        highlightedCells.add(cell);
+            if (topo) {
+                // For coupling actions: only highlight the breaker/switch, not branches.
+                // For other actions: highlight affected lines/gens/loads.
+                if (!isCoupling) {
+                    const targetEquipIds = new Set<string>();
+                    for (const id of Object.keys(topo.lines_ex_bus || {})) targetEquipIds.add(id);
+                    for (const id of Object.keys(topo.lines_or_bus || {})) targetEquipIds.add(id);
+                    for (const id of Object.keys(topo.gens_bus || {})) targetEquipIds.add(id);
+                    for (const id of Object.keys(topo.loads_bus || {})) targetEquipIds.add(id);
+                    for (const id of Object.keys(topo.pst_tap || {})) targetEquipIds.add(id);
+
+                    for (const equipId of targetEquipIds) {
+                        const cell = findCellForEquipment(equipId);
+                        if (cell && !highlightedCells.has(cell)) {
+                            cloneHighlight(cell, 'sld-highlight-action');
+                            highlightedCells.add(cell);
+                        }
                     }
                 }
 
@@ -556,7 +574,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                     for (const switchId of Object.keys(switches)) {
                         const cell = findCellForEquipment(switchId);
                         if (cell && !highlightedCells.has(cell)) {
-                            cell.classList.add('sld-highlight-breaker');
+                            cloneHighlight(cell, 'sld-highlight-breaker');
                             highlightedCells.add(cell);
                         }
                     }
@@ -564,28 +582,22 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             }
 
             // Fallback: parse description for breaker/switch names
-            // Pattern: "Ouverture/Fermeture OC '<name> DJ_OC' dans le poste '<VL>'"
-            // or "Ouverture <VL>_<name> DJ_OC dans le poste <VL>"
             const desc = actionDetail.description_unitaire;
             if (desc && highlightedCells.size === 0) {
-                // Extract quoted OC name like 'COUCH6COUPL DJ_OC'
                 const ocMatch = desc.match(/OC\s+'([^']+)'/);
                 if (ocMatch) {
                     const ocName = ocMatch[1].replace(/\s+DJ_OC$/, '');
-                    // The switch ID in pypowsybl is typically VL_NAME (e.g. COUCHP6_COUCH6COUPL DJ_OC)
                     const cell = findCellForEquipment(ocName);
                     if (cell && !highlightedCells.has(cell)) {
-                        cell.classList.add('sld-highlight-breaker');
+                        cloneHighlight(cell, 'sld-highlight-breaker');
                         highlightedCells.add(cell);
                     }
                 }
-                // Extract line/element name like "Ouverture LOUHAP3_LOUHA3SSUSU.1 DJ_OC"
                 const lineMatch = desc.match(/(?:Ouverture|Fermeture)\s+(\S+)\s+DJ_OC/);
                 if (lineMatch) {
-                    const fullName = lineMatch[1];
-                    const cell = findCellForEquipment(fullName);
+                    const cell = findCellForEquipment(lineMatch[1]);
                     if (cell && !highlightedCells.has(cell)) {
-                        cell.classList.add('sld-highlight-breaker');
+                        cloneHighlight(cell, 'sld-highlight-breaker');
                         highlightedCells.add(cell);
                     }
                 }
@@ -598,7 +610,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
             for (const lineId of overloadedLines) {
                 const cell = findCellForEquipment(lineId);
                 if (cell && !highlightedCells.has(cell)) {
-                    cell.classList.add('sld-highlight-overloaded');
+                    cloneHighlight(cell, 'sld-highlight-overloaded');
                     highlightedCells.add(cell);
                 }
             }
