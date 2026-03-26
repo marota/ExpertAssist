@@ -15,7 +15,8 @@ import numpy as np
 from expert_op4grid_recommender.environment import load_interesting_lines
 from expert_op4grid_recommender.utils.superposition import (
     compute_combined_pair_superposition,
-    _identify_action_elements
+    _identify_action_elements,
+    get_virtual_line_flow,
 )
 from expert_op4grid_recommender.action_evaluation.classifier import ActionClassifier
 
@@ -214,6 +215,182 @@ class RecommenderService:
             })
 
         return details if details else None
+
+    def _compute_mw_start_for_scores(self, action_scores):
+        """Compute MW at start for each action in action_scores.
+
+        Adds a 'mw_start' dict ({action_id: float|null}) to each action type entry.
+
+        Rules per action type:
+        - line_disconnection: abs(p_or) of the disconnected line in N-1 state
+        - pst_tap_change:     abs(p_or) of the PST line in N-1 state
+        - load_shedding:      load_p of the load in N-1 state
+        - open_coupling:      sum of abs(p_or) of lines moved to a different bus (virtual line MW)
+        - line_reconnection:  null (N/A)
+        - close_coupling:     null (N/A)
+        """
+        if not action_scores:
+            return action_scores
+
+        # Get the N-1 observation from analysis context
+        obs_n1 = None
+        if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
+            obs_n1 = self._analysis_context["obs_simu_defaut"]
+        if obs_n1 is None:
+            return action_scores
+
+        # Build name-to-index lookups
+        line_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_line)}
+        load_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_load)}
+
+        for action_type, type_data in action_scores.items():
+            scores = type_data.get("scores", {})
+            if not scores:
+                continue
+
+            t = action_type.lower()
+            is_reco = 'reco' in t or 'line_reconnection' in t
+            is_close = 'close_coupling' in t
+            is_na_type = is_reco or is_close
+
+            mw_start = {}
+            for action_id in scores:
+                if is_na_type:
+                    mw_start[action_id] = None
+                    continue
+
+                mw_val = self._get_action_mw_start(action_id, action_type, obs_n1,
+                                                    line_name_to_idx, load_name_to_idx)
+                mw_start[action_id] = mw_val
+
+            type_data["mw_start"] = sanitize_for_json(mw_start)
+
+        return action_scores
+
+    def _get_action_mw_start(self, action_id, action_type, obs_n1, line_idx_map, load_idx_map):
+        """Return MW at start for a single action, or None if not computable."""
+        t = action_type.lower()
+        is_disco = 'disco' in t or 'line_disconnection' in t
+        is_pst = 'pst' in t
+        is_ls = 'load_shedding' in t or 'ls' in t
+        is_open = 'open_coupling' in t
+
+        action_entry = self._dict_action.get(action_id) if self._dict_action else None
+
+        # For load shedding, try extracting the load name from the action ID
+        # even if the action entry is missing or content is incomplete
+        if is_ls:
+            return self._mw_start_load_shedding(action_id, action_entry, obs_n1, load_idx_map)
+
+        if action_entry is None:
+            return None
+
+        content = action_entry.get("content", {})
+        if not content:
+            return None
+
+        set_bus = content.get("set_bus", {})
+
+        if is_disco:
+            # Line disconnection: find the line being disconnected (bus = -1)
+            for field in ("lines_or_id", "lines_ex_id"):
+                bus_map = set_bus.get(field, {})
+                for name, bus in bus_map.items():
+                    if int(bus) == -1 and name in line_idx_map:
+                        idx = line_idx_map[name]
+                        return round(abs(float(obs_n1.p_or[idx])), 1)
+            return None
+
+        if is_pst:
+            # PST: find the PST element — it may be in pst_tap or in content directly
+            pst_tap = content.get("pst_tap", {})
+            if not pst_tap:
+                pst_tap = content.get("redispatch", {}).get("pst_tap", {})
+            for pst_name in pst_tap:
+                if pst_name in line_idx_map:
+                    idx = line_idx_map[pst_name]
+                    return round(abs(float(obs_n1.p_or[idx])), 1)
+            return None
+
+        if is_open:
+            return self._mw_start_open_coupling(set_bus, obs_n1, line_idx_map, load_idx_map)
+
+        return None
+
+    def _mw_start_load_shedding(self, action_id, action_entry, obs_n1, load_idx_map):
+        """Compute MW at start for a load shedding action.
+
+        Tries multiple strategies:
+        1. Parse content.set_bus.loads_id for loads with bus=-1
+        2. Extract load name from the action ID pattern load_shedding_<name>
+        """
+        # Strategy 1: parse content.set_bus.loads_id
+        if action_entry is not None:
+            content = action_entry.get("content", {})
+            if content:
+                set_bus = content.get("set_bus", {})
+                loads = set_bus.get("loads_id", {})
+                total_mw = 0.0
+                found = False
+                for load_name, bus in loads.items():
+                    if int(bus) == -1 and load_name in load_idx_map:
+                        idx = load_idx_map[load_name]
+                        total_mw += abs(float(obs_n1.load_p[idx]))
+                        found = True
+                if found:
+                    return round(total_mw, 1)
+
+        # Strategy 2: extract load name from action_id pattern
+        aid = action_id
+        if aid.startswith("load_shedding_"):
+            load_name = aid[len("load_shedding_"):]
+            if load_name in load_idx_map:
+                idx = load_idx_map[load_name]
+                return round(abs(float(obs_n1.load_p[idx])), 1)
+
+        return None
+
+    def _mw_start_open_coupling(self, set_bus, obs_n1, line_idx_map, load_idx_map):
+        """Compute virtual line MW for an open coupling (node splitting) action.
+
+        Delegates to ``get_virtual_line_flow()`` from expert_op4grid_recommender,
+        after partitioning ``set_bus`` elements by their target bus assignment
+        and collecting observation indices for bus 1 elements.
+
+        Virtual line MW = |get_virtual_line_flow(obs, ind_load, ind_prod, ind_lor, ind_lex)|
+        """
+        # Determine which bus number represents "bus 1" (smallest positive).
+        # Bus -1 means the element is disconnected and must be excluded.
+        all_buses = set()
+        for key in ("lines_or_id", "lines_ex_id", "generators_id", "loads_id"):
+            for _name, bus in set_bus.get(key, {}).items():
+                b = int(bus)
+                if b > 0:
+                    all_buses.add(b)
+
+        if not all_buses:
+            return None
+
+        bus1 = min(all_buses)
+
+        # Collect observation indices for elements on bus 1
+        ind_lor = [line_idx_map[name] for name, bus in set_bus.get("lines_or_id", {}).items()
+                    if int(bus) == bus1 and name in line_idx_map]
+        ind_lex = [line_idx_map[name] for name, bus in set_bus.get("lines_ex_id", {}).items()
+                    if int(bus) == bus1 and name in line_idx_map]
+
+        gen_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_gen)} if hasattr(obs_n1, 'name_gen') else {}
+        ind_prod = [gen_name_to_idx[name] for name, bus in set_bus.get("generators_id", {}).items()
+                     if int(bus) == bus1 and name in gen_name_to_idx]
+
+        ind_load = [load_idx_map[name] for name, bus in set_bus.get("loads_id", {}).items()
+                     if int(bus) == bus1 and name in load_idx_map]
+
+        if not (ind_lor or ind_lex or ind_prod or ind_load):
+            return None
+
+        flow = get_virtual_line_flow(obs_n1, ind_load, ind_prod, ind_lor, ind_lex)
+        return round(abs(flow), 1)
 
     def update_config(self, settings):
         # Update the global config of the package
@@ -431,12 +608,15 @@ class RecommenderService:
         # They should only exist in combined_actions as estimations.
         enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
+        # Compute MW at start for score tables
+        action_scores = self._compute_mw_start_for_scores(results.get("action_scores", {}))
+
         # Yield result
         care = context.get("lines_we_care_about")
         yield sanitize_for_json({
             "type": "result",
             "actions": enriched_actions,
-            "action_scores": results["action_scores"],
+            "action_scores": action_scores,
             "lines_overloaded": results["lines_overloaded_names"],
             "pre_existing_overloads": results.get("pre_existing_overloads", []),
             "combined_actions": results.get("combined_actions", {}),
@@ -565,6 +745,7 @@ class RecommenderService:
             lines_overloaded = result.get("lines_overloaded_names", [])
             prioritized = result.get("prioritized_actions", {})
             action_scores = sanitize_for_json(result.get("action_scores", {}))
+            action_scores = self._compute_mw_start_for_scores(action_scores)
 
             monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
 
