@@ -384,6 +384,126 @@ class TestMwStartOpenCoupling:
         assert result["open_coupling"]["mw_start"]["open_coupling_empty"] is None
 
 
+class TestMwStartOpenCouplingRealData:
+    """Tests using actual action data from reduced_model_actions_test.json.
+
+    P_or values are derived from the N-1 diagram screenshots provided by
+    the user and chosen to satisfy expected virtual line flow values.
+
+    Sign convention (grid2op):
+      - lines_or on bus 1: KCL contribution = -p_or
+      - lines_ex on bus 1: KCL contribution = +p_or
+      - loads on bus 1:    KCL contribution = -load_p
+      - gens on bus 1:     KCL contribution = +gen_p
+    """
+
+    @patch(
+        "expert_backend.services.recommender_service.get_virtual_line_flow",
+        side_effect=_real_get_virtual_line_flow,
+    )
+    def test_c_regp6_open_coupling(self, _mock_vlf):
+        """C.REGP6 action: 466f2c03-..._C.REGP6 — expected 63 MW.
+
+        User expected: 105 - (32 + 10) = 63
+          VIELM1 line (p_or=-105) on section 1A (bus 2), contributing 105 MW
+          C.REGY631 transformer (p_or=10) on section 1A (bus 2), consuming 10 MW
+          C.REG6TR615 load (32 MW) on section 1A (bus 2), consuming 32 MW
+
+        KCL at bus 2 = 105 - 10 - 32 = 63
+        KCL at bus 1 = -63 (opposite by conservation)
+        """
+        # Bus 1 values chosen so KCL at bus 1 = -63:
+        # -p_or(ZMAGN=118) - p_or(VIELM2=-99) - p_or(Y633=32) - load(TR614=4) - load(TR613=8) + gen(IN3=0) = -63
+        obs = _make_obs(
+            ["C.REGL61VIELM", "C.REGL61ZMAGN", "C.REGL62VIELM", "C.REGY633", "C.REGY631"],
+            [-105.0, 118.0, -99.0, 32.0, 10.0],
+            name_load=["C.REG6TR615", "C.REG6TR614", "C.REG6TR613"],
+            load_p=[32.0, 4.0, 8.0],
+        )
+        obs.name_gen = ["C.REGIN3", "C.REGINF", "C.REGING"]
+        obs.gen_p = np.array([0.0, 0.0, 0.0])
+
+        # Exact set_bus from the action JSON
+        dict_action = {
+            "466f2c03-90ce-401e-a458-fa177ad45abc_C.REGP6": {
+                "content": {
+                    "set_bus": {
+                        "lines_or_id": {
+                            "C.REGL61VIELM": 2, "C.REGL61ZMAGN": 1,
+                            "C.REGL62VIELM": 1, "C.REGY633": 1, "C.REGY631": 2,
+                        },
+                        "lines_ex_id": {},
+                        "loads_id": {
+                            "C.REG6TR615": 2, "C.REG6TR614": 1, "C.REG6TR613": 1,
+                        },
+                        "generators_id": {
+                            "C.REGIN3": 1, "C.REGINF": -1, "C.REGING": -1,
+                        },
+                        "shunts_id": {},
+                    }
+                }
+            }
+        }
+        svc = _make_service_with_context(obs, dict_action)
+        scores = {"open_coupling": {"scores": {"466f2c03-90ce-401e-a458-fa177ad45abc_C.REGP6": 5.0}}}
+        result = svc._compute_mw_start_for_scores(scores)
+
+        mw = result["open_coupling"]["mw_start"]["466f2c03-90ce-401e-a458-fa177ad45abc_C.REGP6"]
+        assert mw == pytest.approx(63.0, abs=0.1)
+
+    @patch(
+        "expert_backend.services.recommender_service.get_virtual_line_flow",
+        side_effect=_real_get_virtual_line_flow,
+    )
+    def test_cpvanp6_open_coupling(self, _mock_vlf):
+        """CPVANP6 action: 3617076a-..._CPVANP6 — expected 29 MW.
+
+        User expected: abs((88 + 39) - (38 + 118)) = abs(127 - 156) = 29
+          COUCHL61CPVAN (ex, bus 1, p_or=88): +88 contribution
+          CHALOL61CPVAN (ex, bus 1, p_or=39): +39 contribution
+          CPVANL61TAVAU (or, bus 1, p_or=118): -118 contribution
+          CPVANY633 (or, bus 1, p_or=38): -38 contribution
+          KCL at bus 1 = 88 + 39 - 118 - 38 = -29, |flow| = 29
+        """
+        obs = _make_obs(
+            [
+                "CPVANL61PYMON", "CPVANL61TAVAU", "CPVANL61ZMAGN",
+                "CPVANY633", "CPVANY632", "CPVANY631",
+                "CHALOL61CPVAN", "COUCHL61CPVAN",
+            ],
+            [12.0, 118.0, 79.0, 38.0, 0.0, 3.0, 39.0, 88.0],
+        )
+        obs.name_gen = []
+        obs.gen_p = np.array([])
+
+        # Exact set_bus from the action JSON (CPVANY632 = -1 = disconnected)
+        dict_action = {
+            "3617076a-a7f5-4f8a-9009-127ac9b85cff_CPVANP6": {
+                "content": {
+                    "set_bus": {
+                        "lines_or_id": {
+                            "CPVANL61PYMON": 2, "CPVANL61TAVAU": 1,
+                            "CPVANL61ZMAGN": 2, "CPVANY633": 1,
+                            "CPVANY632": -1, "CPVANY631": 2,
+                        },
+                        "lines_ex_id": {
+                            "CHALOL61CPVAN": 1, "COUCHL61CPVAN": 1,
+                        },
+                        "loads_id": {},
+                        "generators_id": {},
+                        "shunts_id": {},
+                    }
+                }
+            }
+        }
+        svc = _make_service_with_context(obs, dict_action)
+        scores = {"open_coupling": {"scores": {"3617076a-a7f5-4f8a-9009-127ac9b85cff_CPVANP6": 5.0}}}
+        result = svc._compute_mw_start_for_scores(scores)
+
+        mw = result["open_coupling"]["mw_start"]["3617076a-a7f5-4f8a-9009-127ac9b85cff_CPVANP6"]
+        assert mw == pytest.approx(29.0, abs=0.1)
+
+
 class TestMwStartNaTypes:
     def test_line_reconnection_is_null(self):
         obs = _make_obs(["LINE_A"], [100.0])
