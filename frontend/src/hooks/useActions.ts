@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
 import type { ActionDetail, AnalysisResult } from '../types';
+import { interactionLogger } from '../utils/interactionLogger';
 
 export interface ActionsState {
   selectedActionIds: Set<string>;
@@ -30,6 +31,7 @@ export function useActions(): ActionsState {
   const [suggestedByRecommenderIds, setSuggestedByRecommenderIds] = useState<Set<string>>(new Set());
 
   const handleActionFavorite = useCallback((actionId: string, setResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>) => {
+    interactionLogger.record('action_favorited', { action_id: actionId });
     setSelectedActionIds(prev => {
       const next = new Set(prev);
       next.add(actionId);
@@ -53,6 +55,7 @@ export function useActions(): ActionsState {
   }, []);
 
   const handleActionReject = useCallback((actionId: string) => {
+    interactionLogger.record('action_rejected', { action_id: actionId });
     setRejectedActionIds(prev => {
       const next = new Set(prev);
       next.add(actionId);
@@ -77,6 +80,7 @@ export function useActions(): ActionsState {
     setResult: React.Dispatch<React.SetStateAction<AnalysisResult | null>>,
     onSelectAction: (actionId: string) => void,
   ) => {
+    interactionLogger.record('manual_action_simulated', { action_id: actionId });
     setResult(prev => {
       const base = prev || {
         pdf_path: null,

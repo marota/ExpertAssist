@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
 import type { ActionDetail, AnalysisResult } from '../types';
+import { interactionLogger } from '../utils/interactionLogger';
 
 export interface AnalysisState {
   result: AnalysisResult | null;
@@ -63,6 +64,9 @@ export function useAnalysis(): AnalysisState {
     setError('');
     setInfoMessage('');
 
+    const step1CorrId = interactionLogger.record('analysis_step1_started', { element: selectedBranch });
+    const step1StartTs = new Date().toISOString();
+
     try {
       // Step 1: Detection
       const { api } = await import('../api');
@@ -73,6 +77,11 @@ export function useAnalysis(): AnalysisState {
         setAnalysisLoading(false);
         return;
       }
+
+      interactionLogger.recordCompletion('analysis_step1_completed', step1CorrId, {
+        can_proceed: res1.can_proceed,
+        overloads_detected: (res1.lines_overloaded || []).length,
+      }, step1StartTs);
 
       const detected = res1.lines_overloaded || [];
 
@@ -101,6 +110,11 @@ export function useAnalysis(): AnalysisState {
       }
 
       // Step 2: Resolution
+      const step2CorrId = interactionLogger.record('analysis_step2_started', {
+        selected_overloads: toResolve,
+        monitor_deselected: monitorDeselected,
+      });
+      const step2StartTs = new Date().toISOString();
       const response2 = await api.runAnalysisStep2Stream({
         selected_overloads: toResolve,
         all_overloads: detected,
@@ -110,6 +124,7 @@ export function useAnalysis(): AnalysisState {
       const reader = response2.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let step2ActionsCount = 0;
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -139,6 +154,7 @@ export function useAnalysis(): AnalysisState {
                 };
               }
               setSuggestedByRecommenderIds(prev => new Set([...prev, ...Object.keys(actionsWithFlags)]));
+              step2ActionsCount = Object.keys(actionsWithFlags).length;
               setPendingAnalysisResult({ ...event, actions: actionsWithFlags });
               if (event.message) setInfoMessage(event.message);
             } else if (event.type === 'error') {
@@ -149,6 +165,9 @@ export function useAnalysis(): AnalysisState {
           }
         }
       }
+      interactionLogger.recordCompletion('analysis_step2_completed', step2CorrId, {
+        actions_count: step2ActionsCount,
+      }, step2StartTs);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'An error occurred during analysis.';
       setError(message);
@@ -159,6 +178,9 @@ export function useAnalysis(): AnalysisState {
 
   const handleDisplayPrioritizedActions = useCallback((selectedActionIds: Set<string>) => {
     if (!pendingAnalysisResult) return;
+    interactionLogger.record('prioritized_actions_displayed', {
+      actions_count: Object.keys(pendingAnalysisResult.actions).length,
+    });
     setResult(prev => {
       const manualActionsData: Record<string, ActionDetail> = {};
       if (prev?.actions) {
@@ -190,6 +212,7 @@ export function useAnalysis(): AnalysisState {
   }, [pendingAnalysisResult]);
 
   const handleToggleOverload = useCallback((overload: string) => {
+    interactionLogger.record('overload_toggled', { overload });
     setSelectedOverloads((prev: Set<string>) => {
       const next = new Set(prev);
       if (next.has(overload)) next.delete(overload);

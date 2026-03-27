@@ -7,6 +7,7 @@ import {
 } from '../utils/svgUtils';
 import { processSvg } from '../utils/svgUtils';
 import type { DiagramData, ViewBox, MetadataIndex, TabId, VlOverlay, SldTab, FlowDelta, AssetDelta, AnalysisResult, ActionDetail } from '../types';
+import { interactionLogger } from '../utils/interactionLogger';
 
 export interface DiagramsState {
   // Tab
@@ -129,6 +130,7 @@ export function useDiagrams(
   // View mode
   const [actionViewMode, setActionViewMode] = useState<'network' | 'delta'>('network');
   const handleViewModeChange = useCallback((mode: 'network' | 'delta') => {
+    interactionLogger.record('view_mode_changed', { mode });
     setActionViewMode(mode);
   }, []);
 
@@ -201,6 +203,7 @@ export function useDiagrams(
     setError: (v: string) => void,
   ) => {
     if (actionId === selectedActionId) {
+      interactionLogger.record('action_deselected', { action_id: actionId });
       setSelectedActionId(null);
       setActionDiagram(null);
       setActiveTab('n-1');
@@ -211,6 +214,9 @@ export function useDiagrams(
       (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
       || n1PZ.viewBox || nPZ.viewBox;
 
+    if (actionId !== null) {
+      interactionLogger.record('action_selected', { action_id: actionId });
+    }
     setSelectedActionId(actionId);
     setActionDiagram(null);
     if (actionId === null) return;
@@ -280,6 +286,7 @@ export function useDiagrams(
 
   // ===== Zoom Controls =====
   const handleManualZoomIn = useCallback(() => {
+    interactionLogger.record('zoom_in', { tab: activeTab });
     const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
     const vb = currentPZ?.viewBox;
     if (currentPZ && vb) {
@@ -294,6 +301,7 @@ export function useDiagrams(
   }, [activeTab, actionPZ, nPZ, n1PZ]);
 
   const handleManualZoomOut = useCallback(() => {
+    interactionLogger.record('zoom_out', { tab: activeTab });
     const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
     const vb = currentPZ?.viewBox;
     if (currentPZ && vb) {
@@ -308,6 +316,7 @@ export function useDiagrams(
   }, [activeTab, actionPZ, nPZ, n1PZ]);
 
   const handleManualReset = useCallback(() => {
+    interactionLogger.record('zoom_reset', { tab: activeTab });
     setInspectQuery('');
 
     const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
@@ -406,6 +415,7 @@ export function useDiagrams(
   const selectedBranchForSld = useRef('');
 
   const handleVlDoubleClick = useCallback((actionId: string, vlName: string) => {
+    interactionLogger.record('sld_overlay_opened', { vl_name: vlName, action_id: actionId });
     let initialTab: SldTab;
     if (activeTab === 'n') {
       initialTab = 'n';
@@ -420,10 +430,12 @@ export function useDiagrams(
 
   const handleOverlaySldTabChange = useCallback((sldTab: SldTab) => {
     if (!vlOverlay) return;
+    interactionLogger.record('sld_overlay_tab_changed', { tab: sldTab, vl_name: vlOverlay.vlName });
     fetchSldVariant(vlOverlay.vlName, vlOverlay.actionId, sldTab, selectedBranchForSld.current);
   }, [vlOverlay, fetchSldVariant]);
 
   const handleOverlayClose = useCallback(() => {
+    interactionLogger.record('sld_overlay_closed');
     setVlOverlay(null);
   }, []);
 
@@ -435,6 +447,7 @@ export function useDiagrams(
     currentSelectedActionId: string | null,
     handleActionSelectFn: (actionId: string | null) => void,
   ) => {
+    interactionLogger.record('asset_clicked', { action_id: actionId, asset_name: assetName, tab });
     setInspectQuery(assetName);
     if (tab === 'n') {
       setActiveTab('n');

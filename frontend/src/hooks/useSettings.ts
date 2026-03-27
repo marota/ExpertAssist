@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { api } from '../api';
 import type { UserConfig } from '../api';
 import type { SettingsBackup } from '../types';
+import { interactionLogger } from '../utils/interactionLogger';
 
 export interface SettingsState {
   // Config file path
@@ -207,7 +208,10 @@ export function useSettings(): SettingsState {
   const pickSettingsPath = useCallback(async (type: 'file' | 'dir', setter: (path: string) => void) => {
     try {
       const path = await api.pickPath(type);
-      if (path) setter(path);
+      if (path) {
+        interactionLogger.record('path_picked', { type, path });
+        setter(path);
+      }
     } catch {
       console.error('Failed to open file picker');
     }
@@ -232,12 +236,14 @@ export function useSettings(): SettingsState {
   }), [networkPath, actionPath, layoutPath, outputFolderPath, minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minLoadShedding, nPrioritizedActions, linesMonitoringPath, monitoringFactor, preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode]);
 
   const handleOpenSettings = useCallback((tab: 'recommender' | 'configurations' | 'paths' = 'paths') => {
+    interactionLogger.record('settings_opened', { tab });
     setSettingsBackup(createCurrentBackup());
     setSettingsTab(tab);
     setIsSettingsOpen(true);
   }, [createCurrentBackup]);
 
   const handleCloseSettings = useCallback(() => {
+    interactionLogger.record('settings_cancelled');
     if (settingsBackup) {
       if (settingsBackup.networkPath !== undefined) setNetworkPath(settingsBackup.networkPath);
       if (settingsBackup.actionPath !== undefined) setActionPath(settingsBackup.actionPath);

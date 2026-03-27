@@ -149,7 +149,6 @@ const CombinedActionsModal: React.FC<Props> = ({
     // Only handle automatic preview for pre-computed actions or resetting
     useEffect(() => {
         const currentSelection = Array.from(selectedIds).sort().join('+');
-        const selectionChanged = currentSelection !== lastSelectionRef.current;
         lastSelectionRef.current = currentSelection;
 
         if (activeTab === 'explore' && selectedIds.size === 2 && disconnectedElement) {
@@ -157,43 +156,14 @@ const CombinedActionsModal: React.FC<Props> = ({
             const pairKey = [id1, id2].sort().join('+');
             const preComputed = analysisResult?.combined_actions?.[pairKey];
 
-                // Check if already in analysisResult.combined_actions
-                const pairKey = [id1, id2].sort().join('+');
-                const preComputed = analysisResult?.combined_actions?.[pairKey];
-
-                if (preComputed) {
-                    interactionLogger.record('combine_pair_estimated', {
-                        action1_id: id1, action2_id: id2,
-                        estimated_max_rho: preComputed.estimated_max_rho ?? preComputed.max_rho,
-                        estimated_max_rho_line: preComputed.estimated_max_rho_line ?? preComputed.max_rho_line,
-                    });
-                    setPreview(preComputed);
-                    setError(null);
-                    return;
-                }
-
-                setLoading(true);
+            if (preComputed) {
+                interactionLogger.record('combine_pair_estimated', {
+                    action1_id: id1, action2_id: id2,
+                    estimated_max_rho: preComputed.estimated_max_rho ?? preComputed.max_rho,
+                    estimated_max_rho_line: preComputed.estimated_max_rho_line ?? preComputed.max_rho_line,
+                });
+                setPreview(preComputed);
                 setError(null);
-                try {
-                    const result = await api.computeSuperposition(id1, id2, disconnectedElement);
-                    if (result.error) {
-                        setError(result.error);
-                        setPreview(null);
-                    } else {
-                        interactionLogger.record('combine_pair_estimated', {
-                            action1_id: id1, action2_id: id2,
-                            estimated_max_rho: result.estimated_max_rho ?? result.max_rho,
-                            estimated_max_rho_line: result.estimated_max_rho_line ?? result.max_rho_line,
-                        });
-                        setPreview(result);
-                    }
-                } catch (e: unknown) {
-                    const err = e as { response?: { data?: { detail?: string } }, message?: string };
-                    setError(err?.response?.data?.detail || err.message || 'Failed to compute superposition');
-                    setPreview(null);
-                } finally {
-                    setLoading(false);
-                }
             } else {
                 setPreview(null);
                 setSimulationFeedback(null);
@@ -217,6 +187,11 @@ const CombinedActionsModal: React.FC<Props> = ({
                 setError(result.error);
                 setPreview(result);
             } else {
+                interactionLogger.record('combine_pair_estimated', {
+                    action1_id: id1, action2_id: id2,
+                    estimated_max_rho: result.estimated_max_rho ?? result.max_rho,
+                    estimated_max_rho_line: result.estimated_max_rho_line ?? result.max_rho_line,
+                });
                 setPreview(result);
                 setError(null);
             }
@@ -230,6 +205,13 @@ const CombinedActionsModal: React.FC<Props> = ({
     };
 
     if (!isOpen) return null;
+
+    // Check if any selected action involves load shedding (combination not supported)
+    const allActions = { ...simulatedActions, ...analysisResult?.actions };
+    const hasLS = Array.from(selectedIds).some(id => {
+        const detail = allActions[id];
+        return detail?.load_shedding_details && detail.load_shedding_details.length > 0;
+    });
 
     const handleToggle = (id: string) => {
         setSimulationFeedback(null);

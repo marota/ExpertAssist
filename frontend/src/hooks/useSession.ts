@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, type Dispatch, type SetStateAction, type MutableRefObject } from 'react';
 import { api } from '../api';
 import { buildSessionResult } from '../utils/sessionUtils';
+import { interactionLogger } from '../utils/interactionLogger';
 import type { AnalysisResult, CombinedAction, ActionDetail, SessionResult } from '../types';
 
 export interface SessionState {
@@ -91,6 +92,7 @@ export function useSession(): SessionState {
   const [sessionRestoring, setSessionRestoring] = useState(false);
 
   const handleSaveResults = useCallback(async (params: SaveParams) => {
+    interactionLogger.record('session_saved', { output_folder: params.outputFolderPath });
     const session = buildSessionResult({
       networkPath: params.networkPath,
       actionPath: params.actionPath,
@@ -117,6 +119,7 @@ export function useSession(): SessionState {
       rejectedActionIds: params.rejectedActionIds,
       manuallyAddedIds: params.manuallyAddedIds,
       suggestedByRecommenderIds: params.suggestedByRecommenderIds,
+      interactionLog: interactionLogger.getLog(),
     });
 
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -130,6 +133,7 @@ export function useSession(): SessionState {
           json_content: JSON.stringify(session, null, 2),
           pdf_path: params.result?.pdf_path ?? null,
           output_folder_path: params.outputFolderPath,
+          interaction_log: JSON.stringify(interactionLogger.getLog(), null, 2),
         });
         const pdfMsg = res.pdf_copied ? " (including PDF)" : " (PDF not found)";
         params.setInfoMessage(`SUCCESS: Session saved to: ${res.session_folder}${pdfMsg}`);
@@ -149,6 +153,7 @@ export function useSession(): SessionState {
   }, []);
 
   const handleOpenReloadModal = useCallback(async (outputFolderPath: string, setError: (v: string) => void) => {
+    interactionLogger.record('session_reload_modal_opened');
     if (!outputFolderPath) {
       setError('Configure an Output Folder Path in Settings before reloading a session.');
       return;
@@ -322,6 +327,7 @@ export function useSession(): SessionState {
       ctx.setSelectedBranch(contingency.disconnected_element);
 
       setShowReloadModal(false);
+      interactionLogger.record('session_reloaded', { session_name: sessionName });
       ctx.setInfoMessage(`SUCCESS: Session "${sessionName}" restored`);
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
