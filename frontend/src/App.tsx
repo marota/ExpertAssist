@@ -11,6 +11,7 @@ import { useActions } from './hooks/useActions';
 import { useAnalysis } from './hooks/useAnalysis';
 import { useDiagrams } from './hooks/useDiagrams';
 import { useSession } from './hooks/useSession';
+import { interactionLogger } from './utils/interactionLogger';
 
 function App() {
   // ===== Settings Hook =====
@@ -161,6 +162,7 @@ function App() {
 
 
   const handleApplySettings = useCallback(async () => {
+    interactionLogger.record('settings_applied');
     try {
       setError('');
       analysis.setInfoMessage('');
@@ -217,6 +219,7 @@ function App() {
 
       diagrams.fetchBaseDiagram(vlRes.length);
 
+      interactionLogger.record('config_loaded', { network_path: networkPath, action_path: actionPath });
       setSettingsBackup(createCurrentBackup());
       setIsSettingsOpen(false);
     } catch (err: unknown) {
@@ -276,6 +279,7 @@ function App() {
       }
 
       diagrams.fetchBaseDiagram(vlRes.length);
+      interactionLogger.record('config_loaded', { network_path: networkPath, action_path: actionPath });
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to load config: ' + (e.response?.data?.detail || e.message));
@@ -294,6 +298,7 @@ function App() {
 
   const handleConfirmDialog = useCallback(() => {
     if (!confirmDialog) return;
+    interactionLogger.record('contingency_confirmed', { type: confirmDialog.type, pending_branch: confirmDialog.pendingBranch });
     if (confirmDialog.type === 'contingency') {
       clearContingencyState();
       setSelectedBranch(confirmDialog.pendingBranch || '');
@@ -532,7 +537,7 @@ function App() {
           >
             <div style={{ display: 'flex', borderBottom: '1px solid #eee', marginBottom: '15px' }}>
               <button
-                onClick={() => setSettingsTab('paths')}
+                onClick={() => { interactionLogger.record('settings_tab_changed', { tab: 'paths' }); setSettingsTab('paths'); }}
                 style={{
                   flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
                   border: 'none', borderBottom: settingsTab === 'paths' ? '2px solid #3498db' : 'none',
@@ -543,7 +548,7 @@ function App() {
                 Paths
               </button>
               <button
-                onClick={() => setSettingsTab('recommender')}
+                onClick={() => { interactionLogger.record('settings_tab_changed', { tab: 'recommender' }); setSettingsTab('recommender'); }}
                 style={{
                   flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
                   border: 'none', borderBottom: settingsTab === 'recommender' ? '2px solid #3498db' : 'none',
@@ -554,7 +559,7 @@ function App() {
                 Recommender
               </button>
               <button
-                onClick={() => setSettingsTab('configurations')}
+                onClick={() => { interactionLogger.record('settings_tab_changed', { tab: 'configurations' }); setSettingsTab('configurations'); }}
                 style={{
                   flex: 1, padding: '10px', cursor: 'pointer', background: 'none',
                   border: 'none', borderBottom: settingsTab === 'configurations' ? '2px solid #3498db' : 'none',
@@ -789,7 +794,7 @@ function App() {
               <input
                 list="contingencies"
                 value={selectedBranch}
-                onChange={e => setSelectedBranch(e.target.value)}
+                onChange={e => { interactionLogger.record('contingency_selected', { element: e.target.value }); setSelectedBranch(e.target.value); }}
                 placeholder="Search line/bus..."
                 style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
               />
@@ -876,7 +881,7 @@ function App() {
           <VisualizationPanel
             activeTab={activeTab}
             configLoading={configLoading}
-            onTabChange={setActiveTab}
+            onTabChange={(tab: TabId) => { interactionLogger.record('diagram_tab_changed', { tab }); setActiveTab(tab); }}
             nDiagram={nDiagram}
             n1Diagram={n1Diagram}
             n1Loading={n1Loading}
@@ -890,11 +895,11 @@ function App() {
             actionSvgContainerRef={actionSvgContainerRef}
             uniqueVoltages={uniqueVoltages}
             voltageRange={voltageRange}
-            onVoltageRangeChange={setVoltageRange}
+            onVoltageRangeChange={(range: [number, number]) => { interactionLogger.record('voltage_range_changed', { min: range[0], max: range[1] }); setVoltageRange(range); }}
             actionViewMode={actionViewMode}
             onViewModeChange={handleViewModeChange}
             inspectQuery={inspectQuery}
-            onInspectQueryChange={setInspectQuery}
+            onInspectQueryChange={(q: string) => { interactionLogger.record('inspect_query_changed', { query: q }); setInspectQuery(q); }}
             inspectableItems={inspectableItems}
             onResetView={handleManualReset}
             onZoomIn={handleManualZoomIn}
