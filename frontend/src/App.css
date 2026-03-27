@@ -213,6 +213,72 @@ circle.nad-highlight {
     fill-opacity: 0.5 !important;
 }
 
+/* ===== SLD impact highlights ===== */
+/* These classes are applied to CLONED elements placed in a background layer,
+   so they don't affect the original SLD rendering (flows/impacts modes). */
+
+/* Contingency element on N-1 SLD (orange halo behind) */
+.sld-highlight-clone.sld-highlight-contingency {
+    filter: drop-shadow(0 0 4px #ff9800) drop-shadow(0 0 8px #ff9800);
+}
+.sld-highlight-clone.sld-highlight-contingency path,
+.sld-highlight-clone.sld-highlight-contingency line,
+.sld-highlight-clone.sld-highlight-contingency polyline,
+.sld-highlight-clone.sld-highlight-contingency rect,
+.sld-highlight-clone.sld-highlight-contingency circle {
+    stroke: #ff9800 !important;
+    stroke-width: 6px !important;
+    stroke-opacity: 0.7 !important;
+    fill: none !important;
+}
+
+/* Action target on action SLD (yellow halo behind) */
+.sld-highlight-clone.sld-highlight-action {
+    filter: drop-shadow(0 0 4px #fffb00) drop-shadow(0 0 8px #fffb00);
+}
+.sld-highlight-clone.sld-highlight-action path,
+.sld-highlight-clone.sld-highlight-action line,
+.sld-highlight-clone.sld-highlight-action polyline,
+.sld-highlight-clone.sld-highlight-action rect,
+.sld-highlight-clone.sld-highlight-action circle {
+    stroke: #fffb00 !important;
+    stroke-width: 6px !important;
+    stroke-opacity: 0.7 !important;
+    fill: none !important;
+}
+
+/* Overloaded lines on SLD (dashed orange halo behind) */
+.sld-highlight-clone.sld-highlight-overloaded path,
+.sld-highlight-clone.sld-highlight-overloaded line,
+.sld-highlight-clone.sld-highlight-overloaded polyline {
+    stroke: #ff8c00 !important;
+    stroke-width: 5px !important;
+    stroke-dasharray: 6 3 !important;
+    stroke-opacity: 0.7 !important;
+    fill: none !important;
+}
+
+/* Affected breakers/switches on SLD (purple halo behind) */
+.sld-highlight-clone.sld-highlight-breaker {
+    filter: drop-shadow(0 0 3px #e040fb) drop-shadow(0 0 6px #e040fb);
+}
+.sld-highlight-clone.sld-highlight-breaker path,
+.sld-highlight-clone.sld-highlight-breaker line,
+.sld-highlight-clone.sld-highlight-breaker rect,
+.sld-highlight-clone.sld-highlight-breaker circle {
+    stroke: #e040fb !important;
+    stroke-width: 6px !important;
+    stroke-opacity: 0.7 !important;
+    fill: none !important;
+}
+
+/* Hide text/labels in cloned highlight elements */
+.sld-highlight-clone text,
+.sld-highlight-clone .sld-label,
+.sld-highlight-clone foreignObject {
+    display: none !important;
+}
+
 /* ===== Voltage Range Slider (vertical, right sidebar) ===== */
 .voltage-sidebar {
     position: absolute;

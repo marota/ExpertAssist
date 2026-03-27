@@ -147,6 +147,21 @@ class RecommenderService:
                     if val is None and isinstance(action_obj, dict):
                         val = action_obj.get(field)
                     topo[field] = sanitize_for_json(val) if val else {}
+
+                # Supplement switches from the original action dictionary entry
+                # (grid2op Action objects may not carry the 'switches' attribute;
+                #  the raw dict_action entry always has it for switch-based actions)
+                if not topo.get("switches") and self._dict_action:
+                    dict_entry = self._dict_action.get(action_id)
+                    if dict_entry:
+                        sw = dict_entry.get("switches")
+                        if not sw:
+                            content = dict_entry.get("content")
+                            if isinstance(content, dict):
+                                sw = content.get("switches")
+                        if sw:
+                            topo["switches"] = sanitize_for_json(sw)
+
                 enriched_actions[action_id]["action_topology"] = topo
 
             # Detect load shedding actions and compute shedded MW per load
@@ -1186,18 +1201,43 @@ class RecommenderService:
         result["non_convergence"] = non_convergence
         
         try:
-            # We already have action flows from the network
+            # We already have action flows from the network (still on action variant)
             action_flows = self._get_network_flows(network)
             action_assets = self._get_asset_flows(network)
-            
+
+            # Capture action switch states before switching variant
+            try:
+                action_switches_df = network.get_switches()
+            except Exception:
+                action_switches_df = None
+
             # Switch back to N-1 variant to get reference flows for the deltas
             n1_flows = self._get_n1_flows(self._last_disconnected_element)
-            
+
             n1_network = self._get_base_network()
             original_variant_n1 = n1_network.get_working_variant_id()
             n1_variant_id_n1 = self._get_n1_variant(self._last_disconnected_element)
             n1_network.set_working_variant(n1_variant_id_n1)
             n1_assets = self._get_asset_flows(n1_network)
+
+            # Compare switch states between N-1 and action to find changed switches
+            changed_switches = {}
+            if action_switches_df is not None:
+                try:
+                    n1_switches_df = n1_network.get_switches()
+                    for sw_id in action_switches_df.index:
+                        if sw_id in n1_switches_df.index:
+                            a_open = bool(action_switches_df.loc[sw_id, 'open'])
+                            n1_open = bool(n1_switches_df.loc[sw_id, 'open'])
+                            if a_open != n1_open:
+                                changed_switches[sw_id] = {
+                                    'from_open': n1_open,
+                                    'to_open': a_open,
+                                }
+                except Exception as e:
+                    print(f"Warning: Failed to compare switch states: {e}")
+            result["changed_switches"] = changed_switches
+
             n1_network.set_working_variant(original_variant_n1)
 
             deltas = self._compute_deltas(action_flows, n1_flows, voltage_level_ids=[voltage_level_id])
@@ -1209,7 +1249,7 @@ class RecommenderService:
             result["flow_deltas"] = {}
             result["reactive_flow_deltas"] = {}
             result["asset_deltas"] = {}
-            
+
         return result
 
     def get_n_sld(self, voltage_level_id: str) -> dict:
@@ -2029,11 +2069,23 @@ class RecommenderService:
             if "prioritized_actions" not in self._last_result:
                 self._last_result["prioritized_actions"] = {}
             
-            # Fetch topo
+            # Fetch topo (include all topology fields, not just line/gen/load buses)
             topo = {}
-            for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus"):
+            for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
                 val = getattr(action, field, None)
                 topo[field] = sanitize_for_json(val) if val else {}
+
+            # Supplement switches from the original action dictionary entry
+            if not topo.get("switches") and self._dict_action:
+                dict_entry = self._dict_action.get(action_id)
+                if dict_entry:
+                    sw = dict_entry.get("switches")
+                    if not sw:
+                        content = dict_entry.get("content")
+                        if isinstance(content, dict):
+                            sw = content.get("switches")
+                    if sw:
+                        topo["switches"] = sanitize_for_json(sw)
 
             self._last_result["prioritized_actions"][action_id] = {
                 "observation": obs_simu_action,
