@@ -52,7 +52,6 @@ interface SldOverlayProps {
     actionDiagram: DiagramData | null;
     selectedBranch: string;
     result: AnalysisResult | null;
-    selectedActionId: string | null;
 }
 
 // ===== Memoized SVG Container =====
@@ -77,7 +76,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
     vlOverlay, actionViewMode,
     onOverlayClose, onOverlaySldTabChange,
     n1Diagram, actionDiagram,
-    selectedBranch, result, selectedActionId,
+    selectedBranch, result,
 }) => {
     const overlayBodyRef = useRef<HTMLDivElement>(null);
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
@@ -1126,7 +1125,6 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         actionDiagram={actionDiagram}
                         selectedBranch={selectedBranch}
                         result={result}
-                        selectedActionId={selectedActionId}
                     />
                 )}
 
