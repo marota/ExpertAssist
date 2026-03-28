@@ -146,6 +146,10 @@ python verify_n1_simulation.py  # N-1 simulation verification
 - **Network layouts**: `grid_layout.json` with node ID to `[x, y]` coordinate mappings
 - **Generated outputs**: PDF overflow graphs in the `Overflow_Graph/` directory
 
-## License
+## License information
 
-See [LICENSE](LICENSE) for details.
+Copyright 2025-2026 RTE France
+RTE: <http://www.rte-france.com>
+
+This Source Code is subject to the terms of the Mozilla Public License (MPL) v2 also available
+[here](https://www.mozilla.org/en-US/MPL/2.0/)
