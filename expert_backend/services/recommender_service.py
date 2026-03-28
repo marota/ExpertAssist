@@ -60,6 +60,11 @@ class RecommenderService:
         self._dict_action = None
         self._analysis_context = None
         self._saved_computed_pairs = None
+        # Phase 2 caches for faster manual action simulation
+        self._cached_obs_n = None
+        self._cached_obs_n_id = None
+        self._cached_obs_n1 = None
+        self._cached_obs_n1_id = None
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
@@ -72,6 +77,11 @@ class RecommenderService:
         self._dict_action = None
         self._analysis_context = None
         self._saved_computed_pairs = None
+        # Phase 2 caches for faster manual action simulation
+        self._cached_obs_n = None
+        self._cached_obs_n_id = None
+        self._cached_obs_n1 = None
+        self._cached_obs_n1_id = None
 
     def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
         """Restore analysis context from a saved session.
@@ -1564,118 +1574,88 @@ class RecommenderService:
         **independently** using ``_terminal_aware_delta`` on the selected
         terminal's values.
 
-        Algorithm per branch per variable:
-          1. Pick the terminal at the observed voltage level.
-          2. Get the value at that terminal in both states; take abs.
-          3. Reference direction = direction of the state with the
-             strongest absolute value.
-          4. Transform each value to match the reference direction.
-          5. delta = transformed_after - transformed_before.
-
-        Category is calculated independently for active (P) and reactive (Q) power:
-          positive (orange) = flow increased
-          negative (blue)   = flow decreased
-          grey = insignificant (< 5 % of max |delta|)
-
-        Returns a dict with keys:
-            flow_deltas:          {line_id: {delta, category, flip_arrow}}
-            reactive_flow_deltas: {line_id: {delta, category, flip_arrow}}
+        Vectorized implementation (pandas/numpy).
         """
-        ap1, ap2 = after_flows["p1"], after_flows["p2"]
-        bp1, bp2 = before_flows["p1"], before_flows["p2"]
-        aq1, aq2 = after_flows["q1"], after_flows["q2"]
-        bq1, bq2 = before_flows["q1"], before_flows["q2"]
+        import numpy as np
+        import pandas as pd
 
-        # VL info for terminal selection (topology doesn't change between states)
-        avl1 = after_flows.get("vl1", {})
-        avl2 = after_flows.get("vl2", {})
-        bvl1 = before_flows.get("vl1", {})
-        bvl2 = before_flows.get("vl2", {})
+        # Build DataFrames for fast alignment
+        # after_flows keys are p1, p2, q1, q2, vl1, vl2
+        df_after = pd.DataFrame(after_flows)
+        df_before = pd.DataFrame(before_flows)
+        
+        # Combine to ensure we have all branches
+        all_ids = df_after.index.union(df_before.index)
+        df_after = df_after.reindex(all_ids).fillna(0.0)
+        df_before = df_before.reindex(all_ids).fillna(0.0)
+        
+        # 1. Terminal selection logic (vectorized version of _select_terminal_for_branch)
         vl_set = set(voltage_level_ids) if voltage_level_ids else set()
+        terminal_mask = np.ones(len(all_ids), dtype=int)
+        if vl_set:
+            v1 = df_after["vl1"]
+            v2 = df_after["vl2"]
+            is_v1 = v1.isin(vl_set)
+            is_v2 = v2.isin(vl_set)
+            # Terminal 2 if side 2 matches but side 1 doesn't (arbitrary priority)
+            terminal_mask[~is_v1 & is_v2] = 2
+            
+        # 2. Extract active and reactive flows based on selected terminal
+        a_p = np.where(terminal_mask == 1, df_after["p1"], df_after["p2"])
+        b_p = np.where(terminal_mask == 1, df_before["p1"], df_before["p2"])
+        a_q = np.where(terminal_mask == 1, df_after["q1"], df_after["q2"])
+        b_q = np.where(terminal_mask == 1, df_before["q1"], df_before["q2"])
 
-        all_ids = set(ap1.keys()) | set(bp1.keys())
+        # 3. Delta computation logic (vectorized version of _terminal_aware_delta)
+        def compute_delta_vectorized(after_val, before_val):
+            abs_a = np.abs(after_val)
+            abs_b = np.abs(before_val)
+            # Reference: the state with the strongest absolute value
+            ref_pos = np.where(abs_a >= abs_b, after_val >= 0, before_val >= 0)
+            
+            # Transform value: val if ref_pos else -val
+            a_ref = np.where(ref_pos, after_val, -after_val)
+            b_ref = np.where(ref_pos, before_val, -before_val)
+            delta = a_ref - b_ref
+            
+            # flip_arrow when after_val orientation diffs from reference orientation
+            flip = (after_val >= 0) != ref_pos
+            return delta, flip
 
-        p_delta_map = {}
-        p_flip_map = {}
-        q_delta_map = {}
-        q_flip_map = {}
+        dp, flip_p = compute_delta_vectorized(a_p, b_p)
+        dq, flip_q = compute_delta_vectorized(a_q, b_q)
 
-        for lid in all_ids:
-            # Select which terminal to observe for this branch
-            terminal = self._select_terminal_for_branch(
-                lid, avl1, avl2, bvl1, bvl2, vl_set
-            )
+        # 4. Independent category classification for P and Q
+        def get_categories_vectorized(deltas):
+            max_abs = np.max(np.abs(deltas)) if len(deltas) > 0 else 0.0
+            thresh = max_abs * 0.05
+            cats = np.full(len(deltas), "grey", dtype=object)
+            if max_abs > 0:
+                mask_sig = np.abs(deltas) >= thresh
+                cats[mask_sig] = np.where(deltas[mask_sig] > 0, "positive", "negative")
+            return cats
 
-            if terminal == 1:
-                a_p = ap1.get(lid, 0.0)
-                b_p = bp1.get(lid, 0.0)
-                a_q = aq1.get(lid, 0.0)
-                b_q = bq1.get(lid, 0.0)
-            else:
-                a_p = ap2.get(lid, 0.0)
-                b_p = bp2.get(lid, 0.0)
-                a_q = aq2.get(lid, 0.0)
-                b_q = bq2.get(lid, 0.0)
+        cats_p = get_categories_vectorized(dp)
+        cats_q = get_categories_vectorized(dq)
 
-            # P: terminal-aware delta with its own reference direction
-            pd, pf = self._terminal_aware_delta(a_p, b_p)
-            p_delta_map[lid] = pd
-            p_flip_map[lid] = pf
-
-            # Q: terminal-aware delta with its OWN independent reference direction
-            qd, qf = self._terminal_aware_delta(a_q, b_q)
-            q_delta_map[lid] = qd
-            q_flip_map[lid] = qf
-
-        # Category threshold based on P deltas
-        if p_delta_map:
-            max_abs_p = max(abs(d) for d in p_delta_map.values())
-        else:
-            max_abs_p = 0.0
-        threshold_p = max_abs_p * 0.05
-
-        # Category threshold based on Q deltas independently
-        if q_delta_map:
-            max_abs_q = max(abs(d) for d in q_delta_map.values())
-        else:
-            max_abs_q = 0.0
-        threshold_q = max_abs_q * 0.05
-
-        flow_deltas = {}
-        reactive_flow_deltas = {}
-        for lid in all_ids:
-            # P category
-            dp = p_delta_map[lid]
-            if max_abs_p == 0.0 or abs(dp) < threshold_p:
-                cat_p = "grey"
-            elif dp > 0:
-                cat_p = "positive"
-            else:
-                cat_p = "negative"
-                
-            # Q category
-            dq = q_delta_map[lid]
-            if max_abs_q == 0.0 or abs(dq) < threshold_q:
-                cat_q = "grey"
-            elif dq > 0:
-                cat_q = "positive"
-            else:
-                cat_q = "negative"
-
-            flow_deltas[lid] = {
-                "delta": round(float(dp), 1),
-                "category": cat_p,
-                "flip_arrow": p_flip_map[lid],
+        # 5. Pack results back into dict format
+        res_p = {}
+        res_q = {}
+        for i, lid in enumerate(all_ids):
+            res_p[lid] = {
+                "delta": round(float(dp[i]), 1),
+                "category": cats_p[i],
+                "flip_arrow": bool(flip_p[i]),
             }
-            reactive_flow_deltas[lid] = {
-                "delta": round(float(dq), 1),
-                "category": cat_q,
-                "flip_arrow": q_flip_map[lid],
+            res_q[lid] = {
+                "delta": round(float(dq[i]), 1),
+                "category": cats_q[i],
+                "flip_arrow": bool(flip_q[i]),
             }
 
         return {
-            "flow_deltas": flow_deltas,
-            "reactive_flow_deltas": reactive_flow_deltas,
+            "flow_deltas": res_p,
+            "reactive_flow_deltas": res_q,
         }
 
     def _compute_asset_deltas(self, after_asset_flows, before_asset_flows):
@@ -1905,16 +1885,25 @@ class RecommenderService:
         nm = env.network_manager
         n = nm.network
         
-        # Get base observation (N state)
         original_variant = n.get_working_variant_id()
         n_variant_id = self._get_n_variant()
-        n.set_working_variant(n_variant_id)
-        obs = env.get_obs()
+        if self._cached_obs_n is not None and self._cached_obs_n_id == n_variant_id:
+            obs = self._cached_obs_n
+        else:
+            n.set_working_variant(n_variant_id)
+            obs = env.get_obs()
+            self._cached_obs_n = obs
+            self._cached_obs_n_id = n_variant_id
         
         # Get N-1 observation (contingency state)
         n1_variant_id = self._get_n1_variant(disconnected_element)
-        n.set_working_variant(n1_variant_id)
-        obs_simu_defaut = env.get_obs()
+        if self._cached_obs_n1 is not None and self._cached_obs_n1_id == n1_variant_id:
+            obs_simu_defaut = self._cached_obs_n1
+        else:
+            n.set_working_variant(n1_variant_id)
+            obs_simu_defaut = env.get_obs()
+            self._cached_obs_n1 = obs_simu_defaut
+            self._cached_obs_n1_id = n1_variant_id
         
         # FIX: Explicitly tell the observation which variant it's currently modeling
         # so that obs_simu_defaut.simulate() branches from N-1 and not the base network.
