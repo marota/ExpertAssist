@@ -1007,6 +1007,28 @@ class RecommenderService:
         
         print(f"[RECO] Diagram generated: NAD {t1-t0:.2f}s, SVG {t2-t1:.2f}s, Meta {t3-t2:.2f}s (SVG length={len(svg)})")
 
+        if "NaN" in svg:
+            try:
+                from lxml import etree
+                parser = etree.XMLParser(recover=True, huge_tree=True)
+                root = etree.fromstring(svg.encode('utf-8'), parser=parser)
+                
+                # Find all elements that have at least one attribute containing "NaN"
+                to_remove = []
+                for el in root.iter():
+                    if any("NaN" in str(val) for val in el.attrib.values()):
+                        to_remove.append(el)
+                
+                for el in to_remove:
+                    parent = el.getparent()
+                    if parent is not None:
+                        parent.remove(el)
+                
+                svg = etree.tostring(root, encoding='unicode')
+                print(f"[RECO] NaN-stripping complete: removed {len(to_remove)} elements.")
+            except Exception as e:
+                print(f"Warning: Failed to strip NaN from SVG: {e}")
+
         return {
             "svg": svg,
             "metadata": meta,
