@@ -72,6 +72,8 @@ class RecommenderService:
         self._cached_obs_n_id = None
         self._cached_obs_n1 = None
         self._cached_obs_n1_id = None
+        # Pre-built SimulationEnvironment reused across contingency analyses
+        self._cached_env_context = None
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
@@ -89,6 +91,7 @@ class RecommenderService:
         self._cached_obs_n_id = None
         self._cached_obs_n1 = None
         self._cached_obs_n1_id = None
+        self._cached_env_context = None
 
     def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
         """Restore analysis context from a saved session.
@@ -530,6 +533,25 @@ class RecommenderService:
         if not config.SAVE_FOLDER_VISUALIZATION.exists():
             config.SAVE_FOLDER_VISUALIZATION.mkdir(parents=True, exist_ok=True)
 
+        # Pre-build SimulationEnvironment so run_analysis_step1 can reuse it
+        # (avoids ~4s network load + AC/DC LF + ~3.8s detect_non_reconnectable_lines on every call)
+        try:
+            from expert_op4grid_recommender.environment_pypowsybl import setup_environment_configs_pypowsybl
+            env, _obs, env_path, chronic_name, custom_layout, _raw_dict, lines_non_reconnectable, lines_we_care_about = \
+                setup_environment_configs_pypowsybl()
+            self._cached_env_context = {
+                'env': env,
+                'path_chronic': env_path,
+                'chronic_name': chronic_name,
+                'custom_layout': custom_layout,
+                'lines_non_reconnectable': lines_non_reconnectable,
+                'lines_we_care_about': lines_we_care_about,
+            }
+            print("[RecommenderService] SimulationEnvironment pre-built and cached.")
+        except Exception as e:
+            print(f"[RecommenderService] Warning: Failed to pre-build SimulationEnvironment: {e}")
+            self._cached_env_context = None
+
     def _get_latest_pdf_path(self, analysis_start_time=None):
         """Finds the latest PDF generated in the SAVE_FOLDER_VISUALIZATION."""
         save_folder = config.SAVE_FOLDER_VISUALIZATION
@@ -556,6 +578,7 @@ class RecommenderService:
                 backend=Backend.PYPOWSYBL,
                 fast_mode=getattr(config, 'PYPOWSYBL_FAST_MODE', True),
                 dict_action=self._dict_action,
+                prebuilt_env_context=self._cached_env_context,
             )
             
             self._last_disconnected_element = disconnected_element
