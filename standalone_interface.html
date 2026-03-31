@@ -2303,7 +2303,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     for (const [id, data] of Object.entries(prev.actions || {})) {
                         if (data.is_manual) manuals[id] = data;
                     }
-                    return { ...prev, actions: manuals, lines_overloaded: [] };
+                    // Explicitly clear old graph data so the "Generating..." screen shows up 
+                    // until the new event is received in the stream.
+                    return { ...prev, actions: manuals, lines_overloaded: [], pdf_url: null, pdf_path: null };
                 });
 
                 const step1CorrId = interactionLogger.record('analysis_step1_started', { element: selectedBranch });
