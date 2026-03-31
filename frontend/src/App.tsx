@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import './App.css';
 import VisualizationPanel from './components/VisualizationPanel';
 import ActionFeed from './components/ActionFeed';
@@ -80,6 +80,12 @@ function App() {
     inspectableItems,
     nSvgContainerRef, n1SvgContainerRef, actionSvgContainerRef
   } = diagrams;
+
+  const filteredBranches = useMemo(() => {
+    const q = selectedBranch.toUpperCase();
+    if (!q) return branches.slice(0, 50);
+    return branches.filter(b => b.toUpperCase().includes(q)).slice(0, 50);
+  }, [branches, selectedBranch]);
 
   const session = useSession();
   const {
@@ -801,7 +807,7 @@ function App() {
                 style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
               />
               <datalist id="contingencies">
-                {branches.map(b => <option key={b} value={b} />)}
+                {filteredBranches.map(b => <option key={b} value={b} />)}
               </datalist>
               <button
                 onClick={wrappedRunAnalysis}
