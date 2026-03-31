@@ -1507,6 +1507,18 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             // useLayoutEffect to ensure ref is updated before any layout effects (like svg-pan-zoom) run
             useLayoutEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
             const prevTabRef = useRef(activeTab);
+            
+            // Auto-switch to overflow tab when PDF becomes available
+            const lastAutoSwitchedPdfRef = useRef(null);
+            useEffect(() => {
+                if (result?.pdf_url && result.pdf_url !== lastAutoSwitchedPdfRef.current) {
+                    console.log('[Analysis] New PDF URL detected, auto-switching to overflow tab');
+                    lastAutoSwitchedPdfRef.current = result.pdf_url;
+                    setActiveTab('overflow');
+                } else if (!result?.pdf_url) {
+                    lastAutoSwitchedPdfRef.current = null;
+                }
+            }, [result?.pdf_url]);
 
             const [nDiagram, setNDiagram] = useState(null);
             const [n1Diagram, setN1Diagram] = useState(null);
