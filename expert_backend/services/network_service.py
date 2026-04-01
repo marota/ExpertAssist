@@ -178,11 +178,45 @@ class NetworkService:
             return {}
 
         result = {}
-        for lid in load_ids:
-            if lid in loads.index:
-                row = loads.loc[lid]
-                if 'voltage_level_id' in row.index:
-                    result[lid] = row['voltage_level_id']
+    def get_generator_voltage_level(self, gen_id: str) -> str | None:
+        """Return the voltage level ID that a given generator belongs to."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        generators = self.network.get_generators()
+        if generators is not None and gen_id in generators.index:
+            row = generators.loc[gen_id]
+            if 'voltage_level_id' in row.index:
+                return row['voltage_level_id']
+        return None
+
+    def get_generator_type(self, gen_id: str) -> str | None:
+        """Return the energy source type of a given generator."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        generators = self.network.get_generators()
+        if generators is not None and gen_id in generators.index:
+            row = generators.loc[gen_id]
+            if 'energy_source' in row.index:
+                return row['energy_source']
+        return None
+
+    def get_generator_types_bulk(self, gen_ids: list[str]) -> dict[str, str]:
+        """Return {gen_id: energy_source} for a list of generators."""
+        if not self.network:
+            raise ValueError("Network not loaded")
+
+        generators = self.network.get_generators()
+        if generators is None or generators.empty:
+            return {}
+
+        result = {}
+        for gid in gen_ids:
+            if gid in generators.index:
+                row = generators.loc[gid]
+                if 'energy_source' in row.index:
+                    result[gid] = row['energy_source']
         return result
 
 network_service = NetworkService()

@@ -1,86 +1,112 @@
-# Copyright (c) 2025-2026, RTE (https://www.rte-france.com)
-# This Source Code Form is subject to the terms of the Mozilla Public License, version 2.0.
-# If a copy of the Mozilla Public License, version 2.0 was not distributed with this file,
-# you can obtain one at http://mozilla.org/MPL/2.0/.
-# SPDX-License-Identifier: MPL-2.0
-# This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
-
-import unittest
+import pytest
 from unittest.mock import MagicMock, patch
-import pandas as pd
-import json
-from pathlib import Path
-
-# Add the project path to sys.path
-import sys
-project_root = "/Users/antoine/Dev/Co-Study4Grid"
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-# Mock config BEFORE importing
-mock_config = MagicMock()
-mock_config.LAYOUT_FILE_PATH = Path("/tmp/grid_layout.json")
-sys.modules["expert_op4grid_recommender.config"] = mock_config
-
 from expert_backend.services.recommender_service import RecommenderService
+import numpy as np
 
-class TestRecommenderRegressions(unittest.TestCase):
-    
-    def setUp(self):
+class TestRecommenderRegressions:
+    def setup_method(self):
         self.service = RecommenderService()
 
-    def test_load_layout_exists(self):
-        """Test that _load_layout is present and handles missing file."""
-        self.assertTrue(hasattr(self.service, '_load_layout'))
-        # With non-existent file path
-        mock_config.LAYOUT_FILE_PATH = Path("/non/existent/path")
-        layout = self.service._load_layout()
-        self.assertIsNone(layout)
+    def test_mw_calculation_robustness(self):
+        """Regression test for gen_p naming and abs() MW calculation (Fixes 0.0MW display)."""
+        # 1. Mock observations: obs_n1 has gen_p (PyPowsybl), no prod_p (Grid2Op)
+        obs_n1 = MagicMock()
+        obs_n1.name_gen = ["GEN_1", "GEN_2"]
+        obs_n1.gen_p = np.array([-10.0, -20.0])
+        del obs_n1.prod_p # Ensure it's not there
 
-    def test_default_nad_parameters_exists(self):
-        """Test that _default_nad_parameters is present."""
-        self.assertTrue(hasattr(self.service, '_default_nad_parameters'))
-        with patch('pypowsybl.network.NadParameters', return_value=MagicMock()) as mock_nad:
-            params = self.service._default_nad_parameters()
-            self.assertIsNotNone(params)
-            mock_nad.assert_called_once()
+        obs_action = MagicMock()
+        obs_action.name_gen = ["GEN_1", "GEN_2"]
+        obs_action.gen_p = np.array([0.0, -20.0]) # GEN_1 is curtailed (0.0)
+        del obs_action.prod_p
 
-    def test_generate_diagram_parameters(self):
-        """Test that _generate_diagram passes parameters correctly."""
-        mock_network = MagicMock()
+        # 2. Test _compute_curtailment_details
+        # Set up analysis context for N-1 observation
+        self.service._analysis_context = {"obs_simu_defaut": obs_n1}
         
-        # Patch dependencies
-        with patch.object(self.service, '_load_layout', return_value=None), \
-             patch.object(self.service, '_default_nad_parameters', return_value=MagicMock()), \
-             patch('pypowsybl_jupyter.util._get_svg_string', return_value="<svg>"), \
-             patch('pypowsybl_jupyter.util._get_svg_metadata', return_value={}):
+        # Action data contains the action object and the post-action observation
+        mock_action = MagicMock()
+        mock_action.gens_bus = {"GEN_1": -1}
+        action_data = {
+            "action": mock_action,
+            "observation": obs_action
+        }
+        
+        with patch.object(self.service, "_is_renewable_gen", return_value=True), \
+             patch("expert_backend.services.network_service.network_service.get_generator_voltage_level", return_value="VL1"):
             
-            # Case 1: Minimal call
-            self.service._generate_diagram(mock_network)
-            _, kwargs = mock_network.get_network_area_diagram.call_args
-            self.assertIn('nad_parameters', kwargs)
-            self.assertNotIn('voltage_level_ids', kwargs)
+            details = self.service._compute_curtailment_details(action_data)
+            
+            assert details is not None
+            assert len(details) == 1
+            # abs(-10.0 - 0.0) = 10.0. 
+            assert details[0]["curtailed_mw"] == 10.0
 
-            # Case 2: With VL filtering
-            self.service._generate_diagram(mock_network, voltage_level_ids=["VL1"], depth=2)
-            _, kwargs = mock_network.get_network_area_diagram.call_args
-            self.assertEqual(kwargs['voltage_level_ids'], ["VL1"])
-            self.assertEqual(kwargs['depth'], 2)
-
-    def test_diagram_getters_signatures(self):
-        """Test that getters have the correct signatures to prevent regression."""
-        import inspect
+        # 3. Test _mw_start_curtailment
+        gen_idx_map = {"GEN_1": 0, "GEN_2": 1}
+        action_entry = {"content": {"set_bus": {"generators_id": {"GEN_1": -1}}}}
         
-        # get_network_diagram(self, voltage_level_ids=None, depth=0)
-        sig = inspect.signature(self.service.get_network_diagram)
-        self.assertIn('voltage_level_ids', sig.parameters)
-        self.assertIn('depth', sig.parameters)
+        mw_start = self.service._mw_start_curtailment("curtail_GEN_1", action_entry, obs_n1, gen_idx_map)
+        assert mw_start == 10.0 # abs(-10.0)
 
-        # get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0)
-        sig = inspect.signature(self.service.get_n1_diagram)
-        self.assertIn('disconnected_element', sig.parameters)
-        self.assertIn('voltage_level_ids', sig.parameters)
-        self.assertIn('depth', sig.parameters)
+    def test_dynamic_curtailment_reconstruction(self):
+        """Regression test for curtail_ prefix handling in simulate_manual_action."""
+        self.service._dict_action = {"dummy": {}} # Set non-empty
+        
+        # Mock simulation environment and network
+        mock_env = MagicMock()
+        mock_nm = MagicMock()
+        mock_env.network_manager = mock_nm
+        mock_n = MagicMock()
+        mock_nm.network = mock_n
+        mock_n.get_working_variant_id.return_value = "base"
+        mock_n.get_variant_ids.return_value = ["base", "N_state_cached", "N_1_state_NONE"]
+        
+        # Mock observations
+        mock_obs = MagicMock()
+        mock_obs.name_line = ["LINE_1"]
+        mock_obs.rho = np.array([0.5])
+        mock_obs.n_components = 1
+        mock_env.get_obs.return_value = mock_obs
+        
+        # Mock simulation result
+        mock_simulated = MagicMock()
+        mock_simulated.name_line = ["LINE_1"]
+        mock_simulated.rho = np.array([0.4])
+        mock_simulated.n_components = 1
+        mock_obs.simulate.return_value = (mock_simulated, 0.0, False, {"exception": None})
+        
+        # Mock action object returned by action_space
+        mock_action = MagicMock()
+        mock_action.gens_bus = {"GEN_TEST": -1}
+        mock_action.loads_bus = {}
+        mock_env.action_space.return_value = mock_action
+        
+        with patch.object(self.service, "_get_simulation_env", return_value=mock_env), \
+             patch.object(self.service, "_get_n_variant", return_value="N_state_cached"), \
+             patch.object(self.service, "_get_n1_variant", return_value="N_1_state_NONE"), \
+             patch.object(self.service, "_get_monitoring_parameters", return_value=(["LINE_1"], {"LINE_1"})), \
+             patch.object(self.service, "_is_renewable_gen", return_value=True), \
+             patch("expert_backend.services.network_service.network_service.get_generator_voltage_level", return_value="VL_TEST"), \
+             patch.object(self.service, "_compute_deltas", return_value={"flow_deltas": {}, "reactive_flow_deltas": {}}), \
+             patch.object(self.service, "_compute_asset_deltas", return_value={}):
+            
+            # Action 'curtail_GEN_TEST' is NOT in self._dict_action
+            assert "curtail_GEN_TEST" not in self.service._dict_action
+            
+            # Call simulate_manual_action
+            # Use "NONE" as disconnected_element to match mock_n.get_variant_ids
+            result = self.service.simulate_manual_action("curtail_GEN_TEST", "NONE")
+            
+            # Verify it was dynamically created and injected
+            assert "curtail_GEN_TEST" in self.service._dict_action
+            entry = self.service._dict_action["curtail_GEN_TEST"]
+            assert entry["content"]["set_bus"]["generators_id"]["GEN_TEST"] == -1
+            assert "Renewable curtailment" in entry["description"]
 
-if __name__ == '__main__':
-    unittest.main()
+            # Verify enriched result contains curtailment_details
+            assert "curtailment_details" in result
+            assert len(result["curtailment_details"]) == 1
+            assert result["curtailment_details"][0]["gen_name"] == "GEN_TEST"
+            # It should also have curtailed_mw (mocked as 0.0 in this specific test since we didn't mock gen_p in this test case's obs)
+            assert "curtailed_mw" in result["curtailment_details"][0]

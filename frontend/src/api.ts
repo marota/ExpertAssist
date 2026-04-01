@@ -22,6 +22,7 @@ export interface UserConfig {
     min_line_disconnections: number;
     min_pst: number;
     min_load_shedding: number;
+    min_renewable_curtailment_actions: number;
     n_prioritized_actions: number;
     monitoring_factor: number;
     pre_existing_overload_threshold: number;
@@ -104,7 +105,9 @@ export const api = {
         lines_overloaded: string[];
         action_topology?: import('./types').ActionTopology;
         load_shedding_details?: import('./types').LoadSheddingDetail[];
+        curtailment_details?: import('./types').CurtailmentDetail[];
     }> => {
+
         const response = await axios.post(
             `${API_BASE_URL}/api/simulate-manual-action`,
             { action_id: actionId, disconnected_element: disconnectedElement, action_content: actionContent ?? null, lines_overloaded: linesOverloaded ?? null }

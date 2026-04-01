@@ -39,6 +39,7 @@ interface ActionFeedProps {
     nPrioritizedActions: number;
     minPst: number;
     minLoadShedding: number;
+    minRenewableCurtailmentActions: number;
     ignoreReconnections: boolean;
     onOpenSettings?: (tab?: 'recommender' | 'configurations' | 'paths') => void;
     actionDictFileName?: string | null;
@@ -73,6 +74,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     minLineDisconnections,
     minPst,
     minLoadShedding,
+    minRenewableCurtailmentActions,
     nPrioritizedActions,
     ignoreReconnections,
     onOpenSettings,
@@ -87,7 +89,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [loadingActions, setLoadingActions] = useState(false);
     const [simulating, setSimulating] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true });
+    const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true, rc: true });
     const searchInputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
@@ -140,6 +142,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const isCloseCoupling = t.includes('close_coupling');
                 const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
                 const isLoadShedding = (actionId.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
+                const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
 
                 if (isDisco) return typeFilters.disco;
                 if (isReco) return typeFilters.reco;
@@ -147,6 +150,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 if (isCloseCoupling) return typeFilters.close;
                 if (isPstAction) return typeFilters.pst;
                 if (isLoadShedding) return typeFilters.ls;
+                if (isRenewableCurtailment) return typeFilters.rc;
 
                 // Handle unknown or categories not explicitly listed above
                 return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
@@ -173,11 +177,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             if (isCloseType && !typeFilters.close) continue;
             if (isPstType && !typeFilters.pst) continue;
             if ((type === 'load_shedding' || type.includes('load_shedding')) && !typeFilters.ls) continue;
+            if ((type === 'renewable_curtailment' || type.includes('renewable_curtailment')) && !typeFilters.rc) continue;
 
             // If it's a known type but its filter is off, it's already skipped.
             // If it's an unknown type, we show it only if ALL filters are active.
-            const isKnownType = isDiscoType || isRecoType || isOpenType || isCloseType || isPstType || type === 'load_shedding' || type.includes('load_shedding');
-            if (!isKnownType && !(typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls)) {
+            const isKnownType = isDiscoType || isRecoType || isOpenType || isCloseType || isPstType || type === 'load_shedding' || type.includes('load_shedding') || type === 'renewable_curtailment' || type.includes('renewable_curtailment');
+            if (!isKnownType && !(typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls && typeFilters.rc)) {
                 continue;
             }
 
@@ -195,6 +200,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const isCloseCoupling = t.includes('close_coupling');
                 const isPstAction = (aid.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
                 const isLoadShedding = (aid.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
+                const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
 
                 let shouldShow = false;
                 if (isDisco) shouldShow = typeFilters.disco;
@@ -203,7 +209,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 else if (isCloseCoupling) shouldShow = typeFilters.close;
                 else if (isPstAction) shouldShow = typeFilters.pst;
                 else if (isLoadShedding) shouldShow = typeFilters.ls;
-                else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
+                else if (isRenewableCurtailment) shouldShow = typeFilters.rc;
+                else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls && typeFilters.rc;
 
                 if (!shouldShow) continue;
 
@@ -279,6 +286,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 disconnected_mw: result.disconnected_mw,
                 non_convergence: result.non_convergence,
                 load_shedding_details: result.load_shedding_details,
+                curtailment_details: result.curtailment_details,
+
             };
             onManualActionAdded(trimmedId, detail, result.lines_overloaded || []);
             setSearchOpen(false);
@@ -451,6 +460,24 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                     ))}
                                 </div>
                             )}
+                            {details.curtailment_details && details.curtailment_details.length > 0 && (
+                                <div style={{ fontSize: '12px', background: '#e0f2fe', color: '#075985', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #7dd3fc', fontWeight: 500 }}>
+                                    {details.curtailment_details.map((rc, i) => (
+                                        <div key={rc.gen_name}>
+                                            {i > 0 && <br />}
+                                            Renewable curtailment of <strong>{rc.curtailed_mw.toFixed(1)} MW</strong> on generator <strong>{rc.gen_name}</strong>
+                                            {rc.voltage_level_id && (
+                                                <> at voltage level <button
+                                                    style={{ ...clickableLinkStyle, fontSize: '12px', color: '#075985', fontWeight: 700 }}
+                                                    title={`Double-click to open SLD for ${rc.voltage_level_id}`}
+                                                    onClick={(e) => { e.stopPropagation(); onAssetClick(id, rc.voltage_level_id!, 'action'); }}
+                                                    onDoubleClick={(e) => { e.stopPropagation(); onVlDoubleClick?.(id, rc.voltage_level_id!); }}
+                                                >{rc.voltage_level_id}</button></>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             {details.non_convergence && (
                                 <div style={{ fontSize: '11px', color: '#9a3412', backgroundColor: '#fff8f1', padding: '2px 6px', borderRadius: '4px', marginTop: '4px', border: '1px solid #ffedd5', display: 'inline-block' }}>
                                     ⚠️ LoadFlow failure: {details.non_convergence}
@@ -465,6 +492,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         {(() => {
                             const badges: React.ReactNode[] = [];
                             const isLoadShedding = details.load_shedding_details && details.load_shedding_details.length > 0;
+                            const isRenewableCurtailment = details.curtailment_details && details.curtailment_details.length > 0;
                             const badgeBtn = (name: string, bg: string, color: string, title: string, onDoubleClick?: (e: React.MouseEvent) => void) => (
                                 <button key={name}
                                     style={{ padding: '2px 7px', borderRadius: '4px', border: 'none', cursor: 'pointer', fontSize: '11px', fontWeight: 600, textDecoration: 'underline dotted', flexShrink: 0, backgroundColor: bg, color }}
@@ -484,6 +512,17 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                         badges.push(badgeBtn(ls.voltage_level_id, '#d1fae5', '#065f46', `Click: zoom to ${ls.voltage_level_id} | Double-click: open SLD`, (e) => {
                                             e.stopPropagation();
                                             onVlDoubleClick?.(id, ls.voltage_level_id!);
+                                        }));
+                                    }
+                                });
+                            } else if (isRenewableCurtailment) {
+                                const vlSet = new Set<string>();
+                                details.curtailment_details!.forEach(rc => {
+                                    if (rc.voltage_level_id && !vlSet.has(rc.voltage_level_id)) {
+                                        vlSet.add(rc.voltage_level_id);
+                                        badges.push(badgeBtn(rc.voltage_level_id, '#d1fae5', '#065f46', `Click: zoom to ${rc.voltage_level_id} | Double-click: open SLD`, (e) => {
+                                            e.stopPropagation();
+                                            onVlDoubleClick?.(id, rc.voltage_level_id!);
                                         }));
                                     }
                                 });
@@ -647,7 +686,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         </div>
                         {/* Action type filter checkboxes */}
                         <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
-                            {([['disco', 'Disconnections'], ['reco', 'Reconnections'], ['ls', 'Load Shedding'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling']] as const).map(([key, label]) => (
+                            {([['disco', 'Disconnections'], ['reco', 'Reconnections'], ['ls', 'Load Shedding'], ['rc', 'Renewable Curtailment'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling']] as const).map(([key, label]) => (
                                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
                                     <input
                                         type="checkbox"
@@ -992,7 +1031,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 </button>
                                             )}
                                         </div>
-                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding</div>
+                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding, {minRenewableCurtailmentActions} RC</div>
                                         <div>• Maximum suggestions: {nPrioritizedActions}</div>
                                         <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
                                     </div>
