@@ -2353,7 +2353,7 @@ class RecommenderService:
                         load_idx = list(obs_simu_action.name_load).index(load_name)
                         p_before = float(obs_simu_defaut.load_p[load_idx])
                         p_after = float(obs_simu_action.load_p[load_idx])
-                        shedded_mw = max(0.0, p_before - p_after)
+                        shedded_mw = abs(p_before - p_after)
                     except (ValueError, IndexError):
                         shedded_mw = 0.0
                     vl_id = None
@@ -2366,6 +2366,43 @@ class RecommenderService:
                         "load_name": load_name,
                         "voltage_level_id": vl_id,
                         "shedded_mw": round(shedded_mw, 1),
+                    })
+
+        # Compute curtailment details for this action
+        curtailment_details = None
+        gens_bus = getattr(action, "gens_bus", None)
+        if gens_bus and obs_simu_action is not None:
+            curtailed_gen_names = [name for name, bus in gens_bus.items() if bus == -1]
+            if curtailed_gen_names:
+                curtailment_details = []
+                for gen_name in curtailed_gen_names:
+                    # Use a safe renewable check
+                    if not self._is_renewable_gen(gen_name, obs=obs_simu_action or obs_simu_defaut):
+                        continue
+                    curtailed_mw = 0.0
+                    try:
+                        gen_idx = list(obs_simu_action.name_gen).index(gen_name)
+                        if hasattr(obs_simu_defaut, "gen_p"):
+                            p_before = float(obs_simu_defaut.gen_p[gen_idx])
+                            p_after = float(obs_simu_action.gen_p[gen_idx])
+                        else:
+                            p_before = float(obs_simu_defaut.prod_p[gen_idx])
+                            p_after = float(obs_simu_action.prod_p[gen_idx])
+                        curtailed_mw = abs(p_before - p_after)
+                    except (ValueError, IndexError, AttributeError):
+                        curtailed_mw = 0.0
+                    
+                    vl_id = None
+                    try:
+                        from expert_backend.services.network_service import network_service as ns
+                        vl_id = ns.get_generator_voltage_level(gen_name)
+                    except Exception:
+                        pass
+                    
+                    curtailment_details.append({
+                        "gen_name": gen_name,
+                        "voltage_level_id": vl_id,
+                        "curtailed_mw": round(curtailed_mw, 1),
                     })
 
         result = {
@@ -2384,6 +2421,10 @@ class RecommenderService:
         }
         if load_shedding_details:
             result["load_shedding_details"] = load_shedding_details
+        if curtailment_details:
+            result["curtailment_details"] = curtailment_details
+            # Add badges and focus info for curtailment to match the rich UI of run_analysis
+            # Note: the frontend relies on curtailment_details being present to show the blue box.
         return result
 
     def compute_superposition(self, action1_id: str, action2_id: str, disconnected_element: str):

@@ -76,10 +76,18 @@ class TestRecommenderRegressions:
         mock_simulated.n_components = 1
         mock_obs.simulate.return_value = (mock_simulated, 0.0, False, {"exception": None})
         
+        # Mock action object returned by action_space
+        mock_action = MagicMock()
+        mock_action.gens_bus = {"GEN_TEST": -1}
+        mock_action.loads_bus = {}
+        mock_env.action_space.return_value = mock_action
+        
         with patch.object(self.service, "_get_simulation_env", return_value=mock_env), \
              patch.object(self.service, "_get_n_variant", return_value="N_state_cached"), \
              patch.object(self.service, "_get_n1_variant", return_value="N_1_state_NONE"), \
              patch.object(self.service, "_get_monitoring_parameters", return_value=(["LINE_1"], {"LINE_1"})), \
+             patch.object(self.service, "_is_renewable_gen", return_value=True), \
+             patch("expert_backend.services.network_service.network_service.get_generator_voltage_level", return_value="VL_TEST"), \
              patch.object(self.service, "_compute_deltas", return_value={"flow_deltas": {}, "reactive_flow_deltas": {}}), \
              patch.object(self.service, "_compute_asset_deltas", return_value={}):
             
@@ -88,10 +96,17 @@ class TestRecommenderRegressions:
             
             # Call simulate_manual_action
             # Use "NONE" as disconnected_element to match mock_n.get_variant_ids
-            self.service.simulate_manual_action("curtail_GEN_TEST", "NONE")
+            result = self.service.simulate_manual_action("curtail_GEN_TEST", "NONE")
             
             # Verify it was dynamically created and injected
             assert "curtail_GEN_TEST" in self.service._dict_action
             entry = self.service._dict_action["curtail_GEN_TEST"]
             assert entry["content"]["set_bus"]["generators_id"]["GEN_TEST"] == -1
             assert "Renewable curtailment" in entry["description"]
+
+            # Verify enriched result contains curtailment_details
+            assert "curtailment_details" in result
+            assert len(result["curtailment_details"]) == 1
+            assert result["curtailment_details"][0]["gen_name"] == "GEN_TEST"
+            # It should also have curtailed_mw (mocked as 0.0 in this specific test since we didn't mock gen_p in this test case's obs)
+            assert "curtailed_mw" in result["curtailment_details"][0]
