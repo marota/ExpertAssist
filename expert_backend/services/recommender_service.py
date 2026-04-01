@@ -1976,8 +1976,8 @@ class RecommenderService:
             "loads_bus": "loads_id",
         }
         for topo_field, content_field in topo_to_content.items():
-            vals = topo.get(topo_field) or {}
-            if vals:
+            vals = topo.get(topo_field)
+            if vals and isinstance(vals, dict):
                 set_bus[content_field] = {name: int(bus) for name, bus in vals.items()}
 
         # Include substations (critical for node_merging_* actions)
@@ -2328,78 +2328,79 @@ class RecommenderService:
                 non_convergence = str(sim_exception)
 
         # Store the observation so get_action_variant_diagram can generate the NAD
+        # Refresh topo and content for the combined result dictionary
+        topo = {}
+        for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
+            val = getattr(action, field, None)
+            if val:
+                topo[field] = sanitize_for_json(val)
+
+        # Supplement switches from the original action dictionary entry
+        if not topo.get("switches") and self._dict_action:
+            dict_entry = self._dict_action.get(action_id)
+            if dict_entry:
+                sw = dict_entry.get("switches")
+                if not sw:
+                    content_in_dict = dict_entry.get("content")
+                    if isinstance(content_in_dict, dict):
+                        sw = content_in_dict.get("switches")
+                if sw:
+                    topo["switches"] = sanitize_for_json(sw)
+
+        # Manually inject topology for heuristic actions (Standard Grid2Op actions don't have these attributes)
+        if action_id.startswith("curtail_"):
+            gen_name = action_id.replace("curtail_", "")
+            topo["gens_bus"] = {gen_name: -1}
+        elif action_id.startswith("load_shedding_"):
+            load_name = action_id.replace("load_shedding_", "")
+            topo["loads_bus"] = {load_name: -1}
+
+        # Retrieve the full description and content from the dictionary if available
+        description = description_unitaire
+        content = None
+        if self._dict_action:
+            dict_entry = self._dict_action.get(action_id)
+            if dict_entry:
+                if "description" in dict_entry:
+                    description = dict_entry["description"]
+                if "content" in dict_entry:
+                    content = dict_entry["content"]
+        
+        if content is None and topo:
+            # Best-effort reconstruction for manual/combined actions from topology
+            try:
+                restored = RecommenderService._build_action_entry_from_topology(action_id, topo)
+                content = restored.get("content")
+            except Exception:
+                content = None
+
+        action_data = {
+            "content": content,
+            "observation": obs_simu_action,
+            "description": description or description_unitaire or "",
+            "description_unitaire": description_unitaire or "",
+            "action": action,
+            "action_topology": topo,
+            "rho_before": rho_before,
+            "rho_after": rho_after,
+            "max_rho": max_rho,
+            "max_rho_line": max_rho_line,
+            "is_rho_reduction": is_rho_reduction,
+            "is_islanded": is_islanded,
+            "non_convergence": non_convergence,
+            "is_estimated": False,
+        }
         if not info_action["exception"] and obs_simu_action is not None:
             if self._last_result is None:
                 self._last_result = {"prioritized_actions": {}}
             if "prioritized_actions" not in self._last_result:
                 self._last_result["prioritized_actions"] = {}
-            
-            # Fetch topo (include all topology fields, not just line/gen/load buses)
-            topo = {}
-            for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
-                val = getattr(action, field, None)
-                topo[field] = sanitize_for_json(val) if val else {}
-            
-            # Manually inject topology for heuristic actions (Standard Grid2Op actions don't have these attributes)
-            if action_id.startswith("curtail_"):
-                gen_name = action_id.replace("curtail_", "")
-                topo["gens_bus"] = {gen_name: -1}
-            elif action_id.startswith("load_shedding"):
-                load_name = action_id.replace("load_shedding_", "")
-                topo["loads_bus"] = {load_name: -1}
-
-            # Supplement switches from the original action dictionary entry
-            if not topo.get("switches") and self._dict_action:
-                dict_entry = self._dict_action.get(action_id)
-                if dict_entry:
-                    sw = dict_entry.get("switches")
-                    if not sw:
-                        content = dict_entry.get("content")
-                        if isinstance(content, dict):
-                            sw = content.get("switches")
-                    if sw:
-                        topo["switches"] = sanitize_for_json(sw)
-
-            # Retrieve the full description from the dictionary if available
-            description = description_unitaire
-            if self._dict_action:
-                dict_entry = self._dict_action.get(action_id)
-                if dict_entry and "description" in dict_entry:
-                    description = dict_entry["description"]
-
-            # Restore content key from global dictionary or topology
-            content = None
-            if self._dict_action and action_id and action_id in self._dict_action:
-                content = self._dict_action[action_id].get("content")
-            
-            if content is None and 'topo' in locals() and action_id:
-                # Best-effort reconstruction for manual actions from topology
-                restored = RecommenderService._build_action_entry_from_topology(action_id, topo)
-                content = restored.get("content")
-
-            action_data = {
-                "content": content,
-                "observation": obs_simu_action,
-                "description": description or description_unitaire or "",
-                "description_unitaire": description_unitaire or "",
-                "action": action,
-                "action_topology": topo,
-                "rho_before": rho_before,
-                "rho_after": rho_after,
-                "max_rho": max_rho,
-                "max_rho_line": max_rho_line,
-                "is_rho_reduction": is_rho_reduction,
-                "is_islanded": is_islanded,
-                "non_convergence": non_convergence,
-                "is_estimated": False,
-            }
             self._last_result["prioritized_actions"][action_id] = action_data
 
-            
-            # CRITICAL: Also update the global action registry used by the SLD generator
-            if self._dict_action is None:
-                self._dict_action = {}
-            self._dict_action[action_id] = action_data
+        # CRITICAL: Also update the global action registry used by the SLD generator
+        if self._dict_action is None:
+            self._dict_action = {}
+        self._dict_action[action_id] = action_data
 
 
         # Compute load shedding details for this action
@@ -2483,7 +2484,7 @@ class RecommenderService:
             "content": content,
         }
 
-        if action_id and ("curtail_" in action_id or "load_shedding_" in action_id):
+        if topo:
             result["action_topology"] = topo
 
         if load_shedding_details:
