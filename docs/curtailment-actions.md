@@ -1,190 +1,79 @@
-# Renewable Curtailment Actions
+# Renewable Curtailment Actions — Revised Implementation Specification
 
-## Context
+This document outlines the changes required to integrate renewable curtailment actions into ExpertAssist. Renewable curtailment is the generation-side counterpart to load shedding, and its implementation follows the same architectural patterns.
 
-This document describes the integration of **renewable curtailment** actions into ExpertAssist, following changes introduced in [Expert_op4grid_recommender PR #71](https://github.com/marota/Expert_op4grid_recommender/pull/71/).
+## 1. Library Interface (expert_op4grid_recommender)
 
-Curtailment is the symmetric counterpart to **load shedding**:
+The implementation depends on functional parity in the `expert_op4grid_recommender` library (implementing PR #71 requirements).
 
-| | Load Shedding | Renewable Curtailment |
-|---|---|---|
-| **Target** | Loads (consumption) | Renewable generators (WIND / SOLAR) |
-| **Side of overloaded line** | Downstream (aval) | Upstream (amont) |
-| **Grid2Op mechanism** | `set_bus: {loads_id: {load: -1}}` | `set_bus: {generators_id: {gen: -1}}` |
-| **MW metric** | `P_shed_MW` — load power lost | `P_curtailment_MW` — generation power lost |
-| **Classifier type** | `load_shedding` | `open_gen` / `renewable_curtailment` |
+### Configuration
+`config.py` must include:
+- `MIN_RENEWABLE_CURTAILMENT` (float): Minimum score threshold for renewable curtailment actions (default: 0.0).
 
----
+### Action Classification
+`ActionClassifier.identify_grid2op_action_type()` must return `"open_gen"` for actions that disconnect one or more generators (where `gen_set_bus == -1` and no other elements except switches/nodes are modified).
 
-## Library Changes (Expert_op4grid_recommender)
+### Recommendation Results
+The analysis output now includes a `renewable_curtailment` key in `action_scores`, containing:
+- `scores`: Map of `action_id` to its score.
+- `mw_start`: Map of `action_id` to the MW value of the curtailed generator(s) at the start of the action (N-state or N-1 state).
+- `params`: Relevant scoring parameters (e.g., energy source type).
 
-### New configuration parameters
+## 2. ExpertAssist Backend
 
-| Parameter | Default | Description |
-|---|---|---|
-| `MIN_RENEWABLE_CURTAILMENT` | `0` | Minimum number of curtailment actions to include in prioritized results |
-| `RENEWABLE_CURTAILMENT_MARGIN` | `0.05` | Safety margin (5%) added when computing required curtailment MW |
-| `RENEWABLE_CURTAILMENT_MIN_MW` | `1.0` | Generators below this MW threshold are excluded as candidates |
-| `RENEWABLE_ENERGY_SOURCES` | `["WIND", "SOLAR"]` | Energy source types considered renewable |
+### Configuration Models
+Update `expert_backend/main.py`:
+- Add `min_renewable_curtailment: float = 0.0` to `ConfigRequest`.
+- Update `get_config()` to return the new parameter.
+- Update `action_dict_stats` to include a count of `"open_gen"` actions.
 
-### New action score category
+### Network Service
+Update `expert_backend/services/network_service.py`:
+- Implement `get_generator_voltage_level(gen_id: str)` to resolve generator IDs to their voltage levels via pypowsybl.
 
-`action_scores` now includes a `renewable_curtailment` key with the same `{scores, params, non_convergence}` structure as other categories:
+### Recommender Service
+Update `expert_backend/services/recommender_service.py`:
+- **Config Mapping**: Propagate `min_renewable_curtailment` from `Settings` to the library's `config.MIN_RENEWABLE_CURTAILMENT`.
+- **Curtailment Enrichment**:
+    ```python
+    def _compute_curtailment_details(self, action_topology):
+        # 1. Identify disconnected generators from gens_bus
+        # 2. Compute curtailed MW (pre-action production vs post-action production)
+        # 3. Resolve voltage_level_id & energy_source
+        # 4. Return list of CurtailmentDetail objects
+    ```
+- **MW lookup**: Implement `_get_action_mw_start` for `renewable_curtailment` / `open_gen` to fetch pre-action production values from the observation.
 
-```python
-"renewable_curtailment": {
-    "scores": {"open_gen_GEN_WIND_1": 0.85, ...},
-    "params": {
-        "open_gen_GEN_WIND_1": {
-            "substation": "SUB_A",
-            "node_type": "amont",
-            "generator_name": "GEN_WIND_1",
-            "energy_source": "WIND",
-            "influence_factor": 0.72,
-            "P_curtailment_MW": 45.3,
-            "P_overload_excess_MW": 32.1,
-            "available_gen_MW": 50.0,
-            "coverage_ratio": 1.0,
-            "generators_curtailed": ["GEN_WIND_1"],
-            "assets": {"lines": [...], "loads": [...], "generators": [...]}
-        }
-    },
-    "non_convergence": {}
-}
-```
+## 3. ExpertAssist Frontend
 
-### New observation properties
+### Types
+Update `frontend/src/types.ts`:
+- Add `CurtailmentDetail` interface:
+  ```typescript
+  export interface CurtailmentDetail {
+      generator_name: string;
+      voltage_level_id: string | null;
+      energy_source: string;
+      curtailed_mw: number;
+  }
+  ```
+- Add `curtailment_details?: CurtailmentDetail[]` to `ActionDetail` and `SavedActionEntry`.
+- Add `min_renewable_curtailment: number` to `ConfigRequest` and `SettingsBackup`.
 
-- `gen_energy_source` — numpy array of energy source strings per generator
-- `gen_renewable` — boolean numpy array indicating renewable status
+### Settings UI
+Update `SettingsModal.tsx`:
+- Add a "Renewable Curtailment" numeric input in the Recommender tab, following "Min Load Shedding".
 
-### Classifier
+### Action Feed & Filtering
+Update `ActionFeed.tsx`:
+- Add a `curtail` checkbox to the manual selection search dropdown.
+- Add logic to identify "curtailment" actions in `filteredActions` and `scoredActionsList` (types containing `"curtail"` or `"open_gen"`).
+- Render `curtailment_details` in the action card, styled with a distinct color (greenish) to differ from load shedding.
 
-`ActionClassifier.identify_grid2op_action_type()` now returns `"open_gen"` for actions that disconnect one or more generators (`gen_set_bus == -1`).
+### Combined Actions
+Update `CombinedActionsModal.tsx`:
+- Add a `CURTAIL` filter button to the exploration tab.
+- Ensure combined actions involving curtailment propagate their details correctly.
 
----
-
-## ExpertAssist Integration
-
-### 1. Backend — Configuration
-
-**`main.py`** `ConfigRequest` model gains a new field:
-
-```python
-min_renewable_curtailment: float = 0.0
-```
-
-**`recommender_service.py`** `apply_settings()` maps it to:
-
-```python
-config.MIN_RENEWABLE_CURTAILMENT = settings.min_renewable_curtailment
-```
-
-The `/api/config` response `action_dict_stats` gains a `curtailment` count, detected via the classifier's `open_gen` type.
-
-### 2. Backend — Action enrichment
-
-A new `_compute_curtailment_details()` method mirrors the existing `_compute_load_shedding_details()`:
-
-1. Reads `gens_bus` from the action topology
-2. Filters generators with `bus == -1` (disconnected)
-3. Computes curtailed MW: `gen_p(N-1) - gen_p(post-action)` for each generator
-4. Resolves each generator's voltage level via `network_service`
-5. Looks up `energy_source` from the library's observation data
-
-Returns a list attached to the enriched action as `curtailment_details`:
-
-```python
-[
-    {
-        "generator_name": "GEN_WIND_1",
-        "voltage_level_id": "VL_HV_1",
-        "energy_source": "WIND",
-        "curtailed_mw": 45.3
-    }
-]
-```
-
-### 3. Backend — MW at start
-
-`_get_action_mw_start()` gains a `renewable_curtailment` / `open_gen` branch:
-
-- Extracts generator name from `content.set_bus.generators_id`
-- Returns `gen_p` of that generator in the N-1 observation
-
-### 4. Frontend — Types
-
-New interface:
-
-```typescript
-interface CurtailmentDetail {
-    generator_name: string;
-    voltage_level_id: string | null;
-    energy_source: string;       // "WIND" | "SOLAR"
-    curtailed_mw: number;
-}
-```
-
-Added to `ActionDetail`, `SavedActionEntry`:
-
-```typescript
-curtailment_details?: CurtailmentDetail[];
-```
-
-`ConfigRequest` and `SettingsBackup` gain `min_renewable_curtailment` / `minRenewableCurtailment`.
-
-### 5. Frontend — Settings UI
-
-A new **Min Renewable Curtailment** numeric input appears in the Recommender settings section, next to the existing Min Load Shedding input. Default: `0.0`.
-
-The value is:
-- Sent in `POST /api/config` payload
-- Persisted in session save/load
-- Shown in the recommender settings summary in the ActionFeed header
-
-### 6. Frontend — Action type filter
-
-A new `curtail` filter toggle is added in both:
-
-- **ActionFeed** search dropdown — checkbox: `[x] Curtailment`
-- **CombinedActionsModal** explore tab — pill button: `CURTAIL`
-
-Detection logic: action type contains `renewable_curtailment` or `open_gen`.
-
-### 7. Frontend — Rendering
-
-Curtailment details render in an info box styled similarly to load shedding but with a distinct color (green-tinted to suggest generation):
-
-```
-Curtailment of **45.3 MW** on generator **GEN_WIND_1** (WIND) at voltage level **VL_HV_1**
-```
-
-The voltage level is a clickable badge (zoom to NAD / double-click for SLD), consistent with load shedding detail interaction.
-
-Target equipment badges for curtailment actions show VL badges derived from `curtailment_details`, following the same pattern as load shedding.
-
-### 8. Frontend — Session persistence
-
-`curtailment_details` is saved/restored alongside `load_shedding_details` in `SavedActionEntry`. The `min_renewable_curtailment` config value is included in `SessionResult.configuration`.
-
----
-
-## Files Modified
-
-| File | Change |
-|---|---|
-| `expert_backend/main.py` | `ConfigRequest` field, action dict stats |
-| `expert_backend/services/recommender_service.py` | Config mapping, `_compute_curtailment_details()`, MW-at-start |
-| `frontend/src/types.ts` | `CurtailmentDetail` interface, field additions |
-| `frontend/src/api.ts` | Config payload type |
-| `frontend/src/hooks/useSettings.ts` | State, payload, backup, restore |
-| `frontend/src/hooks/useSession.ts` | Save/restore config field |
-| `frontend/src/App.tsx` | Settings UI input |
-| `frontend/src/components/ActionFeed.tsx` | Filter toggle, classification, detail rendering |
-| `frontend/src/components/CombinedActionsModal.tsx` | Filter pill button |
-| `frontend/src/utils/sessionUtils.ts` | Session serialization |
-| Test files | Updated fixtures (`sessionUtils.test.ts`, `ActionFeed.test.tsx`, `useSession.test.ts`) |
-
-## Backward Compatibility
-
-All new fields are **optional** (`?` in TypeScript, `= 0.0` defaults in Python). Existing sessions saved without curtailment data load without issue. Older versions of the recommender library that don't produce `renewable_curtailment` scores simply result in an empty category — no curtailment cards appear and the filter has no effect.
+## 4. Session Persistence
+Ensure `session_service.py` and frontend session saving logic include `min_renewable_curtailment` and `curtailment_details`.

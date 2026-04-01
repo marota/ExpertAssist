@@ -613,6 +613,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
 <body>
     <div id="root"></div>
+    <script>
+        // Static check: if #root already has meaningful content, this is a populated file.
+        // This runs BEFORE React starts, so we can reliably detect pre-rendered HTML.
+        window.isPrePopulatedStatic = document.getElementById('root').innerHTML.trim().length > 100;
+    </script>
 
     <script type="text/babel">
         const { useState, useEffect, useLayoutEffect, useMemo, Fragment, useRef, useCallback } = React;
@@ -1231,6 +1236,22 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const [branches, setBranches] = useState([]);
             const [voltageLevels, setVoltageLevels] = useState([]);
             const initialMountRef = useRef(true);
+            const isPrePopulated = useRef(false);
+
+            // Check if we are in a pre-populated standalone file on mount.
+            // We use the static check performed before React started, 
+            // and we also look for any pre-rendered SVG (as suggested by user).
+            useLayoutEffect(() => {
+                const hasStaticContent = window.isPrePopulatedStatic;
+                const hasSvg = !!document.querySelector('#root svg');
+                
+                if (hasStaticContent || hasSvg) {
+                    isPrePopulated.current = true;
+                    console.log("Standalone Interface: Pre-populated content detected (static=" + hasStaticContent + ", svg=" + hasSvg + "). Inhibiting auto-initialization.");
+                } else {
+                    console.log("Standalone Interface: Core interface detected (no pre-rendered content). Automatic loading enabled.");
+                }
+            }, []);
 
             // Nominal voltage filter state
             const [networkPath, setNetworkPath] = useState('');
@@ -1254,6 +1275,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const [minLineDisconnections, setMinLineDisconnections] = useState(3.0);
             const [minPst, setMinPst] = useState(1.0);
             const [minLoadShedding, setMinLoadShedding] = useState(0.0);
+            const [minRenewableCurtailmentActions, setMinRenewableCurtailmentActions] = useState(0.0);
             const [nPrioritizedActions, setNPrioritizedActions] = useState(10);
             const [monitoringFactor, setMonitoringFactor] = useState(0.95);
             const [preExistingOverloadThreshold, setPreExistingOverloadThreshold] = useState(0.02);
@@ -1305,6 +1327,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     minCloseCoupling,
                     minOpenCoupling,
                     minLineDisconnections,
+                    minPst,
+                    minLoadShedding,
+                    minRenewableCurtailmentActions,
                     nPrioritizedActions,
                     linesMonitoringPath,
                     monitoringFactor,
@@ -1332,6 +1357,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     setMonitoringFactor(settingsBackup.monitoringFactor);
                     setPreExistingOverloadThreshold(settingsBackup.preExistingOverloadThreshold);
                     setIgnoreReconnections(settingsBackup.ignoreReconnections ?? false);
+                    if (settingsBackup.minLoadShedding !== undefined) setMinLoadShedding(settingsBackup.minLoadShedding);
+                    if (settingsBackup.minRenewableCurtailmentActions !== undefined) setMinRenewableCurtailmentActions(settingsBackup.minRenewableCurtailmentActions);
+                    if (settingsBackup.minPst !== undefined) setMinPst(settingsBackup.minPst);
                     setPypowsyblFastMode(settingsBackup.pypowsyblFastMode ?? true);
                 }
                 setIsSettingsOpen(false);
@@ -1343,7 +1371,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     output_folder_path: outputFolderPath,
                     min_line_reconnections: minLineReconnections, min_close_coupling: minCloseCoupling,
                     min_open_coupling: minOpenCoupling, min_line_disconnections: minLineDisconnections,
-                    min_pst: minPst, n_prioritized_actions: nPrioritizedActions,
+                    min_pst: minPst, min_load_shedding: minLoadShedding, min_renewable_curtailment_actions: minRenewableCurtailmentActions,
+                    n_prioritized_actions: nPrioritizedActions,
                     lines_monitoring_path: linesMonitoringPath, monitoring_factor: monitoringFactor,
                     pre_existing_overload_threshold: preExistingOverloadThreshold,
                     ignore_reconnections: ignoreReconnections, pypowsybl_fast_mode: pypowsyblFastMode,
@@ -1358,14 +1387,41 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 if (configFilePath && configFilePath !== lastConfigFilePathRef.current) {
                     try {
                         const res = await axios.post(API_BASE + '/api/config-file-path', { path: configFilePath });
+                        setConfigFilePath(res.data.config_file_path);
                         lastConfigFilePathRef.current = res.data.config_file_path;
                         // Settings from the new file will be loaded into state by applyLoadedConfig
                         applyLoadedConfig(res.data.config);
+                        console.log("Standalone Interface: Config file path changed and verified by backend:", res.data.config_file_path);
+                        
+                        // CRITICAL: We must stop here and let the state updates settle 
+                        // before proceeding with /api/config using the NEW values.
+                        // However, handleApplySettings is called on a button click,
+                        // so we can just wait a bit or use the returned config directly.
+                        var updatedCfg = res.data.config;
                     } catch (err) {
                         setError('Failed to change config file path: ' + (err.response?.data?.detail || err.message));
                         return;
                     }
                 }
+
+                const currentCfg = updatedCfg || {
+                    network_path: networkPath,
+                    action_file_path: actionPath,
+                    layout_path: layoutPath,
+                    min_line_reconnections: minLineReconnections,
+                    min_close_coupling: minCloseCoupling,
+                    min_open_coupling: minOpenCoupling,
+                    min_line_disconnections: minLineDisconnections,
+                    min_pst: minPst,
+                    min_load_shedding: minLoadShedding,
+                    min_renewable_curtailment_actions: minRenewableCurtailmentActions,
+                    n_prioritized_actions: nPrioritizedActions,
+                    lines_monitoring_path: linesMonitoringPath,
+                    monitoring_factor: monitoringFactor,
+                    pre_existing_overload_threshold: preExistingOverloadThreshold,
+                    ignore_reconnections: ignoreReconnections,
+                    pypowsybl_fast_mode: pypowsyblFastMode
+                };
 
                 // ── Clear ALL state for a full reset (same as handleLoadConfig) ──
                 setError(''); setInfoMessage('');
@@ -1407,21 +1463,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 }
 
                 try {
-                    const configRes = await axios.post(API_BASE + '/api/config', {
-                        network_path: networkPath,
-                        action_file_path: actionPath,
-                        layout_path: layoutPath,
-                        min_line_reconnections: minLineReconnections,
-                        min_close_coupling: minCloseCoupling,
-                        min_open_coupling: minOpenCoupling,
-                        min_line_disconnections: minLineDisconnections,
-                        n_prioritized_actions: nPrioritizedActions,
-                        lines_monitoring_path: linesMonitoringPath,
-                        monitoring_factor: monitoringFactor,
-                        pre_existing_overload_threshold: preExistingOverloadThreshold,
-                        ignore_reconnections: ignoreReconnections,
-                        pypowsybl_fast_mode: pypowsyblFastMode
-                    });
+                    const configRes = await axios.post(API_BASE + '/api/config', currentCfg);
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
                         setMonitoredLinesCount(configRes.data.monitored_lines_count);
@@ -1433,9 +1475,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
                     // Fetch study-related data (branches, nominal voltages etc.)
                     const [branchesRes, vlRes, nomVRes] = await Promise.all([
-                        axios.get(API_BASE + '/api/branches'),
-                        axios.get(API_BASE + '/api/voltage-levels'),
-                        axios.get(API_BASE + '/api/nominal-voltages')
+                        axios.get(`${API_BASE}/api/branches?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/voltage-levels?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`)
                     ]);
 
                     setBranches(branchesRes.data.branches);
@@ -1470,11 +1512,13 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         pypowsyblFastMode
                     });
 
+                    // Final sync of ref to state (ensuring they match the backend-verified value)
                     lastConfigFilePathRef.current = configFilePath;
                     setIsSettingsOpen(false);
 
                 } catch (err) {
                     setError('Failed to apply settings: ' + (err.response?.data?.detail || err.message));
+                    console.error("Standalone Interface: Error applying settings:", err);
                 }
             };
             const [error, setError] = useState('');
@@ -1536,7 +1580,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const [loadingAvailableActions, setLoadingAvailableActions] = useState(false);
             const [simulatingActionId, setSimulatingActionId] = useState(null);
             const [searchError, setSearchError] = useState('');
-            const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true });
+            const [typeFilters, setTypeFilters] = useState({ disco: true, reco: true, open: true, close: true, pst: true, ls: true, rc: true });
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
             const [scoreTooltip, setScoreTooltip] = useState(null);
@@ -1604,6 +1648,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 if (cfg.min_line_disconnections !== undefined) setMinLineDisconnections(cfg.min_line_disconnections);
                 if (cfg.min_pst !== undefined) setMinPst(cfg.min_pst);
                 if (cfg.min_load_shedding !== undefined) setMinLoadShedding(cfg.min_load_shedding);
+                if (cfg.min_renewable_curtailment_actions !== undefined) setMinRenewableCurtailmentActions(cfg.min_renewable_curtailment_actions);
                 if (cfg.n_prioritized_actions !== undefined) setNPrioritizedActions(cfg.n_prioritized_actions);
                 if (cfg.monitoring_factor !== undefined) setMonitoringFactor(cfg.monitoring_factor);
                 if (cfg.pre_existing_overload_threshold !== undefined) setPreExistingOverloadThreshold(cfg.pre_existing_overload_threshold);
@@ -1613,27 +1658,53 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
             // Load persisted config from backend on mount
             useEffect(() => {
-                Promise.all([
-                    axios.get(`${API_BASE}/api/user-config`),
-                    axios.get(`${API_BASE}/api/config-file-path`)
-                ]).then(([cfgRes, pathRes]) => {
-                    applyLoadedConfig(cfgRes.data);
-                    setConfigFilePath(pathRes.data.config_file_path);
-                    lastConfigFilePathRef.current = pathRes.data.config_file_path;
-                    configLoadedRef.current = true;
-                }).catch(() => {
-                    console.warn('Failed to load user config from backend, using defaults');
-                    configLoadedRef.current = true;
-                });
+                const ts = Date.now();
+                console.log("Standalone Interface: Mount, checking persistent config (ts=" + ts + ")...");
+                axios.get(`${API_BASE}/api/config-file-path?t=${ts}`)
+                    .then(pathRes => {
+                        console.log("Standalone Interface: Loaded config path from backend:", pathRes.data.config_file_path);
+                        setConfigFilePath(pathRes.data.config_file_path);
+                        lastConfigFilePathRef.current = pathRes.data.config_file_path;
+                        
+                        if (!isPrePopulated.current) {
+                            console.log("Standalone Interface: Fetching user config content...");
+                            return axios.get(`${API_BASE}/api/user-config?t=${Date.now()}`);
+                        } else {
+                            console.log("Standalone Interface: Pre-populated, skipping content fetch.");
+                        }
+                    })
+                    .then(cfgRes => {
+                        if (cfgRes) {
+                            applyLoadedConfig(cfgRes.data);
+                            console.log("Standalone Interface: Loaded user config content, enabling persistence.");
+                            configLoadedRef.current = true;
+                        }
+                    })
+                    .catch((err) => {
+                        console.warn('Standalone Interface: Failed to load user config from backend:', err);
+                        // IMPORTANT: We do NOT set configLoadedRef to true here,
+                        // to avoid overwriting backend with empty local state on fetch failure.
+                    });
             }, []);
 
             const changeConfigFilePath = async (newPath) => {
+                if (newPath === lastConfigFilePathRef.current) return;
                 try {
                     const res = await axios.post(`${API_BASE}/api/config-file-path`, { path: newPath });
                     setConfigFilePath(res.data.config_file_path);
+                    lastConfigFilePathRef.current = res.data.config_file_path;
+                    
+                    // Update state with new file content BUT prevent the persistence useEffect
+                    // from immediate trigger by temporarily clearing configLoadedRef.
                     configLoadedRef.current = false;
                     applyLoadedConfig(res.data.config);
-                    configLoadedRef.current = true;
+                    // Use a timeout to ensure state updates have been processed before re-enabling persistence
+                    setTimeout(() => { 
+                        if (!isPrePopulated.current) {
+                            console.log("Standalone Interface: Re-enabling persistence after config switch.");
+                            configLoadedRef.current = true; 
+                        }
+                    }, 100);
                 } catch (err) {
                     console.warn('Failed to change config file path', err);
                 }
@@ -1641,7 +1712,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
             // Persist settings to backend config file whenever they change
             useEffect(() => {
-                if (!configLoadedRef.current) return;
+                if (isPrePopulated.current || !configLoadedRef.current) return;
                 axios.post(`${API_BASE}/api/user-config`, {
                     network_path: networkPath,
                     action_file_path: actionPath,
@@ -1662,12 +1733,12 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 }).catch(() => console.warn('Failed to persist user config'));
             }, [networkPath, actionPath, layoutPath, outputFolderPath, linesMonitoringPath,
                 minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections,
-                minPst, minLoadShedding, nPrioritizedActions, monitoringFactor, preExistingOverloadThreshold,
+                minPst, minLoadShedding, minRenewableCurtailmentActions, nPrioritizedActions, monitoringFactor, preExistingOverloadThreshold,
                 ignoreReconnections, pypowsyblFastMode]);
 
             const pickPath = async (type, setter) => {
                 try {
-                    const res = await axios.get(`${API_BASE}/api/pick-path?type=${type}`);
+                    const res = await axios.get(`${API_BASE}/api/pick-path?type=${type}&t=${Date.now()}`);
                     if (res.data.path) setter(res.data.path);
                 } catch (err) { setError('Failed to open file picker'); }
             };
@@ -1683,7 +1754,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     network_path: networkPath, action_file_path: actionPath, layout_path: layoutPath,
                     min_line_reconnections: minLineReconnections, min_close_coupling: minCloseCoupling,
                     min_open_coupling: minOpenCoupling, min_line_disconnections: minLineDisconnections,
-                    min_pst: minPst, n_prioritized_actions: nPrioritizedActions,
+                    min_pst: minPst, min_load_shedding: minLoadShedding, min_renewable_curtailment_actions: minRenewableCurtailmentActions,
+                    n_prioritized_actions: nPrioritizedActions,
                     lines_monitoring_path: linesMonitoringPath, monitoring_factor: monitoringFactor,
                     pre_existing_overload_threshold: preExistingOverloadThreshold,
                     ignore_reconnections: ignoreReconnections, pypowsybl_fast_mode: pypowsyblFastMode,
@@ -1714,24 +1786,27 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 lastViewStateN.current = null; lastViewStateN1.current = null;
                 lastZoomState.current = { query: '', branch: '' };
 
+                const currentCfg = {
+                    network_path: networkPath,
+                    action_file_path: actionPath,
+                    layout_path: layoutPath,
+                    min_line_reconnections: minLineReconnections,
+                    min_close_coupling: minCloseCoupling,
+                    min_open_coupling: minOpenCoupling,
+                    min_line_disconnections: minLineDisconnections,
+                    min_pst: minPst,
+                    min_load_shedding: minLoadShedding,
+                    min_renewable_curtailment_actions: minRenewableCurtailmentActions,
+                    n_prioritized_actions: nPrioritizedActions,
+                    lines_monitoring_path: linesMonitoringPath,
+                    monitoring_factor: monitoringFactor,
+                    pre_existing_overload_threshold: preExistingOverloadThreshold,
+                    ignore_reconnections: ignoreReconnections,
+                    pypowsybl_fast_mode: pypowsyblFastMode
+                };
+
                 try {
-                    const configRes = await axios.post(API_BASE + '/api/config', {
-                        network_path: networkPath,
-                        action_file_path: actionPath,
-                        layout_path: layoutPath,
-                        min_line_reconnections: minLineReconnections,
-                        min_close_coupling: minCloseCoupling,
-                        min_open_coupling: minOpenCoupling,
-                        min_line_disconnections: minLineDisconnections,
-                        min_pst: minPst,
-                        min_load_shedding: minLoadShedding,
-                        n_prioritized_actions: nPrioritizedActions,
-                        lines_monitoring_path: linesMonitoringPath,
-                        monitoring_factor: monitoringFactor,
-                        pre_existing_overload_threshold: preExistingOverloadThreshold,
-                        ignore_reconnections: ignoreReconnections,
-                        pypowsybl_fast_mode: pypowsyblFastMode
-                    });
+                    const configRes = await axios.post(API_BASE + '/api/config', currentCfg);
 
 
                     if (configRes.data && configRes.data.total_lines_count !== undefined) {
@@ -1745,9 +1820,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     if (configRes.data?.action_dict_stats) setActionDictStats(configRes.data.action_dict_stats);
 
                     const [branchesRes, vlRes, nomVRes] = await Promise.all([
-                        axios.get(API_BASE + '/api/branches'),
-                        axios.get(API_BASE + '/api/voltage-levels'),
-                        axios.get(API_BASE + '/api/nominal-voltages')
+                        axios.get(`${API_BASE}/api/branches?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/voltage-levels?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`)
                     ]);
 
                     setBranches(branchesRes.data.branches);
@@ -1845,7 +1920,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
             const fetchBaseDiagram = async (vlCount) => {
                 try {
-                    const res = await axios.get(API_BASE + '/api/network-diagram');
+                    const res = await axios.get(`${API_BASE}/api/network-diagram?t=${Date.now()}`);
                     const { svg, viewBox } = processSvg(res.data.svg, vlCount || 0);
                     if (viewBox) setOriginalViewBox(viewBox);
                     setNDiagram({ ...res.data, svg, originalViewBox: viewBox });
@@ -1963,6 +2038,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         min_line_disconnections: minLineDisconnections,
                         min_pst: minPst ?? 1.0,
                         min_load_shedding: minLoadShedding ?? 0.0,
+                        min_renewable_curtailment_actions: minRenewableCurtailmentActions ?? 0.0,
                         n_prioritized_actions: nPrioritizedActions,
                         lines_monitoring_path: linesMonitoringPath,
                         monitoring_factor: monitoringFactor,
@@ -2008,6 +2084,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         n_components: detail.n_components,
                                         disconnected_mw: detail.disconnected_mw,
                                         load_shedding_details: detail.load_shedding_details,
+                                        curtailment_details: detail.curtailment_details,
                                         status: {
                                             is_selected: manualActionIds.has(id),
                                             is_suggested: suggestedByRecommenderIds.has(id),
@@ -2093,7 +2170,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 setShowReloadModal(true);
                 setSessionListLoading(true);
                 try {
-                    const res = await axios.get(API_BASE + '/api/list-sessions', { params: { folder_path: outputFolderPath } });
+                    const res = await axios.get(`${API_BASE}/api/list-sessions?folder_path=${encodeURIComponent(outputFolderPath)}&t=${Date.now()}`);
                     setSessionList(res.data.sessions);
                     interactionLogger.record('session_reload_modal_opened', {
                         output_folder: outputFolderPath,
@@ -2165,9 +2242,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
                     // Fetch branches, voltage levels, and nominal voltages in parallel
                     const [branchRes, vlRes, nomVRes] = await Promise.all([
-                        axios.get(API_BASE + '/api/branches'),
-                        axios.get(API_BASE + '/api/voltage-levels'),
-                        axios.get(API_BASE + '/api/nominal-voltages'),
+                        axios.get(`${API_BASE}/api/branches?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/voltage-levels?t=${Date.now()}`),
+                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`),
                     ]);
                     setBranches(branchRes.data.branches);
                     setVoltageLevels(vlRes.data.voltage_levels);
@@ -3289,7 +3366,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 if (availableActions.length === 0) {
                     setLoadingAvailableActions(true);
                     try {
-                        const res = await axios.get(API_BASE + '/api/actions');
+                        const res = await axios.get(`${API_BASE}/api/actions?t=${Date.now()}`);
                         setAvailableActions(res.data.actions || []);
                     } catch (err) {
                         setSearchError('Failed to load actions');
@@ -3616,14 +3693,17 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
                         const isLoadShedding = t.includes('load_shedding') || actionId.startsWith('load_shedding_') || actionDesc.includes('effacement');
 
+                        const isRC = t.includes('renewable_curtailment') || t.includes('open_gen');
+
                         if (isDisco) return typeFilters.disco;
                         if (isReco) return typeFilters.reco;
                         if (isOpenCoupling) return typeFilters.open;
                         if (isCloseCoupling) return typeFilters.close;
                         if (isPstAction) return typeFilters.pst;
                         if (isLoadShedding) return typeFilters.ls;
+                        if (isRC) return typeFilters.rc;
 
-                        return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
+                        return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls && typeFilters.rc;
                     })
                     .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
                     .slice(0, 20);
@@ -3655,7 +3735,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         else if (isCloseCoupling) shouldShow = typeFilters.close;
                         else if (isPstAction) shouldShow = typeFilters.pst;
                         else if (isLoadShedding) shouldShow = typeFilters.ls;
-                        else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls;
+                        else if (t.includes('renewable_curtailment') || t.includes('open_gen')) shouldShow = typeFilters.rc;
+                        else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls && typeFilters.rc;
 
                         if (!shouldShow) continue;
 
@@ -4302,7 +4383,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             min={logMin} max={logMax} step="any"
                                             value={Math.log(voltageRange[0])}
                                             onChange={e => {
-                                                const logV = parseFloat(e.target.value);
+                                                const logV = parseFloat(e.target.value) || 0;
                                                 const kv = Math.exp(logV);
                                                 const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
                                                 if (snapped <= voltageRange[1]) {
@@ -4316,7 +4397,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             min={logMin} max={logMax} step="any"
                                             value={Math.log(voltageRange[1])}
                                             onChange={e => {
-                                                const logV = parseFloat(e.target.value);
+                                                const logV = parseFloat(e.target.value) || 0;
                                                 const snapped = uniqueVoltages.reduce((best, uv) => Math.abs(Math.log(uv) - logV) < Math.abs(Math.log(best) - logV) ? uv : best);
                                                 if (snapped >= voltageRange[0]) {
                                                     interactionLogger.record('voltage_range_changed', { min_kv: voltageRange[0], max_kv: snapped });
@@ -4569,6 +4650,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
                                         // For load shedding actions, show VL badges from load_shedding_details
                                         const isLoadShedding = details.load_shedding_details && details.load_shedding_details.length > 0;
+                                        const isRenewableCurtailment = details.curtailment_details && details.curtailment_details.length > 0;
 
                                         if (!isLoadShedding) {
                                             // 1. Substations (VLs)
@@ -4621,6 +4703,18 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                 }
                                             });
                                         }
+                                        if (isRenewableCurtailment) {
+                                            const vlSet = new Set();
+                                            details.curtailment_details.forEach(rc => {
+                                                if (rc.voltage_level_id && !vlSet.has(rc.voltage_level_id)) {
+                                                    vlSet.add(rc.voltage_level_id);
+                                                    badges.push(badgeBtn(rc.voltage_level_id, '#dcfce7', '#166534', `Click: zoom | Double-click: open SLD`, (e) => {
+                                                        e.stopPropagation();
+                                                        handleVlDoubleClick(id, rc.voltage_level_id);
+                                                    }));
+                                                }
+                                            });
+                                        }
 
                                         return (
                                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', flexShrink: 0, maxWidth: '200px', justifyContent: 'flex-end' }}>
@@ -4642,6 +4736,25 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                             onClick={(e) => { e.stopPropagation(); handleAssetClick(id, ls.voltage_level_id, 'action'); }}
                                                             onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, ls.voltage_level_id); }}
                                                         >{ls.voltage_level_id}</button></>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
+                                }
+                                {
+                                    details.curtailment_details && details.curtailment_details.length > 0 && (
+                                        <div style={{ fontSize: '12px', background: '#e0f2fe', color: '#075985', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #7dd3fc', fontWeight: 500 }}>
+                                            {details.curtailment_details.map((rc, i) => (
+                                                <div key={rc.gen_name}>
+                                                    Renewable curtailment of <strong>{rc.curtailed_mw.toFixed(1)} MW</strong> on generator <strong>{rc.gen_name}</strong>
+                                                    {rc.voltage_level_id && (
+                                                        <> at voltage level <button
+                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: 'inherit', color: '#075985', fontWeight: 700, textDecoration: 'underline dotted' }}
+                                                            title={`Double-click to open SLD for ${rc.voltage_level_id}`}
+                                                            onClick={(e) => { e.stopPropagation(); handleAssetClick(id, rc.voltage_level_id, 'action'); }}
+                                                            onDoubleClick={(e) => { e.stopPropagation(); handleVlDoubleClick(id, rc.voltage_level_id); }}
+                                                        >{rc.voltage_level_id}</button></>
                                                     )}
                                                 </div>
                                             ))}
@@ -4846,27 +4959,31 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Reconnections</label>
-                                                <input type="number" step="0.1" value={minLineReconnections} onChange={e => setMinLineReconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minLineReconnections} onChange={e => setMinLineReconnections(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Close Coupling</label>
-                                                <input type="number" step="0.1" value={minCloseCoupling} onChange={e => setMinCloseCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minCloseCoupling} onChange={e => setMinCloseCoupling(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Open Coupling</label>
-                                                <input type="number" step="0.1" value={minOpenCoupling} onChange={e => setMinOpenCoupling(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minOpenCoupling} onChange={e => setMinOpenCoupling(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Line Disconnections</label>
-                                                <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minLineDisconnections} onChange={e => setMinLineDisconnections(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min PST Actions</label>
-                                                <input type="number" step="0.1" value={minPst} onChange={e => setMinPst(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minPst} onChange={e => setMinPst(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px' }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Load Shedding</label>
-                                                <input type="number" step="0.1" value={minLoadShedding} onChange={e => setMinLoadShedding(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px' }} />
+                                                <input type="number" step="0.1" value={minLoadShedding} onChange={e => setMinLoadShedding(parseFloat(e.target.value) || 0 || 0)} style={{ width: '80px', padding: '5px' }} />
+                                            </div>
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                                <label style={{ fontWeight: "bold", fontSize: "0.9rem" }}>Min Renewable Curtailment</label>
+                                                <input type="number" step="0.1" value={minRenewableCurtailmentActions} onChange={e => setMinRenewableCurtailmentActions(parseFloat(e.target.value) || 0 || 0)} style={{ width: "80px", padding: "5px" }} />
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
@@ -4885,7 +5002,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Monitoring Factor Thermal Limits</label>
                                                 <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
-                                                    <input type="number" step="0.01" min="0" max="2" value={monitoringFactor} onChange={e => setMonitoringFactor(parseFloat(e.target.value))} style={{ padding: '6px', width: '80px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                    <input type="number" step="0.01" min="0" max="2" value={monitoringFactor} onChange={e => setMonitoringFactor(parseFloat(e.target.value) || 0)} style={{ padding: '6px', width: '80px', border: '1px solid #ccc', borderRadius: '4px' }} />
                                                     <span style={{ fontSize: '0.85rem', color: '#666' }}>Multiplier applied to standard limits (e.g., 0.95)</span>
                                                 </div>
                                             </div>
@@ -4898,7 +5015,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             </div>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pre-existing Overload Threshold</label>
-                                                <input type="number" step="0.01" min="0" max="1" value={preExistingOverloadThreshold} onChange={e => setPreExistingOverloadThreshold(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                                                <input type="number" step="0.01" min="0" max="1" value={preExistingOverloadThreshold} onChange={e => setPreExistingOverloadThreshold(parseFloat(e.target.value) || 0)} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
                                             </div>
                                             <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '-10px' }}>
                                                 Pre-existing overloads excluded from N-1 & max loading unless worsened by this fraction (default 2%)
@@ -5220,7 +5337,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             />
                                         </div>
                                         <div style={{ padding: '4px 8px', display: 'flex', flexWrap: 'wrap', gap: '6px', borderTop: '1px solid #eee', fontSize: '11px' }}>
-                                            {[['disco', 'Disconnections'], ['reco', 'Reconnections'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling'], ['ls', 'Load shedding']].map(([key, label]) => (
+                                            {[['disco', 'Disconnections'], ['reco', 'Reconnections'], ['pst', 'PST'], ['open', 'Open coupling'], ['close', 'Close coupling'], ['ls', 'Load Shedding'], ['rc', 'Renewable Curtailment']].map(([key, label]) => (
                                                 <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '3px', cursor: 'pointer', color: '#555' }}>
                                                     <input
                                                         type="checkbox"
@@ -5585,7 +5702,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                 Change in settings
                                                             </button>
                                                         </div>
-                                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding</div>
+                                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding, {minRenewableCurtailmentActions} RC</div>
                                                         <div>• Maximum suggestions: {nPrioritizedActions}</div>
                                                         <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
                                                     </div>
@@ -6038,7 +6155,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         </div>
 
                                         <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                            {['all', 'disco', 'reco', 'open', 'close', 'pst', 'ls'].map(f => (
+                                            {['all', 'disco', 'reco', 'open', 'close', 'pst', 'ls', 'rc'].map(f => (
                                                 <button
                                                     key={f}
                                                     onClick={() => setExploreFilter(f)}
@@ -6062,7 +6179,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
                                         <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px' }}>
                                             {Array.from(new Set(scoredActionsList.map(item => item.type)))
-                                                .filter(type => exploreFilter === 'all' || type.includes(exploreFilter) || (exploreFilter === 'ls' && type === 'load_shedding'))
+                                                .filter(type => exploreFilter === 'all' || type.includes(exploreFilter) || (exploreFilter === 'ls' && type === 'load_shedding') || (exploreFilter === 'rc' && type === 'renewable_curtailment'))
                                                 .map(type => (
                                                     <div key={type} style={{ marginBottom: '1px' }}>
                                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#444', backgroundColor: '#f0f2f5', padding: '4px 8px', borderBottom: '1px solid #e1e4e8', display: 'flex', justifyContent: 'space-between' }}>

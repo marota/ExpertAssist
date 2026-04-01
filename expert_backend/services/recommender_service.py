@@ -189,6 +189,11 @@ class RecommenderService:
             if load_shedding:
                 enriched_actions[action_id]["load_shedding_details"] = load_shedding
 
+            # Detect renewable curtailment actions and compute curtailed MW per generator
+            curtailment = self._compute_curtailment_details(action_data)
+            if curtailment:
+                enriched_actions[action_id]["curtailment_details"] = curtailment
+
         return enriched_actions
 
     def _compute_load_shedding_details(self, action_data):
@@ -251,6 +256,117 @@ class RecommenderService:
 
         return details if details else None
 
+    def _compute_curtailment_details(self, action_data):
+        """Compute per-generator curtailment details by comparing N-1 and action observations.
+
+        Returns a list of {gen_name, voltage_level_id, curtailed_mw} or None.
+        """
+        action_obj = action_data.get("action")
+        if action_obj is None:
+            return None
+
+        # Get gens_bus from the action topology to identify affected generators
+        gens_bus = getattr(action_obj, "gens_bus", None)
+        if gens_bus is None and isinstance(action_obj, dict):
+            gens_bus = action_obj.get("gens_bus")
+        if not gens_bus:
+            return None
+
+        # Filter to generators that are being disconnected (bus = -1)
+        curtailed_gen_names = [name for name, bus in gens_bus.items() if bus == -1]
+        if not curtailed_gen_names:
+            return None
+
+        obs_action = action_data.get("observation")
+        if obs_action is None:
+            # If we don't have an observation (e.g. discovery stage), use shedded_mw if available
+            disconnected_mw = action_data.get("disconnected_mw")
+            if not disconnected_mw:
+                return None
+            
+            # Simple fallback: distribute disconnected_mw among gens if multiple (rare for curtailment)
+            mw_per_gen = disconnected_mw / len(curtailed_gen_names)
+            
+            details = []
+            from expert_backend.services.network_service import network_service
+            for gen_name in curtailed_gen_names:
+                if not self._is_renewable_gen(gen_name, obs=obs_action):
+                    continue
+                
+                vl_id = None
+                try:
+                    vl_id = network_service.get_generator_voltage_level(gen_name)
+                except Exception:
+                    pass
+
+                details.append({
+                    "gen_name": gen_name,
+                    "voltage_level_id": vl_id,
+                    "curtailed_mw": round(mw_per_gen, 1),
+                })
+            return details if details else None
+
+        # Get the N-1 observation
+        obs_n1 = None
+        if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
+            obs_n1 = self._analysis_context["obs_simu_defaut"]
+
+        details = []
+        from expert_backend.services.network_service import network_service
+        for gen_name in curtailed_gen_names:
+            if not self._is_renewable_gen(gen_name, obs=obs_action or obs_n1):
+                continue
+
+            curtailed_mw = 0.0
+            if obs_n1 is not None and obs_action is not None:
+                try:
+                    gen_idx = list(obs_action.name_gen).index(gen_name)
+                    p_before = float(obs_n1.prod_p[gen_idx])
+                    p_after = float(obs_action.prod_p[gen_idx])
+                    curtailed_mw = max(0.0, p_before - p_after)
+                except (ValueError, IndexError):
+                    curtailed_mw = 0.0
+
+            vl_id = None
+            try:
+                vl_id = network_service.get_generator_voltage_level(gen_name)
+            except Exception:
+                pass
+
+            details.append({
+                "gen_name": gen_name,
+                "voltage_level_id": vl_id,
+                "curtailed_mw": round(curtailed_mw, 1),
+            })
+
+        return details if details else None
+
+    def _is_renewable_gen(self, gen_name, obs=None):
+        """Identify if a generator is renewable (WIND/SOLAR)."""
+        # 1. If observation is provided and has gen_type, use it for accuracy
+        if obs is not None and hasattr(obs, 'gen_type') and hasattr(obs, 'name_gen'):
+            try:
+                gen_idx = list(obs.name_gen).index(gen_name)
+                gen_type = str(obs.gen_type[gen_idx]).upper()
+                if gen_type in ["WIND", "SOLAR"]:
+                    return True
+            except (ValueError, IndexError):
+                pass
+        
+        # 2. Try querying the network directly via network_service
+        from expert_backend.services.network_service import network_service
+        try:
+            gen_type = network_service.get_generator_type(gen_name)
+            if gen_type:
+                return str(gen_type).upper() in ["WIND", "SOLAR"]
+        except Exception:
+            pass
+
+        # 3. Fallback to name-based filtering
+        gn = gen_name.upper()
+        return "WIND" in gn or "SOLAR" in gn or "PV" in gn or "EOL" in gn
+
+
     def _compute_mw_start_for_scores(self, action_scores):
         """Compute MW at start for each action in action_scores.
 
@@ -260,6 +376,7 @@ class RecommenderService:
         - line_disconnection: abs(p_or) of the disconnected line in N-1 state
         - pst_tap_change:     abs(p_or) of the PST line in N-1 state
         - load_shedding:      load_p of the load in N-1 state
+        - renewable_curtailment: prod_p of the generator in N-1 state
         - open_coupling:      sum of abs(p_or) of lines moved to a different bus (virtual line MW)
         - line_reconnection:  null (N/A)
         - close_coupling:     null (N/A)
@@ -277,6 +394,7 @@ class RecommenderService:
         # Build name-to-index lookups
         line_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_line)}
         load_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_load)}
+        gen_name_to_idx = {name: i for i, name in enumerate(obs_n1.name_gen)}
 
         for action_type, type_data in action_scores.items():
             scores = type_data.get("scores", {})
@@ -295,19 +413,20 @@ class RecommenderService:
                     continue
 
                 mw_val = self._get_action_mw_start(action_id, action_type, obs_n1,
-                                                    line_name_to_idx, load_name_to_idx)
+                                                    line_name_to_idx, load_name_to_idx, gen_name_to_idx)
                 mw_start[action_id] = mw_val
 
             type_data["mw_start"] = sanitize_for_json(mw_start)
 
         return action_scores
 
-    def _get_action_mw_start(self, action_id, action_type, obs_n1, line_idx_map, load_idx_map):
+    def _get_action_mw_start(self, action_id, action_type, obs_n1, line_idx_map, load_idx_map, gen_idx_map):
         """Return MW at start for a single action, or None if not computable."""
         t = action_type.lower()
         is_disco = 'disco' in t or 'line_disconnection' in t
         is_pst = 'pst' in t
         is_ls = 'load_shedding' in t or 'ls' in t
+        is_curtail = 'renewable_curtailment' in t or 'curtail' in t
         is_open = 'open_coupling' in t
 
         action_entry = self._dict_action.get(action_id) if self._dict_action else None
@@ -316,6 +435,9 @@ class RecommenderService:
         # even if the action entry is missing or content is incomplete
         if is_ls:
             return self._mw_start_load_shedding(action_id, action_entry, obs_n1, load_idx_map)
+
+        if is_curtail:
+            return self._mw_start_curtailment(action_id, action_entry, obs_n1, gen_idx_map)
 
         if action_entry is None:
             return None
@@ -382,6 +504,32 @@ class RecommenderService:
             if load_name in load_idx_map:
                 idx = load_idx_map[load_name]
                 return round(abs(float(obs_n1.load_p[idx])), 1)
+
+        return None
+
+    def _mw_start_curtailment(self, action_id, action_entry, obs_n1, gen_idx_map):
+        """Compute MW at start for a renewable curtailment action."""
+        if action_entry is not None:
+            content = action_entry.get("content", {})
+            if content:
+                set_bus = content.get("set_bus", {})
+                gens = set_bus.get("generators_id", {})
+                total_mw = 0.0
+                found = False
+                for gen_name, bus in gens.items():
+                    if int(bus) == -1 and gen_name in gen_idx_map:
+                        idx = gen_idx_map[gen_name]
+                        total_mw += abs(float(obs_n1.prod_p[idx]))
+                        found = True
+                if found:
+                    return round(total_mw, 1)
+
+        # Fallback to action ID pattern
+        if action_id.startswith("curtail_"):
+            gen_name = action_id[len("curtail_"):]
+            if gen_name in gen_idx_map:
+                idx = gen_idx_map[gen_name]
+                return round(abs(float(obs_n1.prod_p[idx])), 1)
 
         return None
 
@@ -454,6 +602,8 @@ class RecommenderService:
             config.MIN_PST = settings.min_pst
         if hasattr(settings, 'min_load_shedding') and settings.min_load_shedding is not None:
             config.MIN_LOAD_SHEDDING = settings.min_load_shedding
+        if hasattr(settings, 'min_renewable_curtailment_actions') and settings.min_renewable_curtailment_actions is not None:
+            config.MIN_RENEWABLE_CURTAILMENT_ACTIONS = settings.min_renewable_curtailment_actions
         
         # New layout file path
         if hasattr(settings, 'layout_path') and settings.layout_path:

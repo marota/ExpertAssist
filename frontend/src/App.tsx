@@ -34,6 +34,7 @@ function App() {
     nPrioritizedActions, setNPrioritizedActions,
     minPst, setMinPst,
     minLoadShedding, setMinLoadShedding,
+    minRenewableCurtailmentActions, setMinRenewableCurtailmentActions,
     ignoreReconnections, setIgnoreReconnections,
     linesMonitoringPath, setLinesMonitoringPath,
     monitoredLinesCount, totalLinesCount,
@@ -131,7 +132,7 @@ function App() {
   const wrappedSaveResults = () => {
     session.handleSaveResults({
       networkPath, actionPath, layoutPath, outputFolderPath,
-      minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst, minLoadShedding,
+      minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst, minLoadShedding, minRenewableCurtailmentActions,
       nPrioritizedActions, linesMonitoringPath, monitoringFactor,
       preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
       selectedBranch, selectedOverloads, monitorDeselected,
@@ -148,7 +149,7 @@ function App() {
     session.handleRestoreSession(sessionName, {
       outputFolderPath,
       setNetworkPath, setActionPath, setLayoutPath,
-      setMinLineReconnections, setMinCloseCoupling, setMinOpenCoupling, setMinLineDisconnections, setMinPst, setMinLoadShedding,
+      setMinLineReconnections, setMinCloseCoupling, setMinOpenCoupling, setMinLineDisconnections, setMinPst, setMinLoadShedding, setMinRenewableCurtailmentActions,
       setNPrioritizedActions, setLinesMonitoringPath, setMonitoringFactor, setPreExistingOverloadThreshold,
       setIgnoreReconnections, setPypowsyblFastMode,
       setMonitorDeselected: analysis.setMonitorDeselected,
@@ -664,6 +665,10 @@ function App() {
                   <input type="number" step="0.1" value={minLoadShedding} onChange={e => setMinLoadShedding(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Min Renewable Curtailment</label>
+                  <input type="number" step="0.1" value={minRenewableCurtailmentActions} onChange={e => setMinRenewableCurtailmentActions(parseFloat(e.target.value))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
                   <input type="number" step="1" value={nPrioritizedActions} onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))} style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }} />
                 </div>
@@ -877,6 +882,7 @@ function App() {
               minLineDisconnections={minLineDisconnections}
               minPst={minPst}
               minLoadShedding={minLoadShedding}
+              minRenewableCurtailmentActions={minRenewableCurtailmentActions}
               nPrioritizedActions={nPrioritizedActions}
               ignoreReconnections={ignoreReconnections}
               actionDictFileName={actionDictFileName}

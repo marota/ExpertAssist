@@ -467,7 +467,7 @@ const CombinedActionsModal: React.FC<Props> = ({
 
                             {/* Filter Buttons */}
                             <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                                {['all', 'disco', 'reco', 'ls', 'open', 'close', 'pst'].map(f => (
+                                {['all', 'disco', 'reco', 'ls', 'rc', 'open', 'close', 'pst'].map(f => (
                                     <button
                                         key={f}
                                         onClick={() => setExploreFilter(f)}
@@ -501,6 +501,7 @@ const CombinedActionsModal: React.FC<Props> = ({
                                         if (exploreFilter === 'close') return t.includes('close_coupling');
                                         if (exploreFilter === 'pst') return t.includes('pst');
                                         if (exploreFilter === 'ls') return t.includes('load_shedding') || t.includes('ls');
+                                        if (exploreFilter === 'rc') return t.includes('renewable_curtailment') || t.includes('rc') || t.includes('open_gen');
                                         return t.includes(exploreFilter);
                                     });
 
