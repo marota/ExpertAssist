@@ -2367,10 +2367,21 @@ class RecommenderService:
                 if dict_entry and "description" in dict_entry:
                     description = dict_entry["description"]
 
+            # Restore content key from global dictionary or topology
+            content = None
+            if self._dict_action and action_id and action_id in self._dict_action:
+                content = self._dict_action[action_id].get("content")
+            
+            if content is None and 'topo' in locals() and action_id:
+                # Best-effort reconstruction for manual actions from topology
+                restored = RecommenderService._build_action_entry_from_topology(action_id, topo)
+                content = restored.get("content")
+
             action_data = {
+                "content": content,
                 "observation": obs_simu_action,
-                "description": description,
-                "description_unitaire": description_unitaire,
+                "description": description or description_unitaire or "",
+                "description_unitaire": description_unitaire or "",
                 "action": action,
                 "action_topology": topo,
                 "rho_before": rho_before,
@@ -2469,15 +2480,16 @@ class RecommenderService:
             "disconnected_mw": disconnected_mw,
             "non_convergence": non_convergence,
             "lines_overloaded": sanitize_for_json(lines_overloaded_names),
-            "action_topology": topo if 'topo' in locals() else {},
+            "content": content,
         }
+
+        if action_id and ("curtail_" in action_id or "load_shedding_" in action_id):
+            result["action_topology"] = topo
 
         if load_shedding_details:
             result["load_shedding_details"] = load_shedding_details
         if curtailment_details:
             result["curtailment_details"] = curtailment_details
-            # Add badges and focus info for curtailment to match the rich UI of run_analysis
-            # Note: the frontend relies on curtailment_details being present to show the blue box.
         return result
 
     def compute_superposition(self, action1_id: str, action2_id: str, disconnected_element: str):
