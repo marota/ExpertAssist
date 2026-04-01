@@ -3168,31 +3168,60 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 };
 
                 const findCellForEquipment = (equipId) => {
+                    const q = equipId.toLowerCase();
                     const svgIds = equipIdToSvgIds.get(equipId)
                         ?? equipIdToSvgIds.get(equipId.replace(/\./g, '_'))
-                        ?? equipIdToSvgIds.get(equipId.replace(/_/g, '.'));
+                        ?? equipIdToSvgIds.get(equipId.replace(/_/g, '.'))
+                        ?? Array.from(equipIdToSvgIds.keys()).find(k => k.toLowerCase() === q || k.toLowerCase().includes(q) || q.includes(k.toLowerCase()))
+                            ? equipIdToSvgIds.get(Array.from(equipIdToSvgIds.keys()).find(k => k.toLowerCase() === q || k.toLowerCase().includes(q) || q.includes(k.toLowerCase())))
+                            : null;
+
                     if (svgIds) {
                         for (const svgId of svgIds) {
                             const el = lookupById(svgId);
                             if (el) return walkUpToCell(el);
                         }
                     }
+                    
+                    // Fuzzy search in metadata keys (case-insensitive + partial match)
                     for (const [metaEquipId, metaSvgIds] of equipIdToSvgIds) {
-                        if (metaEquipId.includes(equipId) || equipId.includes(metaEquipId)) {
+                        const mq = metaEquipId.toLowerCase();
+                        if (mq === q || mq.includes(q) || q.includes(mq)) {
                             for (const svgId of metaSvgIds) {
                                 const el = lookupById(svgId);
                                 if (el) return walkUpToCell(el);
                             }
                         }
                     }
+
+                    // Multi-level fuzzy search
+                    const qPrefix = q.substring(0, 5);
                     const sanitized = equipId.replace(/\./g, '_');
+                    
+                    // Level 1: search SVG IDs directly for prefix match
                     for (const [eid, el] of elMap) {
-                        if (eid.includes(equipId) || (sanitized !== equipId && eid.includes(sanitized))) {
+                        const eq = eid.toLowerCase();
+                        if (eq.includes(q) || (eq.length > 5 && eq.includes(qPrefix))) {
                             return walkUpToCell(el);
+                        }
+                    }
+
+                    // Level 2: search SVG text labels (last resort for RC/LS)
+                    if (qPrefix.length >= 3) {
+                        const container = activeTab === 'action' ? actionSvgContainerRef.current : nSvgContainerRef.current;
+                        if (container) {
+                            const texts = container.querySelectorAll('text');
+                            for (const txt of texts) {
+                                if (txt.textContent.toLowerCase().includes(qPrefix)) {
+                                    return walkUpToCell(txt);
+                                }
+                            }
                         }
                     }
                     return null;
                 };
+
+
 
                 // Clone element and insert right before the original in the DOM.
                 // SVG renders in document order, so the clone appears behind the original.
@@ -3239,8 +3268,28 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                             for (const id of Object.keys(topo.loads_bus || {})) targetEquipIds.add(id);
                             for (const id of Object.keys(topo.pst_tap || {})) targetEquipIds.add(id);
 
+                            // Fallback from enrichment details (if topology match fails or metadata is missing)
+                            (actionDetail.curtailment_details || []).forEach(rc => { if (rc.gen_name) targetEquipIds.add(rc.gen_name); });
+                            (actionDetail.load_shedding_details || []).forEach(ls => { if (ls.load_name) targetEquipIds.add(ls.load_name); });
+
                             for (const equipId of targetEquipIds) {
-                                const cell = findCellForEquipment(equipId);
+                                let cell = findCellForEquipment(equipId);
+                                
+                                // Extreme fallback for RC/LS: direct text search in result.actions[...] details
+                                if (!cell && (isRenewableCurtailment || isLoadShedding)) {
+                                     const container = actionSvgContainerRef.current;
+                                     if (container) {
+                                         const texts = container.querySelectorAll('text');
+                                         const q = equipId.toLowerCase().substring(0, 5);
+                                         for (const txt of texts) {
+                                             if (txt.textContent.toLowerCase().includes(q)) {
+                                                 cell = walkUpToCell(txt);
+                                                 if (cell) break;
+                                             }
+                                         }
+                                     }
+                                }
+
                                 if (cell && !highlightedCells.has(cell)) {
                                     cloneHighlight(cell, 'sld-highlight-action');
                                     highlightedCells.add(cell);
@@ -3448,8 +3497,12 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     n_components: detail.n_components,
                                     disconnected_mw: detail.disconnected_mw,
                                     load_shedding_details: detail.load_shedding_details,
+                                    curtailment_details: detail.curtailment_details,
+                                    action_topology: detail.action_topology,
                                     non_convergence: detail.non_convergence,
+
                                     is_precomputed: isCombined ? true : (base.actions?.[actionId]?.is_precomputed || false)
+
                                 }
                             }
                         };
@@ -3501,8 +3554,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     if (prev.length >= 2) return prev;
                     
                     const detail = result?.actions?.[actionId];
-                    const isLS = actionId.includes('load_shedding') || !!detail?.load_shedding_details;
-                    const isRC = actionId.includes('renewable_curtailment') || !!detail?.curtailment_details;
+                    const isLS = actionId.includes('load_shedding') || actionId.startsWith('load_shedding_') || !!detail?.load_shedding_details;
+                    const isRC = actionId.includes('renewable_curtailment') || actionId.startsWith('curtail_') || !!detail?.curtailment_details;
                     if (isLS || isRC) {
                         setError(`Selection restricted: ${actionId} cannot be combined.`);
                         setTimeout(() => setError(null), 5000);
@@ -3589,8 +3642,12 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     max_rho_line: detail.max_rho_line,
                                     is_rho_reduction: detail.is_rho_reduction,
                                     load_shedding_details: detail.load_shedding_details,
+                                    curtailment_details: detail.curtailment_details,
+                                    action_topology: detail.action_topology,
                                     is_manual: true,
+
                                 }
+
                             }
                         };
                     });
@@ -3660,7 +3717,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     n_components: detail.n_components,
                                     disconnected_mw: detail.disconnected_mw,
                                     load_shedding_details: detail.load_shedding_details,
+                                    curtailment_details: detail.curtailment_details,
+                                    action_topology: detail.action_topology,
                                     non_convergence: detail.non_convergence,
+
+
                                 }
                             }
                         };
@@ -3701,9 +3762,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         const isOpenCoupling = t.includes('open_coupling');
                         const isCloseCoupling = t.includes('close_coupling');
                         const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
-                        const isLoadShedding = t.includes('load_shedding') || actionId.startsWith('load_shedding_') || actionDesc.includes('effacement');
-
-                        const isRC = t.includes('renewable_curtailment') || t.includes('open_gen');
+                        const isLoadShedding = t.includes('load_shedding') || actionId.startsWith('load_shedding_');
+                        const isRC = t.includes('renewable_curtailment') || t.includes('open_gen') || actionId.startsWith('curtail_');
 
                         if (isDisco) return typeFilters.disco;
                         if (isReco) return typeFilters.reco;
@@ -4662,7 +4722,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         const isLoadShedding = details.load_shedding_details && details.load_shedding_details.length > 0;
                                         const isRenewableCurtailment = details.curtailment_details && details.curtailment_details.length > 0;
 
-                                        if (!isLoadShedding) {
+                                        if (!isLoadShedding && !isRenewableCurtailment) {
                                             // 1. Substations (VLs)
                                             if (nodeMeta) {
                                                 const vlNames = getActionTargetVoltageLevels(details, id, nodeMeta);
@@ -4702,10 +4762,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         }
 
                                         if (isLoadShedding) {
-                                            const vlSet = new Set();
                                             details.load_shedding_details.forEach(ls => {
-                                                if (ls.voltage_level_id && !vlSet.has(ls.voltage_level_id)) {
-                                                    vlSet.add(ls.voltage_level_id);
+                                                if (ls.load_name) {
+                                                    badges.push(badgeBtn(ls.load_name, '#fef3c7', '#92400e', `Zoom to ${ls.load_name}`));
+                                                }
+                                                if (ls.voltage_level_id) {
                                                     badges.push(badgeBtn(ls.voltage_level_id, '#d1fae5', '#065f46', `Click: zoom | Double-click: open SLD`, (e) => {
                                                         e.stopPropagation();
                                                         handleVlDoubleClick(id, ls.voltage_level_id);
@@ -4714,10 +4775,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             });
                                         }
                                         if (isRenewableCurtailment) {
-                                            const vlSet = new Set();
                                             details.curtailment_details.forEach(rc => {
-                                                if (rc.voltage_level_id && !vlSet.has(rc.voltage_level_id)) {
-                                                    vlSet.add(rc.voltage_level_id);
+                                                if (rc.gen_name) {
+                                                    badges.push(badgeBtn(rc.gen_name, '#dbeafe', '#1e40af', `Zoom to ${rc.gen_name}`));
+                                                }
+                                                if (rc.voltage_level_id) {
                                                     badges.push(badgeBtn(rc.voltage_level_id, '#dcfce7', '#166534', `Click: zoom | Double-click: open SLD`, (e) => {
                                                         e.stopPropagation();
                                                         handleVlDoubleClick(id, rc.voltage_level_id);

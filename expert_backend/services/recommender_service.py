@@ -2052,23 +2052,50 @@ class RecommenderService:
         for aid in action_ids:
             if aid not in self._dict_action and aid not in recent_actions:
                 # Try to create on-the-fly
-                if aid.startswith("load_shedding_"):
-                    load_name = aid[len("load_shedding_"):]
-                    topo = {"loads_bus": {load_name: -1}} # _build_action_entry_from_topology expects loads_bus
-                    entry = self._build_action_entry_from_topology(aid, topo)
-                    entry["description"] = f"Load shedding for load {load_name}"
-                    entry["description_unitaire"] = f"Effacement {load_name}"
-                    self._dict_action[aid] = entry
-                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}'")
+                if aid.startswith("curtail_"):
 
-                elif aid.startswith("curtail_"):
                     gen_name = aid[len("curtail_"):]
                     topo = {"gens_bus": {gen_name: -1}}
                     entry = self._build_action_entry_from_topology(aid, topo)
-                    entry["description"] = f"Renewable curtailment for generator {gen_name}"
-                    entry["description_unitaire"] = f"Effacement {gen_name}"
+                    
+                    # Align with suggested action description format to help frontend discovery
+                    vl_id = None
+                    try:
+                        from expert_backend.services.network_service import network_service as ns
+                        vl_id = ns.get_generator_voltage_level(gen_name)
+                    except Exception:
+                        pass
+                    if vl_id:
+                        entry["description"] = f"Renewable curtailment on generator '{gen_name}' at voltage level '{vl_id}'"
+                        entry["description_unitaire"] = f"Effacement '{gen_name}' ('{vl_id}')"
+                    else:
+                        entry["description"] = f"Renewable curtailment on generator '{gen_name}'"
+                        entry["description_unitaire"] = f"Effacement '{gen_name}'"
+                        
                     self._dict_action[aid] = entry
                     print(f"[simulate_manual_action] Created dynamic curtailment action '{aid}'")
+
+                elif aid.startswith("load_shedding_"):
+                    load_name = aid[len("load_shedding_"):]
+                    topo = {"loads_bus": {load_name: -1}}
+                    entry = self._build_action_entry_from_topology(aid, topo)
+                    
+                    vl_id = None
+                    try:
+                        from expert_backend.services.network_service import network_service as ns
+                        vl_id = ns.get_load_voltage_level(load_name)
+                    except Exception:
+                        pass
+                    if vl_id:
+                        entry["description"] = f"Load shedding on '{load_name}' at voltage level '{vl_id}'"
+                        entry["description_unitaire"] = f"Effacement '{load_name}' ('{vl_id}')"
+                    else:
+                        entry["description"] = f"Load shedding on '{load_name}'"
+                        entry["description_unitaire"] = f"Effacement '{load_name}'"
+                        
+                    self._dict_action[aid] = entry
+                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}'")
+
 
                 elif aid.startswith("pst_tap_") or aid.startswith("pst_"):
                     # Example: pst_tap_PST_ID_inc1 or pst_tap_PST_ID_dec2
@@ -2312,6 +2339,14 @@ class RecommenderService:
             for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
                 val = getattr(action, field, None)
                 topo[field] = sanitize_for_json(val) if val else {}
+            
+            # Manually inject topology for heuristic actions (Standard Grid2Op actions don't have these attributes)
+            if action_id.startswith("curtail_"):
+                gen_name = action_id.replace("curtail_", "")
+                topo["gens_bus"] = {gen_name: -1}
+            elif action_id.startswith("load_shedding"):
+                load_name = action_id.replace("load_shedding_", "")
+                topo["loads_bus"] = {load_name: -1}
 
             # Supplement switches from the original action dictionary entry
             if not topo.get("switches") and self._dict_action:
@@ -2325,8 +2360,16 @@ class RecommenderService:
                     if sw:
                         topo["switches"] = sanitize_for_json(sw)
 
-            self._last_result["prioritized_actions"][action_id] = {
+            # Retrieve the full description from the dictionary if available
+            description = description_unitaire
+            if self._dict_action:
+                dict_entry = self._dict_action.get(action_id)
+                if dict_entry and "description" in dict_entry:
+                    description = dict_entry["description"]
+
+            action_data = {
                 "observation": obs_simu_action,
+                "description": description,
                 "description_unitaire": description_unitaire,
                 "action": action,
                 "action_topology": topo,
@@ -2339,6 +2382,14 @@ class RecommenderService:
                 "non_convergence": non_convergence,
                 "is_estimated": False,
             }
+            self._last_result["prioritized_actions"][action_id] = action_data
+
+            
+            # CRITICAL: Also update the global action registry used by the SLD generator
+            if self._dict_action is None:
+                self._dict_action = {}
+            self._dict_action[action_id] = action_data
+
 
         # Compute load shedding details for this action
         load_shedding_details = None
@@ -2418,7 +2469,9 @@ class RecommenderService:
             "disconnected_mw": disconnected_mw,
             "non_convergence": non_convergence,
             "lines_overloaded": sanitize_for_json(lines_overloaded_names),
+            "action_topology": topo if 'topo' in locals() else {},
         }
+
         if load_shedding_details:
             result["load_shedding_details"] = load_shedding_details
         if curtailment_details:
