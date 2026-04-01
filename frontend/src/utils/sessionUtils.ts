@@ -23,6 +23,7 @@ export interface SessionInput {
     minLineDisconnections: number;
     minPst: number;
     minLoadShedding: number;
+    minRenewableCurtailmentActions: number;
     nPrioritizedActions: number;
     linesMonitoringPath: string;
     monitoringFactor: number;
@@ -65,7 +66,7 @@ export interface SessionInput {
 export function buildSessionResult(input: SessionInput): SessionResult {
     const {
         networkPath, actionPath, layoutPath,
-        minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst, minLoadShedding,
+        minLineReconnections, minCloseCoupling, minOpenCoupling, minLineDisconnections, minPst, minLoadShedding, minRenewableCurtailmentActions,
         nPrioritizedActions, linesMonitoringPath, monitoringFactor,
         preExistingOverloadThreshold, ignoreReconnections, pypowsyblFastMode,
         selectedBranch, selectedOverloads, monitorDeselected,
@@ -128,6 +129,7 @@ export function buildSessionResult(input: SessionInput): SessionResult {
                         n_components: detail.n_components,
                         disconnected_mw: detail.disconnected_mw,
                         load_shedding_details: detail.load_shedding_details,
+                        curtailment_details: detail.curtailment_details,
                         status: {
                             is_selected: selectedActionIds.has(id),
                             // An action is "suggested" if the recommender ever returned it —
@@ -155,6 +157,7 @@ export function buildSessionResult(input: SessionInput): SessionResult {
             min_line_disconnections: minLineDisconnections,
             min_pst: minPst,
             min_load_shedding: minLoadShedding,
+            min_renewable_curtailment_actions: minRenewableCurtailmentActions,
             n_prioritized_actions: nPrioritizedActions,
             lines_monitoring_path: linesMonitoringPath,
             monitoring_factor: monitoringFactor,
