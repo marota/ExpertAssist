@@ -496,7 +496,9 @@ describe('ActionFeed', () => {
         render(<ActionFeed {...props} />);
 
         expect(screen.getByText(/Action dictionary/)).toBeInTheDocument();
-        fireEvent.click(screen.getByTitle('Dismiss'));
+        // Multiple dismiss buttons exist; action dict one renders first
+        const dismissBtns = screen.getAllByTitle('Dismiss');
+        fireEvent.click(dismissBtns[0]);
         expect(screen.queryByText(/Action dictionary/)).not.toBeInTheDocument();
     });
 

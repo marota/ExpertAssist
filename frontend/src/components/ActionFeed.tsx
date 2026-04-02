@@ -101,6 +101,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
     const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
     const [showActionDictWarning, setShowActionDictWarning] = useState(true);
+    const [showRecommenderWarning, setShowRecommenderWarning] = useState(true);
 
     const showTooltip = (e: React.MouseEvent, content: React.ReactNode) => {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1010,7 +1011,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                 <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0' }}>
                                     {!pendingAnalysisResult ? 'Click \u201cAnalyze & Suggest\u201d above to get action suggestions.' : 'No suggested actions available.'}
                                 </p>
-                                {!pendingAnalysisResult && (
+                                {!pendingAnalysisResult && showRecommenderWarning && (
                                     <div style={{
                                         marginTop: '10px',
                                         padding: '10px',
@@ -1021,24 +1022,31 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                         color: '#856404',
                                         textAlign: 'left'
                                     }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
                                             <div style={{ fontWeight: 'bold' }}>Recommender Settings:</div>
-                                            {onOpenSettings && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                {onOpenSettings && (
+                                                    <button
+                                                        onClick={() => onOpenSettings('recommender')}
+                                                        style={{
+                                                            background: 'none',
+                                                            border: 'none',
+                                                            color: '#0056b3',
+                                                            textDecoration: 'underline',
+                                                            cursor: 'pointer',
+                                                            padding: '0',
+                                                            fontSize: '11px'
+                                                        }}
+                                                    >
+                                                        Change in settings
+                                                    </button>
+                                                )}
                                                 <button
-                                                    onClick={() => onOpenSettings('recommender')}
-                                                    style={{
-                                                        background: 'none',
-                                                        border: 'none',
-                                                        color: '#0056b3',
-                                                        textDecoration: 'underline',
-                                                        cursor: 'pointer',
-                                                        padding: '0',
-                                                        fontSize: '11px'
-                                                    }}
-                                                >
-                                                    Change in settings
-                                                </button>
-                                            )}
+                                                    onClick={() => setShowRecommenderWarning(false)}
+                                                    style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '16px', lineHeight: 1, color: '#856404' }}
+                                                    title="Dismiss"
+                                                >&times;</button>
+                                            </div>
                                         </div>
                                         <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding, {minRenewableCurtailmentActions} RC</div>
                                         <div>• Maximum suggestions: {nPrioritizedActions}</div>

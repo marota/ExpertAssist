@@ -4382,7 +4382,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                 <span style={{ fontSize: '24px' }}>⚙️</span>
                                                 <span>Processing Analysis...</span>
                                             </>
-                                        ) : 'Run analysis to see overflow graph'}
+                                        ) : <span style={{ fontStyle: 'italic', color: '#999' }}>Run &ldquo;Analyze &amp; Suggest&rdquo; to see the overflow graph.</span>}
                                     </div>
                                 )}
                             </div>
@@ -5769,7 +5769,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                 <p style={{ color: '#666', fontStyle: 'italic', fontSize: '13px', margin: '5px 0' }}>
                                                     {!pendingAnalysisResult ? 'Click \u201cAnalyze & Suggest\u201d above to get action suggestions.' : 'No suggested actions available.'}
                                                 </p>
-                                                {!pendingAnalysisResult && (
+                                                {!pendingAnalysisResult && !dismissedRecommenderWarning && (
                                                     <div style={{
                                                         marginTop: '10px',
                                                         padding: '10px',
@@ -5876,7 +5876,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     { id: 'n', label: 'Network (N)', available: !!nDiagram?.svg, accentColor: '#3498db', placeholder: 'Configure a network path to load the base-case diagram.' },
                                     { id: 'n-1', label: 'Contingency (N-1)', available: !!n1Diagram?.svg, accentColor: '#e74c3c', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
                                     { id: 'action', label: selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', available: !!actionDiagram?.svg, accentColor: '#9c27b0', placeholder: 'Select an action card from the suggestions panel to view its effect on the network.' },
-                                    { id: 'overflow', label: 'Overflow Analysis', available: !!result?.pdf_url, accentColor: '#27ae60', placeholder: 'Run an analysis to generate the overflow graph.' },
+                                    { id: 'overflow', label: 'Overflow Analysis', available: !!result?.pdf_url, accentColor: '#27ae60', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
                                 ].map(tab => {
                                     const isActive = activeTab === tab.id;
                                     return (
