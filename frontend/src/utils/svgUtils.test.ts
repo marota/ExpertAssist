@@ -778,14 +778,15 @@ describe('Highlight Layering', () => {
         // Apply contingency highlight to LINE_B
         applyContingencyHighlight(container, metaIndex, 'LINE_B');
 
-        const elB = container.querySelector('#svg-line-b');
-        expect(elB).not.toBeNull();
-        const prevSibling = elB!.previousElementSibling as SVGGraphicsElement;
-        expect(prevSibling).not.toBeNull();
-        expect(prevSibling.classList.contains('nad-contingency-highlight')).toBe(true);
-        expect(prevSibling.classList.contains('nad-highlight-clone')).toBe(true);
-        expect(prevSibling.style.display).toBe('block');
-        expect(prevSibling.style.visibility).toBe('visible');
+        const bgLayer = container.querySelector('#nad-background-layer');
+        expect(bgLayer).not.toBeNull();
+
+        const clone = bgLayer!.querySelector('.nad-contingency-highlight') as SVGGraphicsElement;
+        expect(clone).not.toBeNull();
+        expect(clone.classList.contains('nad-highlight-clone')).toBe(true);
+        expect(clone.style.display).toBe('block');
+        expect(clone.style.visibility).toBe('visible');
+        expect(clone.getAttribute('transform')).toMatch(/matrix/);
     });
 
     it('exhaustive cleanup: removes existing contingency highlights before adding new ones', () => {

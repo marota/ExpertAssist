@@ -500,32 +500,52 @@ export const applyContingencyHighlight = (
     metaIndex: MetadataIndex | null,
     disconnectedElement: string | null,
 ) => {
-    if (!container || !metaIndex || !disconnectedElement) return;
-
-    // Exhaustive cleanup of existing contingency highlights
-    container.querySelectorAll('.nad-contingency-highlight').forEach(el => el.remove());
-    container.querySelectorAll('.nad-highlight-clone').forEach(el => {
-        if (el.classList.contains('nad-contingency-highlight')) el.remove();
+    if (!container) return;
+    container.querySelectorAll('.nad-contingency-highlight').forEach(el => {
+        if (el.classList.contains('nad-highlight-clone')) {
+            el.remove();
+        } else {
+            el.classList.remove('nad-contingency-highlight');
+        }
     });
+
+    if (!disconnectedElement || !metaIndex) return;
 
     const { edgesByEquipmentId } = metaIndex;
     const edge = edgesByEquipmentId.get(disconnectedElement);
     if (!edge || !edge.svgId) return;
 
+    const idMap = getIdMap(container);
+    const el = idMap.get(edge.svgId);
+    if (!el) return;
 
-    const el = getIdMap(container).get(edge.svgId);
-    if (!el || !el.parentNode) return;
+    const backgroundLayer = getBackgroundLayer(container);
+    if (backgroundLayer) {
+        const clone = el.cloneNode(true) as SVGGraphicsElement;
+        clone.classList.add('nad-contingency-highlight');
+        clone.classList.add('nad-highlight-clone');
+        clone.removeAttribute('id');
 
-    const clone = el.cloneNode(true) as SVGGraphicsElement;
-    clone.removeAttribute('id');
-    clone.style.display = 'block';
-    clone.style.visibility = 'visible';
-    clone.classList.add('nad-contingency-highlight');
-    clone.classList.add('nad-highlight-clone');
+        // Ensure highlight is visible even if the original is hidden
+        clone.style.display = 'block';
+        clone.style.visibility = 'visible';
 
-    // Insert right before the original — same parent = same transforms,
-    // and SVG paint order means the clone (halo) renders behind the original.
-    el.parentNode.insertBefore(clone, el);
+        try {
+            const elCTM = (el as SVGGraphicsElement).getScreenCTM();
+            const bgCTM = (backgroundLayer as unknown as SVGGraphicsElement).getScreenCTM();
+            if (elCTM && bgCTM) {
+                const relativeCTM = bgCTM.inverse().multiply(elCTM);
+                const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
+                clone.setAttribute('transform', matrixStr);
+            }
+        } catch (e) {
+            console.warn('Failed to get CTM for contingency highlight:', e);
+        }
+
+        backgroundLayer.appendChild(clone);
+    } else {
+        el.classList.add('nad-contingency-highlight');
+    }
 };
 
 
