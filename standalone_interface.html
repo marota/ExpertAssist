@@ -4144,6 +4144,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     // Fallback for legacy results or actions without full enrichment
                                     if (overloadedLines.length > 0 && actionDetail.rho_after) {
                                         overloadedLines.forEach((name, i) => {
+                                            // rho_after is raw rho; line is overloaded when rho > monitoringFactor
                                             const rho = actionDetail.rho_after[i];
                                             if (rho != null && rho > monitoringFactor) {
                                                 overloadsToHighlight.push(name);
@@ -4155,6 +4156,10 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                             overloadsToHighlight.push(actionDetail.max_rho_line);
                                         }
                                     }
+                                }
+                                // Filter out user-deselected overloads
+                                if (selectedOverloads.size > 0) {
+                                    overloadsToHighlight = overloadsToHighlight.filter(name => selectedOverloads.has(name));
                                 }
                                 applyOverloadedHighlights(actionSvgContainerRef.current, actionMetaIndex, overloadsToHighlight);
                             }
@@ -4176,7 +4181,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     }
 
                     if (tab === 'n-1' && n1Diagram && n1SvgContainerRef.current && n1MetaIndex) {
-                        const n1Overloaded = n1Diagram.lines_overloaded || [];
+                        const n1Overloaded = (n1Diagram.lines_overloaded || []).filter(
+                            name => selectedOverloads.size === 0 || selectedOverloads.has(name)
+                        );
                         if (actionViewMode !== 'delta' && n1Overloaded.length > 0) {
                             applyOverloadedHighlights(n1SvgContainerRef.current, n1MetaIndex, n1Overloaded);
                         }
@@ -4187,7 +4194,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     console.error('[HighlightEffect] crash:', err);
                     setError('Decoration error: ' + err.message);
                 }
-            }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, selectedBranch, applyDeltaVisuals, monitoringFactor]);
+            }, [nDiagram, n1Diagram, actionDiagram, nMetaIndex, n1MetaIndex, actionMetaIndex, result, selectedActionId, actionViewMode, selectedBranch, applyDeltaVisuals, monitoringFactor, selectedOverloads]);
 
             // Apply highlights only for the active tab; mark others as stale.
             // When the trigger is a tab switch (not a data change), defer the
