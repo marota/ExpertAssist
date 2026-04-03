@@ -45,7 +45,7 @@ export const boostSvgForLargeGrid = (svgString: string, viewBox: ViewBox | null,
 
     const boost = Math.sqrt(ratio / BOOST_THRESHOLD);
     const boostStr = boost.toFixed(2);
-    
+
     try {
         const parser = new DOMParser();
         const doc = parser.parseFromString(svgString, 'image/svg+xml');
@@ -512,40 +512,20 @@ export const applyContingencyHighlight = (
     const edge = edgesByEquipmentId.get(disconnectedElement);
     if (!edge || !edge.svgId) return;
 
-    let backgroundLayer = container.querySelector('#nad-background-layer');
-    if (!backgroundLayer) {
-        const svg = container.querySelector('svg');
-        if (svg) {
-            backgroundLayer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-            backgroundLayer.setAttribute('id', 'nad-background-layer');
-            if (svg.firstChild) {
-                svg.insertBefore(backgroundLayer, svg.firstChild);
-            } else {
-                svg.appendChild(backgroundLayer);
-            }
-        }
-    }
 
     const el = getIdMap(container).get(edge.svgId);
-    if (!el || !backgroundLayer) return;
+    if (!el || !el.parentNode) return;
 
     const clone = el.cloneNode(true) as SVGGraphicsElement;
     clone.removeAttribute('id');
+    clone.style.display = 'block';
+    clone.style.visibility = 'visible';
     clone.classList.add('nad-contingency-highlight');
     clone.classList.add('nad-highlight-clone');
 
-    try {
-        const elCTM = (el as SVGGraphicsElement).getScreenCTM();
-        const bgCTM = (backgroundLayer as unknown as SVGGraphicsElement).getScreenCTM();
-        if (elCTM && bgCTM) {
-            const relativeCTM = bgCTM.inverse().multiply(elCTM);
-            const matrixStr = `matrix(${relativeCTM.a}, ${relativeCTM.b}, ${relativeCTM.c}, ${relativeCTM.d}, ${relativeCTM.e}, ${relativeCTM.f})`;
-            clone.setAttribute('transform', matrixStr);
-        }
-    } catch (e) {
-        console.warn('Failed to get CTM for contingency highlight:', e);
-    }
-    backgroundLayer.prepend(clone);
+    // Insert right before the original — same parent = same transforms,
+    // and SVG paint order means the clone (halo) renders behind the original.
+    el.parentNode.insertBefore(clone, el);
 };
 
 

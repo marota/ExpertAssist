@@ -84,7 +84,6 @@ circle.nad-highlight {
 
 /* Contingency highlight: yellow */
 .nad-contingency-highlight {
-    filter: drop-shadow(0 0 8px #ffe033) drop-shadow(0 0 15px #ffe033) !important;
     opacity: 1 !important;
 }
 
@@ -110,9 +109,9 @@ circle.nad-highlight {
 .nad-contingency-highlight rect,
 .nad-contingency-highlight polygon {
     stroke: #ffe033 !important;
-    stroke-width: 120px !important;
+    stroke-width: 150px !important;
     stroke-opacity: 1 !important;
-    opacity: 1 !important;
+    stroke-dasharray: none !important;
     fill: none !important;
     stroke-linecap: round !important;
     stroke-linejoin: round !important;
@@ -128,10 +127,6 @@ circle.nad-highlight {
     fill: #ff4081 !important;
     fill-opacity: 1 !important;
     vector-effect: non-scaling-stroke !important;
-}
-
-.nad-action-target {
-    filter: drop-shadow(0 0 8px #ff4081) drop-shadow(0 0 15px #ff4081) !important;
 }
 
 .nad-contingency-highlight circle,
@@ -242,9 +237,7 @@ circle.nad-highlight {
    so they don't affect the original SLD rendering (flows/impacts modes). */
 
 /* Contingency element on N-1 SLD (yellow halo behind) */
-.sld-highlight-clone.sld-highlight-contingency {
-    filter: drop-shadow(0 0 4px #ffe033) drop-shadow(0 0 8px #ffe033);
-}
+
 .sld-highlight-clone.sld-highlight-contingency path,
 .sld-highlight-clone.sld-highlight-contingency line,
 .sld-highlight-clone.sld-highlight-contingency polyline,
@@ -253,6 +246,7 @@ circle.nad-highlight {
     stroke: #ffe033 !important;
     stroke-width: 6px !important;
     stroke-opacity: 1 !important;
+    stroke-dasharray: none !important;
     fill: none !important;
 }
 
@@ -260,6 +254,7 @@ circle.nad-highlight {
 .sld-highlight-clone.sld-highlight-action {
     filter: drop-shadow(0 0 4px #ff4081) drop-shadow(0 0 8px #ff4081);
 }
+
 .sld-highlight-clone.sld-highlight-action path,
 .sld-highlight-clone.sld-highlight-action line,
 .sld-highlight-clone.sld-highlight-action polyline,
@@ -286,6 +281,7 @@ circle.nad-highlight {
 .sld-highlight-clone.sld-highlight-breaker {
     filter: drop-shadow(0 0 3px #ce93d8) drop-shadow(0 0 6px #ce93d8);
 }
+
 .sld-highlight-clone.sld-highlight-breaker path,
 .sld-highlight-clone.sld-highlight-breaker line,
 .sld-highlight-clone.sld-highlight-breaker rect,

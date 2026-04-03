@@ -94,7 +94,7 @@ describe('boostSvgForLargeGrid', () => {
         `.trim();
         const vb = { x: 0, y: 0, w: 10000, h: 10000 };
         const result = boostSvgForLargeGrid(svg, vb, 600);
-        
+
         expect(result).toContain('foreignObject');
         expect(result).toContain('http://www.w3.org/1999/xhtml');
         expect(result).toContain('Test Label');
@@ -762,7 +762,7 @@ describe('applyDeltaVisuals', () => {
 });
 
 describe('Highlight Layering', () => {
-    it('prepends the contingency clone to the background layer (z-order fix)', () => {
+    it('inserts the contingency clone as an immediate previous sibling (better stability)', () => {
         const container = document.createElement('div');
         container.innerHTML = '<svg><g id="svg-line-a"></g><g id="svg-line-b"></g></svg>';
         const metaIndex = {
@@ -775,24 +775,17 @@ describe('Highlight Layering', () => {
             edgesByNode: new Map(),
         } as unknown as MetadataIndex;
 
-        // 1. Apply action highlight first (appends to layer)
-        const detail: ActionDetail = {
-            action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, pst_tap: {} }
-        } as unknown as ActionDetail;
-        applyActionTargetHighlights(container, metaIndex, detail, 'disco_LINE_A');
-
-        // 2. Apply contingency highlight (should prepend to layer)
+        // Apply contingency highlight to LINE_B
         applyContingencyHighlight(container, metaIndex, 'LINE_B');
 
-        const bgLayer = container.querySelector('#nad-background-layer');
-        expect(bgLayer).not.toBeNull();
-        const children = bgLayer!.children;
-        expect(children.length).toBe(2);
-
-        // LINE_B (contingency) should be FIRST in DOM (at the bottom visually)
-        expect(children[0].classList.contains('nad-contingency-highlight')).toBe(true);
-        // LINE_A (action) should be SECOND in DOM (on top visually)
-        expect(children[1].classList.contains('nad-action-target')).toBe(true);
+        const elB = container.querySelector('#svg-line-b');
+        expect(elB).not.toBeNull();
+        const prevSibling = elB!.previousElementSibling as SVGGraphicsElement;
+        expect(prevSibling).not.toBeNull();
+        expect(prevSibling.classList.contains('nad-contingency-highlight')).toBe(true);
+        expect(prevSibling.classList.contains('nad-highlight-clone')).toBe(true);
+        expect(prevSibling.style.display).toBe('block');
+        expect(prevSibling.style.visibility).toBe('visible');
     });
 
     it('exhaustive cleanup: removes existing contingency highlights before adding new ones', () => {
@@ -818,6 +811,6 @@ describe('Highlight Layering', () => {
         // Should STILL have only 1 highlight (the new one)
         const highlights = container.querySelectorAll('.nad-contingency-highlight');
         expect(highlights).toHaveLength(1);
-        expect(highlights[0].getAttribute('transform')).toBeDefined(); // CTM was applied
+        expect(highlights[0].classList.contains('nad-highlight-clone')).toBe(true);
     });
 });
