@@ -161,7 +161,6 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
         }
 
         /* Highlight overloaded lines in orange with glow (clone-based halo) */
-        .nad-overloaded {}
 
         .nad-overloaded path,
         .nad-overloaded line,
@@ -183,10 +182,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
         /* Apply drop-shadow to the parent clone group to create a glowing halo effect */
         /* Remedial action targets: purple-pink */
-        .nad-action-target {}
 
         /* Contingency highlight: yellow */
-        .nad-contingency-highlight {}
+        .nad-contingency-highlight {
+            opacity: 1 !important;
+        }
 
         /* For lines and paths, use grid units for stroke-width so the halo is always significantly wider than the actual element it highlights. Using non-scaling-stroke makes it stay a fixed pixel width on screen, which can be narrower than the line when heavily zoomed in. */
         .nad-action-target path,
@@ -210,6 +210,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             stroke: #ffe033 !important;
             stroke-width: 150px !important;
             stroke-opacity: 1 !important;
+            stroke-dasharray: none !important;
             fill: none !important;
             stroke-linecap: round !important;
             stroke-linejoin: round !important;
@@ -310,21 +311,18 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             fill-opacity: 0.5 !important;
         }
 
-        /* ===== SLD impact highlights ===== */
         /* Contingency element on N-1 SLD (yellow glow) */
-        .sld-highlight-clone.sld-highlight-contingency {
-            filter: drop-shadow(0 0 4px #ffe033) drop-shadow(0 0 8px #ffe033);
-        }
-
         .sld-highlight-clone.sld-highlight-contingency path,
         .sld-highlight-clone.sld-highlight-contingency line,
         .sld-highlight-clone.sld-highlight-contingency polyline,
         .sld-highlight-clone.sld-highlight-contingency rect,
         .sld-highlight-clone.sld-highlight-contingency circle {
             stroke: #ffe033 !important;
-            stroke-width: 6px !important;
-            stroke-opacity: 0.7 !important;
+            stroke-width: 150px !important;
+            stroke-opacity: 1 !important;
+            stroke-dasharray: none !important;
             fill: none !important;
+            opacity: 1 !important;
         }
 
         /* Action target on action SLD (purple-pink halo behind) */
