@@ -160,7 +160,10 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             fill: #e74c3c !important;
         }
 
-        /* Highlight overloaded lines in orange with glow (clone-based halo) */
+        /* Highlight overloaded lines in orange (clone-based halo) */
+        .nad-overloaded {
+            opacity: 1 !important;
+        }
 
         .nad-overloaded path,
         .nad-overloaded line,
@@ -170,6 +173,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             stroke: #ff8c00 !important;
             stroke-width: 120px !important;
             stroke-opacity: 1 !important;
+            stroke-dasharray: none !important;
             fill: none !important;
             stroke-linecap: round !important;
             stroke-linejoin: round !important;
@@ -180,8 +184,10 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             display: none !important;
         }
 
-        /* Apply drop-shadow to the parent clone group to create a glowing halo effect */
         /* Remedial action targets: purple-pink */
+        .nad-action-target {
+            opacity: 1 !important;
+        }
 
         /* Contingency highlight: yellow */
         .nad-contingency-highlight {
@@ -197,6 +203,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             stroke: #ff4081 !important;
             stroke-width: 150px !important;
             stroke-opacity: 1 !important;
+            stroke-dasharray: none !important;
             fill: none !important;
             stroke-linecap: round !important;
             stroke-linejoin: round !important;
@@ -311,6 +318,13 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             fill-opacity: 0.5 !important;
         }
 
+        /* ===== SLD Overlay Styles (Semi-transparent background + bold halos) ===== */
+
+        .sld-background-dimmer {
+            fill: #999 !important;
+            fill-opacity: 0.5 !important;
+        }
+
         /* Contingency element on N-1 SLD (yellow glow) */
         .sld-highlight-clone.sld-highlight-contingency path,
         .sld-highlight-clone.sld-highlight-contingency line,
@@ -327,7 +341,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
 
         /* Action target on action SLD (purple-pink halo behind) */
         .sld-highlight-clone.sld-highlight-action {
-            filter: drop-shadow(0 0 4px #ff4081) drop-shadow(0 0 8px #ff4081);
+            opacity: 1 !important;
         }
 
         .sld-highlight-clone.sld-highlight-action path,
