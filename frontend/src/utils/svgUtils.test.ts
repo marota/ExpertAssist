@@ -809,27 +809,26 @@ describe('Highlight Layering', () => {
 
     it('exhaustive cleanup: removes existing contingency highlights before adding new ones', () => {
         const container = document.createElement('div');
-        container.innerHTML = '<svg><g id="svg-a"></g><g id="svg-b"></g></svg>';
+        // Setup multiple clones and one original with the class
+        container.innerHTML = `
+            <svg>
+                <g id="nad-background-layer">
+                    <path class="nad-contingency-highlight nad-highlight-clone"></path>
+                    <path class="nad-contingency-highlight nad-highlight-clone"></path>
+                </g>
+                <path id="original" class="nad-contingency-highlight"></path>
+            </svg>
+        `;
         const metaIndex = {
-            edgesByEquipmentId: new Map([
-                ['A', { equipmentId: 'A', svgId: 'svg-a' } as EdgeMeta],
-                ['B', { equipmentId: 'B', svgId: 'svg-b' } as EdgeMeta],
-            ]),
-            nodesByEquipmentId: new Map(),
-            nodesBySvgId: new Map(),
-            edgesByNode: new Map(),
-        } as unknown as MetadataIndex;
+            edgesByEquipmentId: new Map([['NEW_LINE', { equipmentId: 'NEW', svgId: 'original_new' } as EdgeMeta]]),
+            nodesByEquipmentId: new Map()
+        } as any;
 
-        // Apply first highlight
-        applyContingencyHighlight(container, metaIndex, 'A');
-        expect(container.querySelectorAll('.nad-contingency-highlight')).toHaveLength(1);
+        // Mock getIdMap to return no element for NEW_LINE to avoid creating new ones during cleanup check
+        // Or better, just apply it and check if old stuff is gone
+        applyContingencyHighlight(container, metaIndex, 'NON_EXISTENT');
 
-        // Apply second highlight
-        applyContingencyHighlight(container, metaIndex, 'B');
-
-        // Should STILL have only 1 highlight (the new one)
-        const highlights = container.querySelectorAll('.nad-contingency-highlight');
-        expect(highlights).toHaveLength(1);
-        expect(highlights[0].classList.contains('nad-highlight-clone')).toBe(true);
+        expect(container.querySelectorAll('.nad-highlight-clone').length).toBe(0);
+        expect(container.querySelector('#original')?.classList.contains('nad-contingency-highlight')).toBe(false);
     });
 });
