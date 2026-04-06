@@ -825,10 +825,65 @@ describe('Highlight Layering', () => {
         } as any;
 
         // Mock getIdMap to return no element for NEW_LINE to avoid creating new ones during cleanup check
-        // Or better, just apply it and check if old stuff is gone
         applyContingencyHighlight(container, metaIndex, 'NON_EXISTENT');
 
         expect(container.querySelectorAll('.nad-highlight-clone').length).toBe(0);
         expect(container.querySelector('#original')?.classList.contains('nad-contingency-highlight')).toBe(false);
+    });
+
+    describe('applyActionTargetHighlights', () => {
+        it('adds nad-action-target-original class to original elements and creates clones in background layer', () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <svg>
+                    <g id="nad-background-layer"></g>
+                    <path id="svg-L1" class="line"></path>
+                    <circle id="svg-N1" class="node"></circle>
+                </svg>
+            `;
+            const metaIndex = {
+                edgesByEquipmentId: new Map([['L1', { equipmentId: 'L1', svgId: 'svg-L1' } as EdgeMeta]]),
+                nodesByEquipmentId: new Map([['N1', { equipmentId: 'N1', svgId: 'svg-N1' } as NodeMeta]])
+            } as any;
+            const actionDetail = {
+                description_unitaire: "Ouvrir 'L1' et 'N1'",
+                action_topology: {
+                    lines_ex_bus: { 'L1': -1 },
+                    gens_bus: { 'N1': -1 }
+                }
+            } as unknown as ActionDetail;
+
+            applyActionTargetHighlights(container as any, metaIndex, actionDetail, 'act-N1');
+
+            const originalLine = container.querySelector('#svg-L1');
+            const originalNode = container.querySelector('#svg-N1');
+            expect(originalLine?.classList.contains('nad-action-target-original')).toBe(true);
+            expect(originalNode?.classList.contains('nad-action-target-original')).toBe(true);
+
+            const clones = container.querySelectorAll('.nad-highlight-clone.nad-action-target');
+            expect(clones.length).toBe(2);
+            expect((clones[0].parentNode as Element)?.id).toBe('nad-background-layer');
+        });
+
+        it('cleans up existing highlights and original classes before applying new ones', () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <svg>
+                    <g id="nad-background-layer">
+                        <path class="nad-action-target nad-highlight-clone"></path>
+                    </g>
+                    <path id="svg-L1" class="nad-action-target-original"></path>
+                </svg>
+            `;
+            const metaIndex = {
+                edgesByEquipmentId: new Map(),
+                nodesByEquipmentId: new Map()
+            } as any;
+
+            applyActionTargetHighlights(container, metaIndex, null, null);
+
+            expect(container.querySelectorAll('.nad-highlight-clone').length).toBe(0);
+            expect(container.querySelector('#svg-L1')?.classList.contains('nad-action-target-original')).toBe(false);
+        });
     });
 });
