@@ -16,6 +16,9 @@ Overflow_Graph/
 config.json
 config_path.txt
 
+# Node modules
+node_modules/
+
 # Virtual environments
 venv/
 venv*/
