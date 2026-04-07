@@ -173,15 +173,62 @@ interface CurtailmentDetail {
 - `test_manual_action_enrichment.py` — enrichment with new topology format
 - `test_dynamic_actions.py` — on-the-fly action creation
 - `test_mw_start.py` — MW start computation for all action types
+- `test_configurable_mw.py` — 8 tests for configurable MW reduction:
+  - Partial load shedding with target_mw (setpoint = current - target, clamped >= 0)
+  - Partial curtailment with target_mw
+  - Full shedding/curtailment when target_mw is omitted
+  - Clamping when target_mw exceeds current MW
+  - Re-simulation of existing actions with updated target_mw
+  - Content unchanged when target_mw is not provided on re-simulation
 
 ### Frontend (`frontend/src/`)
-- `ActionFeed.test.tsx` — rendering of load shedding/curtailment details with both topology formats
+- `ActionFeed.test.tsx` — rendering of load shedding/curtailment details with both topology formats, Target MW input in score table, editable MW + re-simulate in action cards
 - `svgUtils.test.ts` — target detection with loads_p/gens_p fields
 
-## 6. Planned: Configurable MW Slider
+## 6. Configurable MW Reduction
 
-A future enhancement will allow users to choose the MW reduction target when manually simulating load shedding or curtailment actions:
-- Input range: 0 to `mw_start` (current load/generation MW)
-- Requires new `target_mw` parameter in `simulateManualAction` API
-- Backend will pass the target MW to the action content (`set_load_p`/`set_gen_p`)
-- Enables partial load shedding and partial curtailment scenarios
+Users can choose how much MW to reduce when simulating load shedding or curtailment actions, enabling **partial** reductions instead of full disconnection.
+
+### Semantics
+
+- **Target MW** = the amount of MW to reduce (not the remaining setpoint)
+- **Setpoint** = `current_mw - target_mw` (clamped to >= 0)
+- When `target_mw` is omitted, full reduction is applied (setpoint = 0)
+
+### API
+
+`POST /api/simulate-manual-action` accepts an optional `target_mw` field:
+
+```json
+{
+    "action_id": "load_shedding_LOAD_1",
+    "disconnected_element": "LINE_X",
+    "target_mw": 30.0
+}
+```
+
+### Backend (`recommender_service.py`)
+
+#### Dynamic Action Creation
+When creating `load_shedding_<name>` or `curtail_<name>` actions on-the-fly:
+1. Look up current MW from the N-1 observation (`obs_n1.load_p` / `obs_n1.gen_p`)
+2. Compute `remaining = max(0, current_mw - target_mw)`
+3. Use `remaining` as the setpoint in `loads_p` / `gens_p`
+
+#### Re-simulation of Existing Actions
+When `target_mw` is provided for an action already in `_dict_action`:
+1. Update `set_load_p` or `set_gen_p` entries in the content with the new setpoint
+2. The updated content is then used by `env.action_space()` for simulation
+
+### Frontend (`ActionFeed.tsx`)
+
+#### Score Table (Manual Selection)
+- **Target MW column**: Shown for `load_shedding` and `renewable_curtailment` score table sections
+- Input field: number input (0 to MW Start), pre-filled with placeholder = MW Start
+- Clicking a row passes the entered `target_mw` to `simulateManualAction`
+
+#### Action Card Detail Boxes
+- **Reduction MW input**: Editable number field in load shedding (amber) and curtailment (blue) detail boxes
+- **Re-simulate button**: Triggers `simulateManualAction` with the new `target_mw` value
+- Default value: the total shedded/curtailed MW from the current simulation result
+- The action card updates in-place with the new simulation results

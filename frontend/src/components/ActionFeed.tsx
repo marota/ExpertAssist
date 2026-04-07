@@ -99,6 +99,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [tooltip, setTooltip] = useState<{ content: React.ReactNode; x: number; y: number } | null>(null);
     const [suggestedTab, setSuggestedTab] = useState<'prioritized' | 'rejected'>('prioritized');
     const [dismissedSelectedWarning, setDismissedSelectedWarning] = useState(false);
+    // Per-action target MW inputs for score table rows (keyed by actionId)
+    const [scoreTargetMw, setScoreTargetMw] = useState<Record<string, string>>({});
+    // Per-action editable MW for action card re-simulation (keyed by actionId)
+    const [cardEditMw, setCardEditMw] = useState<Record<string, string>>({});
+    const [resimulating, setResimulating] = useState<string | null>(null);
     const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
     const [showActionDictWarning, setShowActionDictWarning] = useState(true);
     const [showRecommenderWarning, setShowRecommenderWarning] = useState(true);
@@ -248,7 +253,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         return () => document.removeEventListener('mousedown', handler);
     }, [searchOpen]);
 
-    const handleAddAction = async (actionId: string) => {
+    const handleAddAction = async (actionId: string, targetMw?: number) => {
         const trimmedId = actionId.trim();
         if (!disconnectedElement) {
             setError('Select a contingency first.');
@@ -278,7 +283,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 }
             }
 
-            const result = await api.simulateManualAction(trimmedId, disconnectedElement, actionContent, linesOverloaded);
+            const result = await api.simulateManualAction(trimmedId, disconnectedElement, actionContent, linesOverloaded, targetMw);
             const detail: ActionDetail = {
                 description_unitaire: result.description_unitaire,
                 rho_before: result.rho_before,
@@ -303,6 +308,36 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             setError(err?.response?.data?.detail || 'Simulation failed');
         } finally {
             setSimulating(null);
+        }
+    };
+
+    // Re-simulate an existing action with a new target MW value
+    const handleResimulate = async (actionId: string, newTargetMw: number) => {
+        if (!disconnectedElement) return;
+        setResimulating(actionId);
+        try {
+            const detail = actions[actionId];
+            const actionContent = detail?.action_topology ? detail.action_topology as unknown as Record<string, unknown> : null;
+            const result = await api.simulateManualAction(actionId, disconnectedElement, actionContent, linesOverloaded, newTargetMw);
+            const newDetail: ActionDetail = {
+                description_unitaire: result.description_unitaire,
+                rho_before: result.rho_before,
+                rho_after: result.rho_after,
+                max_rho: result.max_rho,
+                max_rho_line: result.max_rho_line,
+                is_rho_reduction: result.is_rho_reduction,
+                is_islanded: result.is_islanded,
+                n_components: result.n_components,
+                disconnected_mw: result.disconnected_mw,
+                non_convergence: result.non_convergence,
+                load_shedding_details: result.load_shedding_details,
+                curtailment_details: result.curtailment_details,
+            };
+            onManualActionAdded(actionId, newDetail, result.lines_overloaded || []);
+        } catch (e: unknown) {
+            console.error('Re-simulation failed:', e);
+        } finally {
+            setResimulating(null);
         }
     };
 
@@ -463,6 +498,31 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             )}
                                         </div>
                                     ))}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', borderTop: '1px solid #fcd34d', paddingTop: '5px' }}>
+                                        <label style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>Reduction MW:</label>
+                                        <input
+                                            data-testid={`edit-mw-${id}`}
+                                            type="number"
+                                            min={0}
+                                            step={0.1}
+                                            value={cardEditMw[id] ?? details.load_shedding_details.reduce((s, ls) => s + ls.shedded_mw, 0).toFixed(1)}
+                                            onChange={(e) => { e.stopPropagation(); setCardEditMw(prev => ({ ...prev, [id]: e.target.value })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ width: '70px', fontSize: '11px', fontFamily: 'monospace', padding: '2px 4px', border: '1px solid #d97706', borderRadius: '3px', textAlign: 'right' }}
+                                        />
+                                        <button
+                                            data-testid={`resimulate-${id}`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const mwVal = parseFloat(cardEditMw[id] ?? String(details.load_shedding_details!.reduce((s, ls) => s + ls.shedded_mw, 0)));
+                                                if (!isNaN(mwVal) && mwVal >= 0) handleResimulate(id, mwVal);
+                                            }}
+                                            disabled={resimulating === id}
+                                            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '3px', border: '1px solid #d97706', background: '#fbbf24', color: '#78350f', cursor: resimulating === id ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                        >
+                                            {resimulating === id ? 'Simulating...' : 'Re-simulate'}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             {details.curtailment_details && details.curtailment_details.length > 0 && (
@@ -481,6 +541,31 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                             )}
                                         </div>
                                     ))}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', borderTop: '1px solid #7dd3fc', paddingTop: '5px' }}>
+                                        <label style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>Reduction MW:</label>
+                                        <input
+                                            data-testid={`edit-mw-${id}`}
+                                            type="number"
+                                            min={0}
+                                            step={0.1}
+                                            value={cardEditMw[id] ?? details.curtailment_details.reduce((s, rc) => s + rc.curtailed_mw, 0).toFixed(1)}
+                                            onChange={(e) => { e.stopPropagation(); setCardEditMw(prev => ({ ...prev, [id]: e.target.value })); }}
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{ width: '70px', fontSize: '11px', fontFamily: 'monospace', padding: '2px 4px', border: '1px solid #0284c7', borderRadius: '3px', textAlign: 'right' }}
+                                        />
+                                        <button
+                                            data-testid={`resimulate-${id}`}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                const mwVal = parseFloat(cardEditMw[id] ?? String(details.curtailment_details!.reduce((s, rc) => s + rc.curtailed_mw, 0)));
+                                                if (!isNaN(mwVal) && mwVal >= 0) handleResimulate(id, mwVal);
+                                            }}
+                                            disabled={resimulating === id}
+                                            style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '3px', border: '1px solid #0284c7', background: '#38bdf8', color: '#0c4a6e', cursor: resimulating === id ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                        >
+                                            {resimulating === id ? 'Simulating...' : 'Re-simulate'}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                             {details.non_convergence && (
@@ -739,6 +824,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some((k: string) => scoresKeys.includes(k));
                                                 const globalParams = isPerActionParams ? null : (paramsKeys.length > 0 ? typeData.params : null);
 
+                                                const isLsOrRcType = type === 'load_shedding' || type.includes('load_shedding') || type === 'renewable_curtailment' || type.includes('renewable_curtailment');
                                                 return (
                                                     <div key={type} style={{ marginBottom: '8px' }}>
                                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -763,17 +849,25 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                         <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
                                                             <thead>
                                                                 <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
-                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: '55%' }}>Action</th>
-                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>MW Start</th>
-                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '25%' }}>Score</th>
+                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: isLsOrRcType ? '40%' : '55%' }}>Action</th>
+                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '15%' }}>MW Start</th>
+                                                                    {isLsOrRcType && <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>Target MW</th>}
+                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: isLsOrRcType ? '15%' : '25%' }}>Score</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
                                                                 {scoredActionsList.filter(item => item.type === type).map(item => {
                                                                     const isComputed = !!actions[item.actionId];
+                                                                    const targetVal = scoreTargetMw[item.actionId];
+                                                                    const parsedTarget = targetVal !== undefined ? parseFloat(targetVal) : null;
+                                                                    const isValidTarget = parsedTarget !== null && !isNaN(parsedTarget) && parsedTarget >= 0 && (item.mwStart == null || parsedTarget <= item.mwStart);
                                                                     return (
                                                                         <tr key={item.actionId}
-                                                                            onClick={() => !isComputed && handleAddAction(item.actionId)}
+                                                                            onClick={() => {
+                                                                                if (isComputed || simulating) return;
+                                                                                const mw = isLsOrRcType && isValidTarget ? parsedTarget! : undefined;
+                                                                                handleAddAction(item.actionId, mw);
+                                                                            }}
                                                                             style={{
                                                                                 borderBottom: '1px solid #eee',
                                                                                 cursor: (isComputed || simulating) ? 'not-allowed' : 'pointer',
@@ -801,12 +895,12 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                                 <div style={{ fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' }}>Parameters</div>
                                                                                                 {typeData.non_convergence?.[item.actionId] && (
                                                                                                     <div style={{ fontSize: '10px', color: '#dc3545' }}>
-                                                                                                        ⚠️ Non-convergence: {typeData.non_convergence[item.actionId]}
+                                                                                                        Non-convergence: {typeData.non_convergence[item.actionId]}
                                                                                                     </div>
                                                                                                 )}
                                                                                                 {(actions[item.actionId]?.is_islanded) && (
                                                                                                     <div style={{ fontSize: '10px', color: '#c2410c' }}>
-                                                                                                        🏝️ Islanding: {actions[item.actionId].n_components} components
+                                                                                                        Islanding: {actions[item.actionId].n_components} components
                                                                                                     </div>
                                                                                                 )}
                                                                                                 {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
@@ -823,6 +917,29 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                             <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: item.mwStart == null ? '#aaa' : '#333' }}>
                                                                                 {item.mwStart != null ? item.mwStart.toFixed(1) : 'N/A'}
                                                                             </td>
+                                                                            {isLsOrRcType && (
+                                                                                <td style={{ padding: '2px 4px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                                                                    <input
+                                                                                        data-testid={`target-mw-${item.actionId}`}
+                                                                                        type="number"
+                                                                                        min={0}
+                                                                                        max={item.mwStart ?? undefined}
+                                                                                        step={0.1}
+                                                                                        placeholder={item.mwStart != null ? item.mwStart.toFixed(1) : '0'}
+                                                                                        value={scoreTargetMw[item.actionId] ?? ''}
+                                                                                        onChange={(e) => setScoreTargetMw(prev => ({ ...prev, [item.actionId]: e.target.value }))}
+                                                                                        style={{
+                                                                                            width: '60px',
+                                                                                            fontSize: '11px',
+                                                                                            fontFamily: 'monospace',
+                                                                                            padding: '2px 4px',
+                                                                                            border: '1px solid #ccc',
+                                                                                            borderRadius: '3px',
+                                                                                            textAlign: 'right',
+                                                                                        }}
+                                                                                    />
+                                                                                </td>
+                                                                            )}
                                                                             <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace' }}>
                                                                                 {item.score.toFixed(2)}
                                                                             </td>

@@ -183,6 +183,7 @@ class ManualActionRequest(BaseModel):
     disconnected_element: str
     action_content: dict | None = None  # Optional switches dict for actions not in the dictionary
     lines_overloaded: list[str] | None = None  # Optional overloaded line names from saved session
+    target_mw: float | None = None  # Optional MW reduction amount for load shedding / curtailment
 
 class SaveSessionRequest(BaseModel):
     session_name: str
@@ -662,6 +663,7 @@ def simulate_manual_action(request: ManualActionRequest):
             request.action_id, request.disconnected_element,
             action_content=request.action_content,
             lines_overloaded=request.lines_overloaded,
+            target_mw=request.target_mw,
         )
         return result
     except Exception as e:

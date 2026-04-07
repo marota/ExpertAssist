@@ -2093,7 +2093,7 @@ class RecommenderService:
         entry["content"] = content if content else {}
         return entry
 
-    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None):
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None, target_mw=None):
         """Simulate a single or combined action and return its impact.
 
         raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
@@ -2102,6 +2102,9 @@ class RecommenderService:
         lines_overloaded: optional list of overloaded line names from the saved session,
                           used when _analysis_context is missing (e.g. after session reload)
                           to determine which lines to report rho_before/rho_after for.
+        target_mw: optional MW reduction amount for load shedding / curtailment actions.
+                   When provided, the action reduces power by this amount instead of fully
+                   shedding/curtailing. The resulting setpoint is (current_mw - target_mw).
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
@@ -2137,6 +2140,43 @@ class RecommenderService:
                     self._dict_action[aid] = entry
                     print(f"[simulate_manual_action] Injected restored action '{aid}' into dict")
 
+        # Helper: compute the power setpoint for a load/gen given target_mw reduction
+        def _compute_setpoint(element_name, element_type, target_mw_val):
+            """Compute remaining MW setpoint: current_mw - target_mw, clamped to >= 0.
+
+            element_type: 'load' or 'gen'
+            Returns the setpoint (remaining MW after reduction).
+            If the N-1 observation is unavailable, falls back to 0.0 (full reduction).
+            """
+            if target_mw_val is None:
+                return 0.0
+            # Get N-1 observation to find current MW
+            try:
+                env_tmp = self._get_simulation_env()
+                nm_tmp = env_tmp.network_manager
+                n_tmp = nm_tmp.network
+                n1_var = self._get_n1_variant(disconnected_element)
+                if self._cached_obs_n1 is not None and self._cached_obs_n1_id == n1_var:
+                    obs_n1 = self._cached_obs_n1
+                else:
+                    n_tmp.set_working_variant(n1_var)
+                    obs_n1 = env_tmp.get_obs()
+                    self._cached_obs_n1 = obs_n1
+                    self._cached_obs_n1_id = n1_var
+
+                if element_type == 'load':
+                    idx = list(obs_n1.name_load).index(element_name)
+                    current_mw = float(obs_n1.load_p[idx])
+                else:
+                    idx = list(obs_n1.name_gen).index(element_name)
+                    current_mw = float(obs_n1.gen_p[idx])
+
+                remaining = max(0.0, abs(current_mw) - float(target_mw_val))
+                return round(remaining, 2)
+            except Exception as e:
+                print(f"[simulate_manual_action] Could not compute setpoint for {element_name}: {e}, falling back to 0.0")
+                return 0.0
+
         # Handle dynamic action creation for special prefixes (load shedding, PST)
         for aid in action_ids:
             if aid not in self._dict_action and aid not in recent_actions:
@@ -2144,8 +2184,9 @@ class RecommenderService:
                 if aid.startswith("curtail_"):
 
                     gen_name = aid[len("curtail_"):]
-                    # New power reduction format: set generator output to 0 MW
-                    topo = {"gens_p": {gen_name: 0.0}}
+                    # New power reduction format: set generator output to target MW
+                    setpoint = _compute_setpoint(gen_name, 'gen', target_mw)
+                    topo = {"gens_p": {gen_name: setpoint}}
                     entry = self._build_action_entry_from_topology(aid, topo)
 
                     # Align with suggested action description format to help frontend discovery
@@ -2163,12 +2204,13 @@ class RecommenderService:
                         entry["description_unitaire"] = f"Effacement '{gen_name}'"
 
                     self._dict_action[aid] = entry
-                    print(f"[simulate_manual_action] Created dynamic curtailment action '{aid}'")
+                    print(f"[simulate_manual_action] Created dynamic curtailment action '{aid}' (setpoint={setpoint} MW)")
 
                 elif aid.startswith("load_shedding_"):
                     load_name = aid[len("load_shedding_"):]
-                    # New power reduction format: set load consumption to 0 MW
-                    topo = {"loads_p": {load_name: 0.0}}
+                    # New power reduction format: set load consumption to target MW
+                    setpoint = _compute_setpoint(load_name, 'load', target_mw)
+                    topo = {"loads_p": {load_name: setpoint}}
                     entry = self._build_action_entry_from_topology(aid, topo)
 
                     vl_id = None
@@ -2185,7 +2227,7 @@ class RecommenderService:
                         entry["description_unitaire"] = f"Effacement '{load_name}'"
 
                     self._dict_action[aid] = entry
-                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}'")
+                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}' (setpoint={setpoint} MW)")
 
 
                 elif aid.startswith("pst_tap_") or aid.startswith("pst_"):
@@ -2299,6 +2341,25 @@ class RecommenderService:
             lines_overloaded_ids = np.where(mask)[0].tolist()
             lines_overloaded_names = action_names[mask].tolist()
 
+        # If target_mw is provided for an existing action, update its content
+        # with the new setpoint before building the action object
+        if target_mw is not None:
+            for aid in action_ids:
+                if aid in self._dict_action:
+                    content = self._dict_action[aid].get("content", {})
+                    # Update set_load_p entries
+                    if "set_load_p" in content:
+                        for load_name in content["set_load_p"]:
+                            sp = _compute_setpoint(load_name, 'load', target_mw)
+                            content["set_load_p"][load_name] = sp
+                            print(f"[simulate_manual_action] Updated set_load_p[{load_name}] = {sp} MW")
+                    # Update set_gen_p entries
+                    if "set_gen_p" in content:
+                        for gen_name in content["set_gen_p"]:
+                            sp = _compute_setpoint(gen_name, 'gen', target_mw)
+                            content["set_gen_p"][gen_name] = sp
+                            print(f"[simulate_manual_action] Updated set_gen_p[{gen_name}] = {sp} MW")
+
         # Build the action object
         try:
             action = None
@@ -2307,7 +2368,7 @@ class RecommenderService:
                     a_obj = env.action_space(self._dict_action[aid]["content"])
                 else:
                     a_obj = recent_actions[aid]["action"]
-                
+
                 if action is None:
                     action = a_obj
                 else:
