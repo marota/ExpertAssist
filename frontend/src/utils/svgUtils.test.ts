@@ -271,6 +271,49 @@ describe('getActionTargetLines', () => {
         expect(result).toEqual([]);
     });
 
+    it('does not return lines when loads_p is present (power reduction action)', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Load shedding via power reduction',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                lines_ex_bus: { LINE_A: 1 },
+                lines_or_bus: { LINE_A: 1 },
+                gens_bus: {},
+                loads_bus: {},
+                loads_p: { LOAD_1: 0.0 },
+            },
+        };
+
+        // loads_p present means this isn't a pure line action
+        const result = getActionTargetLines(detail, null, makeEdgeMap('LINE_A'));
+        expect(result).toEqual([]);
+    });
+
+    it('does not return lines when gens_p is present (curtailment power reduction)', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Curtailment via power reduction',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                lines_ex_bus: { LINE_A: 1 },
+                lines_or_bus: { LINE_A: 1 },
+                gens_bus: {},
+                loads_bus: {},
+                gens_p: { WIND_1: 0.0 },
+            },
+        };
+
+        const result = getActionTargetLines(detail, null, makeEdgeMap('LINE_A'));
+        expect(result).toEqual([]);
+    });
+
     it('handles combined action IDs with + separator', () => {
         const detail: ActionDetail = {
             description_unitaire: 'Multiple lines',
@@ -486,6 +529,28 @@ describe('getActionTargetVoltageLevels', () => {
         // because it's a line reconnection (lines with bus >= 0, no gen/load)
         const result = getActionTargetVoltageLevels(detail, 'reco_VL1', makeNodeMap('VL1'));
         expect(result).toEqual([]);
+    });
+
+    it('does not skip action ID fallback when loads_p is present (not a reconnection)', () => {
+        const detail: ActionDetail = {
+            description_unitaire: 'Power reduction on load',
+            rho_before: null,
+            rho_after: null,
+            max_rho: null,
+            max_rho_line: '',
+            is_rho_reduction: false,
+            action_topology: {
+                lines_ex_bus: { LINE_A: 1 },
+                lines_or_bus: { LINE_A: 2 },
+                gens_bus: {},
+                loads_bus: {},
+                loads_p: { LOAD_1: 0.0 },
+            },
+        };
+
+        // Even though lines have bus >= 0, loads_p presence means it's NOT a pure reconnection
+        const result = getActionTargetVoltageLevels(detail, 'action_VL1', makeNodeMap('VL1'));
+        expect(result).toEqual(['VL1']);
     });
 
     it('strips _inc/_dec suffixes in fallback ID parsing', () => {

@@ -965,4 +965,106 @@ describe('ActionFeed', () => {
 
         expect(await screen.findByText('75.0')).toBeInTheDocument();
     });
+
+    // ── Power reduction format (loads_p / gens_p) ──────────────────────────
+
+    it('displays load shedding details with new loads_p topology format', () => {
+        const actionId = 'load_shed_new_format';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Load shedding (power reduction)',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, loads_p: { LOAD_PR: 0.0 } },
+                    load_shedding_details: [
+                        { load_name: 'LOAD_PR', voltage_level_id: 'VL_PR', shedded_mw: 55.3 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([actionId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        expect(screen.getByText(/55\.3 MW/)).toBeInTheDocument();
+        expect(screen.getByText('LOAD_PR')).toBeInTheDocument();
+        const vlButtons = screen.getAllByText('VL_PR');
+        expect(vlButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('displays curtailment details with new gens_p topology format', () => {
+        const actionId = 'curtail_new_format';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Curtailment (power reduction)',
+                    rho_before: [1.0],
+                    rho_after: [0.85],
+                    max_rho: 0.85,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, gens_p: { WIND_1: 0.0 } },
+                    curtailment_details: [
+                        { gen_name: 'WIND_1', voltage_level_id: 'VL_WIND', curtailed_mw: 80.0 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([actionId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        expect(screen.getByText(/80\.0 MW/)).toBeInTheDocument();
+        expect(screen.getByText('WIND_1')).toBeInTheDocument();
+        const vlButtons = screen.getAllByText('VL_WIND');
+        expect(vlButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('displays load shedding with loads_p and curtailment with gens_p in same action list', () => {
+        const lsId = 'ls_new_1';
+        const rcId = 'rc_new_1';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [lsId]: {
+                    description_unitaire: 'Load shedding power reduction',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, loads_p: { LOAD_NEW: 0.0 } },
+                    load_shedding_details: [
+                        { load_name: 'LOAD_NEW', voltage_level_id: 'VL_LS', shedded_mw: 33.0 },
+                    ],
+                },
+                [rcId]: {
+                    description_unitaire: 'Curtailment power reduction',
+                    rho_before: [1.0],
+                    rho_after: [0.85],
+                    max_rho: 0.85,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, gens_p: { GEN_NEW: 0.0 } },
+                    curtailment_details: [
+                        { gen_name: 'GEN_NEW', voltage_level_id: 'VL_RC', curtailed_mw: 66.0 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([lsId, rcId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        // Load shedding details with new format
+        expect(screen.getByText(/33 MW/)).toBeInTheDocument();
+        expect(screen.getByText('LOAD_NEW')).toBeInTheDocument();
+
+        // Curtailment details with new format
+        expect(screen.getByText(/66\.0 MW/)).toBeInTheDocument();
+        expect(screen.getByText('GEN_NEW')).toBeInTheDocument();
+    });
 });

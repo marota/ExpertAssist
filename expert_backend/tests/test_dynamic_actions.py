@@ -52,6 +52,8 @@ class TestDynamicActions:
                     self.lines_ex_bus = set_bus.get("lines_ex_id", {})
                     self.lines_or_bus = set_bus.get("lines_or_id", {})
                     self.pst_tap = content.get("pst_tap", {})
+                    self.loads_p = content.get("set_load_p", {})
+                    self.gens_p = content.get("set_gen_p", {})
 
             def mock_action_space_func(content):
                 return MockAction(content)
@@ -79,7 +81,7 @@ class TestDynamicActions:
             assert action_id in service._dict_action
             action_entry = service._dict_action[action_id]
             assert "content" in action_entry
-            assert action_entry["content"]["set_bus"]["loads_id"]["LOAD123"] == -1
+            assert action_entry["content"]["set_load_p"]["LOAD123"] == 0.0
 
     def test_simulate_manual_pst_tap_inc_dynamic(self, service, mock_env):
         """Test that a non-existent pst_tap_..._incX action is created on the fly."""
