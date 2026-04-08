@@ -139,17 +139,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onApply }) => {
         {settingsTab === 'recommender' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
             {[
-              { label: 'Min Line Reconnections', value: minLineReconnections, setter: setMinLineReconnections },
-              { label: 'Min Close Coupling', value: minCloseCoupling, setter: setMinCloseCoupling },
-              { label: 'Min Open Coupling', value: minOpenCoupling, setter: setMinOpenCoupling },
-              { label: 'Min Line Disconnections', value: minLineDisconnections, setter: setMinLineDisconnections },
-              { label: 'Min PST Actions', value: minPst, setter: setMinPst },
-              { label: 'Min Load Shedding', value: minLoadShedding, setter: setMinLoadShedding },
-              { label: 'Min Renewable Curtailment', value: minRenewableCurtailmentActions, setter: setMinRenewableCurtailmentActions },
-            ].map(({ label, value, setter }) => (
+              { label: 'Min Line Reconnections', value: minLineReconnections, setter: setMinLineReconnections, id: 'minLineReconnections' },
+              { label: 'Min Close Coupling', value: minCloseCoupling, setter: setMinCloseCoupling, id: 'minCloseCoupling' },
+              { label: 'Min Open Coupling', value: minOpenCoupling, setter: setMinOpenCoupling, id: 'minOpenCoupling' },
+              { label: 'Min Line Disconnections', value: minLineDisconnections, setter: setMinLineDisconnections, id: 'minLineDisconnections' },
+              { label: 'Min PST Actions', value: minPst, setter: setMinPst, id: 'minPst' },
+              { label: 'Min Load Shedding', value: minLoadShedding, setter: setMinLoadShedding, id: 'minLoadShedding' },
+              { label: 'Min Renewable Curtailment', value: minRenewableCurtailmentActions, setter: setMinRenewableCurtailmentActions, id: 'minRenewableCurtailment' },
+            ].map(({ label, value, setter, id }) => (
               <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{label}</label>
+                <label htmlFor={id} style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>{label}</label>
                 <input
+                  id={id}
                   type="number" step="0.1" value={value}
                   onChange={e => setter(parseFloat(e.target.value))}
                   style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }}
@@ -157,8 +158,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onApply }) => {
               </div>
             ))}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
+              <label htmlFor="nPrioritizedActions" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>N Prioritized Actions</label>
               <input
+                id="nPrioritizedActions"
                 type="number" step="1" value={nPrioritizedActions}
                 onChange={e => setNPrioritizedActions(parseInt(e.target.value, 10))}
                 style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }}
@@ -190,9 +192,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onApply }) => {
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
+              <label htmlFor="linesMonitoringPathInput" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Lines Monitoring File (Optional)</label>
               <div style={{ display: 'flex', gap: '5px' }}>
                 <input
+                  id="linesMonitoringPathInput"
                   type="text" value={linesMonitoringPath}
                   onChange={e => setLinesMonitoringPath(e.target.value)}
                   placeholder="Leave empty for IGNORE_LINES_MONITORING=True"
@@ -202,8 +205,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onApply }) => {
               </div>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pre-existing Overload Threshold</label>
+              <label htmlFor="preExistingOverloadThreshold" style={{ fontWeight: 'bold', fontSize: '0.9rem' }}>Pre-existing Overload Threshold</label>
               <input
+                id="preExistingOverloadThreshold"
                 type="number" step="0.01" min="0" max="1" value={preExistingOverloadThreshold}
                 onChange={e => setPreExistingOverloadThreshold(parseFloat(e.target.value))}
                 style={{ width: '80px', padding: '5px', border: '1px solid #ccc', borderRadius: '4px' }}
