@@ -49,6 +49,8 @@ class TestManualActionEnrichment:
                     self.lines_ex_bus = set_bus.get("lines_ex_id", {})
                     self.lines_or_bus = set_bus.get("lines_or_id", {})
                     self.switches = set_bus.get("switches_id", {})
+                    self.loads_p = content.get("set_load_p", {})
+                    self.gens_p = content.get("set_gen_p", {})
 
             env.action_space.side_effect = lambda content: MockAction(content)
             yield env
@@ -64,9 +66,9 @@ class TestManualActionEnrichment:
             
             result = service.simulate_manual_action(action_id, "CONTINGENCY")
             
-            # Check topology in immediate response
+            # Check topology in immediate response (new power reduction format)
             assert "action_topology" in result
-            assert result["action_topology"]["gens_bus"] == {"GEN_1": -1}
+            assert result["action_topology"]["gens_p"] == {"GEN_1": 0.0}
             
             # Check description (quoted and VL-aware)
             assert "on generator 'GEN_1'" in service._dict_action[action_id]["description"]
@@ -89,9 +91,9 @@ class TestManualActionEnrichment:
             
             result = service.simulate_manual_action(action_id, "CONTINGENCY")
             
-            # Check topology in immediate response
+            # Check topology in immediate response (new power reduction format)
             assert "action_topology" in result
-            assert result["action_topology"]["loads_bus"] == {"LOAD_1": -1}
+            assert result["action_topology"]["loads_p"] == {"LOAD_1": 0.0}
             
             # Check description (quoted and VL-aware)
             assert "on 'LOAD_1'" in service._dict_action[action_id]["description"]

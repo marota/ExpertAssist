@@ -66,6 +66,7 @@ describe('ActionFeed', () => {
         minLineDisconnections: 3,
         minPst: 1,
         minLoadShedding: 0,
+        minRenewableCurtailmentActions: 0,
         nPrioritizedActions: 10,
         ignoreReconnections: false,
         pendingAnalysisResult: null as AnalysisResult | null,
@@ -436,7 +437,8 @@ describe('ActionFeed', () => {
             'custom_action_123',
             'LINE_1',
             null,
-            ['LINE_1']
+            ['LINE_1'],
+            undefined,
         );
     });
 
@@ -784,11 +786,11 @@ describe('ActionFeed', () => {
         };
         render(<ActionFeed {...props} />);
 
-        // Should show load shedding description
-        expect(screen.getByText(/42\.5 MW/)).toBeInTheDocument();
+        // Should show load shedding description with asset name
+        expect(screen.getByText(/Shedding on/)).toBeInTheDocument();
         expect(screen.getByText('LOAD_1')).toBeInTheDocument();
 
-        // VL should be rendered as clickable buttons (one in description, one as badge)
+        // VL should be rendered as clickable badge button
         const vlButtons = screen.getAllByText('VL_ALPHA');
         expect(vlButtons.length).toBeGreaterThanOrEqual(1);
         expect(vlButtons.every(el => el.tagName === 'BUTTON')).toBe(true);
@@ -846,10 +848,12 @@ describe('ActionFeed', () => {
         };
         render(<ActionFeed {...props} />);
 
-        expect(screen.getByText(/20 MW/)).toBeInTheDocument();
-        expect(screen.getByText(/15\.3 MW/)).toBeInTheDocument();
+        // Both load names should be shown in the simplified format
         expect(screen.getByText('LOAD_A')).toBeInTheDocument();
         expect(screen.getByText('LOAD_B')).toBeInTheDocument();
+        // Both entries should have "Load shedding on" text
+        const lsTexts = screen.getAllByText(/Shedding on/);
+        expect(lsTexts.length).toBe(2);
     });
 
     it('clicking VL button in load shedding description triggers onAssetClick', () => {
@@ -964,5 +968,261 @@ describe('ActionFeed', () => {
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
         expect(await screen.findByText('75.0')).toBeInTheDocument();
+    });
+
+    // ── Power reduction format (loads_p / gens_p) ──────────────────────────
+
+    it('displays load shedding details with new loads_p topology format', () => {
+        const actionId = 'load_shed_new_format';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Load shedding (power reduction)',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, loads_p: { LOAD_PR: 0.0 } },
+                    load_shedding_details: [
+                        { load_name: 'LOAD_PR', voltage_level_id: 'VL_PR', shedded_mw: 55.3 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([actionId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        // Simplified format: "Shedding on LOAD_PR in MW: [input]"
+        expect(screen.getByText(/Shedding on/)).toBeInTheDocument();
+        expect(screen.getByText('LOAD_PR')).toBeInTheDocument();
+        // VL badge should still be rendered
+        const vlButtons = screen.getAllByText('VL_PR');
+        expect(vlButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('displays curtailment details with new gens_p topology format', () => {
+        const actionId = 'curtail_new_format';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Curtailment (power reduction)',
+                    rho_before: [1.0],
+                    rho_after: [0.85],
+                    max_rho: 0.85,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, gens_p: { WIND_1: 0.0 } },
+                    curtailment_details: [
+                        { gen_name: 'WIND_1', voltage_level_id: 'VL_WIND', curtailed_mw: 80.0 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([actionId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        // Simplified format: "Curtailment on WIND_1 in MW: [input]"
+        expect(screen.getByText(/Curtailment on/)).toBeInTheDocument();
+        expect(screen.getByText('WIND_1')).toBeInTheDocument();
+        // VL badge should still be rendered
+        const vlButtons = screen.getAllByText('VL_WIND');
+        expect(vlButtons.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('displays load shedding with loads_p and curtailment with gens_p in same action list', () => {
+        const lsId = 'ls_new_1';
+        const rcId = 'rc_new_1';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [lsId]: {
+                    description_unitaire: 'Load shedding power reduction',
+                    rho_before: [1.0],
+                    rho_after: [0.8],
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, loads_p: { LOAD_NEW: 0.0 } },
+                    load_shedding_details: [
+                        { load_name: 'LOAD_NEW', voltage_level_id: 'VL_LS', shedded_mw: 33.0 },
+                    ],
+                },
+                [rcId]: {
+                    description_unitaire: 'Curtailment power reduction',
+                    rho_before: [1.0],
+                    rho_after: [0.85],
+                    max_rho: 0.85,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                    action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {}, gens_p: { GEN_NEW: 0.0 } },
+                    curtailment_details: [
+                        { gen_name: 'GEN_NEW', voltage_level_id: 'VL_RC', curtailed_mw: 66.0 },
+                    ],
+                }
+            },
+            selectedActionIds: new Set([lsId, rcId]),
+        };
+        render(<ActionFeed {...props} />);
+
+        // Load shedding details with new format
+        expect(screen.getByText(/Shedding on/)).toBeInTheDocument();
+        expect(screen.getByText('LOAD_NEW')).toBeInTheDocument();
+
+        // Curtailment details with new format
+        expect(screen.getByText(/Curtailment on/)).toBeInTheDocument();
+        expect(screen.getByText('GEN_NEW')).toBeInTheDocument();
+    });
+
+    it('shows Target MW column in score table for load shedding type', async () => {
+        const props = {
+            ...defaultProps,
+            actionScores: {
+                load_shedding: {
+                    scores: { 'load_shedding_LOAD_1': 5.0 },
+                    params: {},
+                    mw_start: { 'load_shedding_LOAD_1': 100.0 },
+                }
+            },
+        };
+        render(<ActionFeed {...props} />);
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        expect(await screen.findByText('Target MW')).toBeInTheDocument();
+        expect(screen.getByTestId('target-mw-load_shedding_LOAD_1')).toBeInTheDocument();
+    });
+
+    it('shows Target MW column in score table for renewable curtailment type', async () => {
+        const props = {
+            ...defaultProps,
+            actionScores: {
+                renewable_curtailment: {
+                    scores: { 'curtail_GEN_1': 3.0 },
+                    params: {},
+                    mw_start: { 'curtail_GEN_1': 80.0 },
+                }
+            },
+        };
+        render(<ActionFeed {...props} />);
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        expect(await screen.findByText('Target MW')).toBeInTheDocument();
+        expect(screen.getByTestId('target-mw-curtail_GEN_1')).toBeInTheDocument();
+    });
+
+    it('does NOT show Target MW column for line_disconnection type', async () => {
+        const props = {
+            ...defaultProps,
+            actionScores: {
+                line_disconnection: {
+                    scores: { 'disco_LINE_1': 7.0 },
+                    params: {},
+                    mw_start: { 'disco_LINE_1': null },
+                }
+            },
+        };
+        render(<ActionFeed {...props} />);
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+        await screen.findByText('LINE DISCONNECTION');
+        expect(screen.queryByText('Target MW')).not.toBeInTheDocument();
+    });
+
+    it('shows editable MW and re-simulate button on load shedding action card', () => {
+        const actionId = 'load_shedding_LOAD_X';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Load shedding on LOAD_X',
+                    rho_before: [0.95],
+                    rho_after: [0.70],
+                    max_rho: 0.70,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    non_convergence: null,
+                    load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                    action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                } as ActionDetail,
+            },
+        };
+        render(<ActionFeed {...props} />);
+        expect(screen.getByTestId(`edit-mw-${actionId}`)).toBeInTheDocument();
+        expect(screen.getByTestId(`resimulate-${actionId}`)).toBeInTheDocument();
+        expect(screen.getByTestId(`resimulate-${actionId}`)).toHaveTextContent('Re-simulate');
+    });
+
+    it('shows editable MW and re-simulate button on curtailment action card', () => {
+        const actionId = 'curtail_GEN_Y';
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Curtailment on GEN_Y',
+                    rho_before: [0.95],
+                    rho_after: [0.80],
+                    max_rho: 0.80,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    non_convergence: null,
+                    curtailment_details: [{ gen_name: 'GEN_Y', voltage_level_id: 'VL_W', curtailed_mw: 60.0 }],
+                    action_topology: { ...emptyTopo, gens_p: { GEN_Y: 0.0 } },
+                } as ActionDetail,
+            },
+        };
+        render(<ActionFeed {...props} />);
+        expect(screen.getByTestId(`edit-mw-${actionId}`)).toBeInTheDocument();
+        expect(screen.getByTestId(`resimulate-${actionId}`)).toBeInTheDocument();
+    });
+
+    it('calls simulateManualAction with target_mw when re-simulate is clicked', async () => {
+        const actionId = 'load_shedding_LOAD_X';
+        const mockResult = {
+            action_id: actionId,
+            description_unitaire: 'Load shedding on LOAD_X',
+            rho_before: [0.95],
+            rho_after: [0.60],
+            max_rho: 0.60,
+            max_rho_line: 'LINE_1',
+            is_rho_reduction: true,
+            non_convergence: null,
+            lines_overloaded: ['LINE_1'],
+            load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 25.0 }],
+        };
+        (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockResult);
+
+        const props = {
+            ...defaultProps,
+            actions: {
+                [actionId]: {
+                    description_unitaire: 'Load shedding on LOAD_X',
+                    rho_before: [0.95],
+                    rho_after: [0.70],
+                    max_rho: 0.70,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    non_convergence: null,
+                    load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                    action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                } as ActionDetail,
+            },
+        };
+        render(<ActionFeed {...props} />);
+
+        // Change the MW input value
+        const mwInput = screen.getByTestId(`edit-mw-${actionId}`);
+        fireEvent.change(mwInput, { target: { value: '25' } });
+
+        // Click re-simulate
+        fireEvent.click(screen.getByTestId(`resimulate-${actionId}`));
+
+        await waitFor(() => {
+            expect(api.simulateManualAction).toHaveBeenCalledWith(
+                actionId,
+                'LINE_1',
+                expect.anything(),
+                ['LINE_1'],
+                25,
+            );
+        });
     });
 });

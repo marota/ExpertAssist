@@ -168,8 +168,8 @@ class RecommenderService:
             action_obj = action_data.get("action")
             if action_obj is not None:
                 topo = {}
-                # pypowsybl Actions use these fields
-                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
+                # pypowsybl Actions use these fields (including new power reduction fields)
+                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches", "loads_p", "gens_p"):
                     val = getattr(action_obj, field, None)
                     if val is None and isinstance(action_obj, dict):
                         val = action_obj.get(field)
@@ -203,24 +203,41 @@ class RecommenderService:
 
         return enriched_actions
 
-    def _compute_load_shedding_details(self, action_data):
+    def _compute_load_shedding_details(self, action_data, obs_n1=None):
         """Compute per-load shedding details by comparing N-1 and action observations.
 
         Returns a list of {load_name, voltage_level_id, shedded_mw} or None.
+        Supports both legacy bus disconnection (bus = -1) and new power reduction
+        (loads_p / set_load_p) formats from expert_op4grid_recommender.
         """
         action_obj = action_data.get("action")
         if action_obj is None:
             return None
 
-        # Get loads_bus from the action topology to identify affected loads
+        # Collect affected load names from both legacy and new formats
+        shed_load_names = []
+
+        # Legacy format: loads_bus with bus = -1
         loads_bus = getattr(action_obj, "loads_bus", None)
         if loads_bus is None and isinstance(action_obj, dict):
             loads_bus = action_obj.get("loads_bus")
-        if not loads_bus:
-            return None
+        if loads_bus:
+            shed_load_names.extend(name for name, bus in loads_bus.items() if bus == -1)
 
-        # Filter to loads that are being disconnected (bus = -1)
-        shed_load_names = [name for name, bus in loads_bus.items() if bus == -1]
+        # New power reduction format: loads_p (active power setpoint changes)
+        loads_p = getattr(action_obj, "loads_p", None)
+        if loads_p is None and isinstance(action_obj, dict):
+            loads_p = action_obj.get("loads_p")
+        if not loads_p:
+            # Also check inside action content for set_load_p
+            content = action_data.get("content")
+            if isinstance(content, dict):
+                loads_p = content.get("set_load_p")
+        if loads_p and isinstance(loads_p, dict):
+            for name in loads_p:
+                if name not in shed_load_names:
+                    shed_load_names.append(name)
+
         if not shed_load_names:
             return None
 
@@ -228,10 +245,10 @@ class RecommenderService:
         if obs_action is None:
             return None
 
-        # Get the N-1 observation from the analysis context
-        obs_n1 = None
-        if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
-            obs_n1 = self._analysis_context["obs_simu_defaut"]
+        # Get the N-1 observation from the analysis context if not provided
+        if obs_n1 is None:
+            if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
+                obs_n1 = self._analysis_context["obs_simu_defaut"]
 
         details = []
         from expert_backend.services.network_service import network_service
@@ -263,43 +280,60 @@ class RecommenderService:
 
         return details if details else None
 
-    def _compute_curtailment_details(self, action_data):
+    def _compute_curtailment_details(self, action_data, obs_n1=None):
         """Compute per-generator curtailment details by comparing N-1 and action observations.
 
         Returns a list of {gen_name, voltage_level_id, curtailed_mw} or None.
+        Supports both legacy bus disconnection (bus = -1) and new power reduction
+        (gens_p / set_gen_p) formats from expert_op4grid_recommender.
         """
         action_obj = action_data.get("action")
         if action_obj is None:
             return None
 
-        # Get gens_bus from the action topology to identify affected generators
+        # Collect affected generator names from both legacy and new formats
+        curtailed_gen_names = []
+
+        # Legacy format: gens_bus with bus = -1
         gens_bus = getattr(action_obj, "gens_bus", None)
         if gens_bus is None and isinstance(action_obj, dict):
             gens_bus = action_obj.get("gens_bus")
-        if not gens_bus:
-            return None
+        if gens_bus:
+            curtailed_gen_names.extend(name for name, bus in gens_bus.items() if bus == -1)
 
-        # Filter to generators that are being disconnected (bus = -1)
-        curtailed_gen_names = [name for name, bus in gens_bus.items() if bus == -1]
+        # New power reduction format: gens_p (active power setpoint changes)
+        gens_p = getattr(action_obj, "gens_p", None)
+        if gens_p is None and isinstance(action_obj, dict):
+            gens_p = action_obj.get("gens_p")
+        if not gens_p:
+            # Also check inside action content for set_gen_p
+            content = action_data.get("content")
+            if isinstance(content, dict):
+                gens_p = content.get("set_gen_p")
+        if gens_p and isinstance(gens_p, dict):
+            for name in gens_p:
+                if name not in curtailed_gen_names:
+                    curtailed_gen_names.append(name)
+
         if not curtailed_gen_names:
             return None
 
         obs_action = action_data.get("observation")
         if obs_action is None:
-            # If we don't have an observation (e.g. discovery stage), use shedded_mw if available
+            # If we don't have an observation (e.g. discovery stage), use disconnected_mw if available
             disconnected_mw = action_data.get("disconnected_mw")
             if not disconnected_mw:
                 return None
-            
+
             # Simple fallback: distribute disconnected_mw among gens if multiple (rare for curtailment)
             mw_per_gen = disconnected_mw / len(curtailed_gen_names)
-            
+
             details = []
             from expert_backend.services.network_service import network_service
             for gen_name in curtailed_gen_names:
                 if not self._is_renewable_gen(gen_name, obs=obs_action):
                     continue
-                
+
                 vl_id = None
                 try:
                     vl_id = network_service.get_generator_voltage_level(gen_name)
@@ -313,10 +347,10 @@ class RecommenderService:
                 })
             return details if details else None
 
-        # Get the N-1 observation
-        obs_n1 = None
-        if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
-            obs_n1 = self._analysis_context["obs_simu_defaut"]
+        # Get the N-1 observation if not provided
+        if obs_n1 is None:
+            if self._analysis_context and "obs_simu_defaut" in self._analysis_context:
+                obs_n1 = self._analysis_context["obs_simu_defaut"]
 
         details = []
         from expert_backend.services.network_service import network_service
@@ -489,13 +523,27 @@ class RecommenderService:
         """Compute MW at start for a load shedding action.
 
         Tries multiple strategies:
-        1. Parse content.set_bus.loads_id for loads with bus=-1
+        1a. Parse content.set_load_p for power reduction actions (new format)
+        1b. Parse content.set_bus.loads_id for loads with bus=-1 (legacy format)
         2. Extract load name from the action ID pattern load_shedding_<name>
         """
-        # Strategy 1: parse content.set_bus.loads_id
         if action_entry is not None:
             content = action_entry.get("content", {})
             if content:
+                # Strategy 1a: new power reduction format — set_load_p
+                set_load_p = content.get("set_load_p", {})
+                if set_load_p:
+                    total_mw = 0.0
+                    found = False
+                    for load_name in set_load_p:
+                        if load_name in load_idx_map:
+                            idx = load_idx_map[load_name]
+                            total_mw += abs(float(obs_n1.load_p[idx]))
+                            found = True
+                    if found:
+                        return round(total_mw, 1)
+
+                # Strategy 1b: legacy bus disconnection format — set_bus.loads_id
                 set_bus = content.get("set_bus", {})
                 loads = set_bus.get("loads_id", {})
                 total_mw = 0.0
@@ -519,10 +567,31 @@ class RecommenderService:
         return None
 
     def _mw_start_curtailment(self, action_id, action_entry, obs_n1, gen_idx_map):
-        """Compute MW at start for a renewable curtailment action."""
+        """Compute MW at start for a renewable curtailment action.
+
+        Supports both new power reduction (set_gen_p) and legacy (set_bus.generators_id)
+        formats.
+        """
         if action_entry is not None:
             content = action_entry.get("content", {})
             if content:
+                # New power reduction format — set_gen_p
+                set_gen_p = content.get("set_gen_p", {})
+                if set_gen_p:
+                    total_mw = 0.0
+                    found = False
+                    for gen_name in set_gen_p:
+                        if gen_name in gen_idx_map:
+                            idx = gen_idx_map[gen_name]
+                            if hasattr(obs_n1, "gen_p"):
+                                total_mw += abs(float(obs_n1.gen_p[idx]))
+                            else:
+                                total_mw += abs(float(obs_n1.prod_p[idx]))
+                            found = True
+                    if found:
+                        return round(total_mw, 1)
+
+                # Legacy bus disconnection format — set_bus.generators_id
                 set_bus = content.get("set_bus", {})
                 gens = set_bus.get("generators_id", {})
                 total_mw = 0.0
@@ -2012,10 +2081,19 @@ class RecommenderService:
         if pst_tap:
             content["pst_tap"] = pst_tap
 
+        # Power reduction actions: set_load_p / set_gen_p (new format)
+        loads_p = topo.get("loads_p") or {}
+        if loads_p and isinstance(loads_p, dict):
+            content["set_load_p"] = {name: float(p) for name, p in loads_p.items()}
+
+        gens_p = topo.get("gens_p") or {}
+        if gens_p and isinstance(gens_p, dict):
+            content["set_gen_p"] = {name: float(p) for name, p in gens_p.items()}
+
         entry["content"] = content if content else {}
         return entry
 
-    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None):
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None, target_mw=None):
         """Simulate a single or combined action and return its impact.
 
         raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
@@ -2024,6 +2102,9 @@ class RecommenderService:
         lines_overloaded: optional list of overloaded line names from the saved session,
                           used when _analysis_context is missing (e.g. after session reload)
                           to determine which lines to report rho_before/rho_after for.
+        target_mw: optional MW reduction amount for load shedding / curtailment actions.
+                   When provided, the action reduces power by this amount instead of fully
+                   shedding/curtailing. The resulting setpoint is (current_mw - target_mw).
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
@@ -2042,7 +2123,7 @@ class RecommenderService:
         if action_content:
             # Normalize: if it looks like a topology dict (has topology keys),
             # wrap it as {action_id: topology} for uniform handling.
-            topo_keys = {"lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "substations", "switches"}
+            topo_keys = {"lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "substations", "switches", "loads_p", "gens_p"}
             if any(k in action_content for k in topo_keys):
                 # Single topology — apply to all unknown action_ids
                 per_action = {aid: action_content for aid in action_ids}
@@ -2059,6 +2140,67 @@ class RecommenderService:
                     self._dict_action[aid] = entry
                     print(f"[simulate_manual_action] Injected restored action '{aid}' into dict")
 
+
+        # Use cached environment
+        env = self._get_simulation_env()
+        nm = env.network_manager
+        n = nm.network
+        
+        original_variant = n.get_working_variant_id()
+        
+        # 1. Retrieve observations (MAINTAIN CALL ORDER FOR MOCKS)
+        # Call 1: Base N state
+        n_variant_id = self._get_n_variant()
+        if self._cached_obs_n is not None and self._cached_obs_n_id == n_variant_id:
+            obs = self._cached_obs_n
+        else:
+            n.set_working_variant(n_variant_id)
+            obs = env.get_obs()
+            self._cached_obs_n = obs
+            self._cached_obs_n_id = n_variant_id
+        
+        # Call 2: Contingency N-1 state (obs_n1)
+        n1_variant_id = self._get_n1_variant(disconnected_element)
+        if self._cached_obs_n1 is not None and self._cached_obs_n1_id == n1_variant_id:
+            obs_simu_defaut = self._cached_obs_n1
+        else:
+            n.set_working_variant(n1_variant_id)
+            obs_simu_defaut = env.get_obs()
+            self._cached_obs_n1 = obs_simu_defaut
+            self._cached_obs_n1_id = n1_variant_id
+        
+        # FIX: Explicitly tell the observation which variant it's currently modeling
+        obs_simu_defaut._variant_id = n1_variant_id
+        obs_n1 = obs_simu_defaut
+
+        # Helper: compute the power setpoint for a load/gen given target_mw reduction
+        def _compute_setpoint(element_name, element_type, target_mw_val, obs_n1=None):
+            """Compute remaining MW setpoint: current_mw - target_mw, clamped to >= 0.
+
+            element_type: 'load' or 'gen'
+            Returns the setpoint (remaining MW after reduction).
+            If the N-1 observation is unavailable, falls back to 0.0 (full reduction).
+            """
+            if target_mw_val is None:
+                return 0.0
+            
+            if obs_n1 is None:
+                return 0.0
+                
+            try:
+                if element_type == 'load':
+                    idx = list(obs_n1.name_load).index(element_name)
+                    current_mw = float(obs_n1.load_p[idx])
+                else:
+                    idx = list(obs_n1.name_gen).index(element_name)
+                    current_mw = float(obs_n1.gen_p[idx])
+
+                remaining = max(0.0, abs(current_mw) - float(target_mw_val))
+                return round(remaining, 2)
+            except Exception as e:
+                print(f"[simulate_manual_action] Could not compute setpoint for {element_name}: {e}, falling back to 0.0")
+                return 0.0
+
         # Handle dynamic action creation for special prefixes (load shedding, PST)
         for aid in action_ids:
             if aid not in self._dict_action and aid not in recent_actions:
@@ -2066,9 +2208,11 @@ class RecommenderService:
                 if aid.startswith("curtail_"):
 
                     gen_name = aid[len("curtail_"):]
-                    topo = {"gens_bus": {gen_name: -1}}
+                    # New power reduction format: set generator output to target MW
+                    setpoint = _compute_setpoint(gen_name, 'gen', target_mw, obs_n1=obs_n1)
+                    topo = {"gens_p": {gen_name: setpoint}}
                     entry = self._build_action_entry_from_topology(aid, topo)
-                    
+
                     # Align with suggested action description format to help frontend discovery
                     vl_id = None
                     try:
@@ -2082,15 +2226,17 @@ class RecommenderService:
                     else:
                         entry["description"] = f"Renewable curtailment on generator '{gen_name}'"
                         entry["description_unitaire"] = f"Effacement '{gen_name}'"
-                        
+
                     self._dict_action[aid] = entry
-                    print(f"[simulate_manual_action] Created dynamic curtailment action '{aid}'")
+                    print(f"[simulate_manual_action] Created dynamic curtailment action '{aid}' (setpoint={setpoint} MW)")
 
                 elif aid.startswith("load_shedding_"):
                     load_name = aid[len("load_shedding_"):]
-                    topo = {"loads_bus": {load_name: -1}}
+                    # New power reduction format: set load consumption to target MW
+                    setpoint = _compute_setpoint(load_name, 'load', target_mw, obs_n1=obs_n1)
+                    topo = {"loads_p": {load_name: setpoint}}
                     entry = self._build_action_entry_from_topology(aid, topo)
-                    
+
                     vl_id = None
                     try:
                         from expert_backend.services.network_service import network_service as ns
@@ -2103,9 +2249,9 @@ class RecommenderService:
                     else:
                         entry["description"] = f"Load shedding on '{load_name}'"
                         entry["description_unitaire"] = f"Effacement '{load_name}'"
-                        
+
                     self._dict_action[aid] = entry
-                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}'")
+                    print(f"[simulate_manual_action] Created dynamic load shedding action '{aid}' (setpoint={setpoint} MW)")
 
 
                 elif aid.startswith("pst_tap_") or aid.startswith("pst_"):
@@ -2140,35 +2286,6 @@ class RecommenderService:
             if aid not in self._dict_action and aid not in recent_actions:
                 raise ValueError(f"Action '{aid}' not found in the loaded action dictionary or recent analysis.")
 
-        # Use cached environment
-        env = self._get_simulation_env()
-        nm = env.network_manager
-        n = nm.network
-        
-        original_variant = n.get_working_variant_id()
-        n_variant_id = self._get_n_variant()
-        if self._cached_obs_n is not None and self._cached_obs_n_id == n_variant_id:
-            obs = self._cached_obs_n
-        else:
-            n.set_working_variant(n_variant_id)
-            obs = env.get_obs()
-            self._cached_obs_n = obs
-            self._cached_obs_n_id = n_variant_id
-        
-        # Get N-1 observation (contingency state)
-        n1_variant_id = self._get_n1_variant(disconnected_element)
-        if self._cached_obs_n1 is not None and self._cached_obs_n1_id == n1_variant_id:
-            obs_simu_defaut = self._cached_obs_n1
-        else:
-            n.set_working_variant(n1_variant_id)
-            obs_simu_defaut = env.get_obs()
-            self._cached_obs_n1 = obs_simu_defaut
-            self._cached_obs_n1_id = n1_variant_id
-        
-        # FIX: Explicitly tell the observation which variant it's currently modeling
-        # so that obs_simu_defaut.simulate() branches from N-1 and not the base network.
-        obs_simu_defaut._variant_id = n1_variant_id
-        
         # Store globally so downstream diagram functions know what to compare against
         self._last_disconnected_element = disconnected_element
         
@@ -2219,6 +2336,48 @@ class RecommenderService:
             lines_overloaded_ids = np.where(mask)[0].tolist()
             lines_overloaded_names = action_names[mask].tolist()
 
+        # Ensure heuristic actions from recent_actions are promoted to the registry
+        # so that target_mw updates can be applied to their content.
+        for aid in action_ids:
+            if aid not in self._dict_action and aid in recent_actions:
+                a_obj = recent_actions[aid]["action"]
+                # Extract topology from the Grid2Op Action object
+                # (Standard Grid2Op actions carry these as attributes)
+                topo = {}
+                for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches", "loads_p", "gens_p"):
+                    val = getattr(a_obj, field, None)
+                    if val:
+                        topo[field] = val # _build_action_entry_from_topology will sanitize
+                
+                # Build a dictionary entry with reconstructed topology
+                res = self._build_action_entry_from_topology(aid, topo)
+                if recent_actions[aid].get("description_unitaire"):
+                    res["description_unitaire"] = recent_actions[aid]["description_unitaire"]
+                if recent_actions[aid].get("description"):
+                    res["description"] = recent_actions[aid]["description"]
+                
+                self._dict_action[aid] = res
+                print(f"[simulate_manual_action] Promoted heuristic action '{aid}' to registry for target_mw update")
+
+        # If target_mw is provided for an existing action, update its content
+        # with the new setpoint before building the action object
+        if target_mw is not None:
+            for aid in action_ids:
+                if aid in self._dict_action:
+                    content = self._dict_action[aid].get("content", {})
+                    # Update set_load_p entries
+                    if "set_load_p" in content:
+                        for load_name in content["set_load_p"]:
+                            sp = _compute_setpoint(load_name, 'load', target_mw, obs_n1=obs_n1)
+                            content["set_load_p"][load_name] = sp
+                            print(f"[simulate_manual_action] Updated set_load_p[{load_name}] = {sp} MW")
+                    # Update set_gen_p entries
+                    if "set_gen_p" in content:
+                        for gen_name in content["set_gen_p"]:
+                            sp = _compute_setpoint(gen_name, 'gen', target_mw, obs_n1=obs_n1)
+                            content["set_gen_p"][gen_name] = sp
+                            print(f"[simulate_manual_action] Updated set_gen_p[{gen_name}] = {sp} MW")
+
         # Build the action object
         try:
             action = None
@@ -2227,7 +2386,7 @@ class RecommenderService:
                     a_obj = env.action_space(self._dict_action[aid]["content"])
                 else:
                     a_obj = recent_actions[aid]["action"]
-                
+
                 if action is None:
                     action = a_obj
                 else:
@@ -2357,7 +2516,7 @@ class RecommenderService:
         # Store the observation so get_action_variant_diagram can generate the NAD
         # Refresh topo and content for the combined result dictionary
         topo = {}
-        for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches"):
+        for field in ("lines_ex_bus", "lines_or_bus", "gens_bus", "loads_bus", "pst_tap", "substations", "switches", "loads_p", "gens_p"):
             val = getattr(action, field, None)
             if val:
                 topo[field] = sanitize_for_json(val)
@@ -2374,13 +2533,17 @@ class RecommenderService:
                 if sw:
                     topo["switches"] = sanitize_for_json(sw)
 
-        # Manually inject topology for heuristic actions (Standard Grid2Op actions don't have these attributes)
-        if action_id.startswith("curtail_"):
+        # Manually inject topology for heuristic actions (Standard Grid2Op actions don't have these attributes as public members)
+        if action_id.startswith("curtail_") and not topo.get("gens_p"):
             gen_name = action_id.replace("curtail_", "")
-            topo["gens_bus"] = {gen_name: -1}
-        elif action_id.startswith("load_shedding_"):
+            reg_content = self._dict_action.get(action_id, {}).get("content", {})
+            reg_gen_p = reg_content.get("set_gen_p", {})
+            topo["gens_p"] = {gen_name: reg_gen_p.get(gen_name, 0.0)}
+        elif action_id.startswith("load_shedding_") and not topo.get("loads_p"):
             load_name = action_id.replace("load_shedding_", "")
-            topo["loads_bus"] = {load_name: -1}
+            reg_content = self._dict_action.get(action_id, {}).get("content", {})
+            reg_load_p = reg_content.get("set_load_p", {})
+            topo["loads_p"] = {load_name: reg_load_p.get(load_name, 0.0)}
 
         # Retrieve the full description and content from the dictionary if available
         description = description_unitaire
@@ -2414,10 +2577,18 @@ class RecommenderService:
             "max_rho_line": max_rho_line,
             "is_rho_reduction": is_rho_reduction,
             "is_islanded": is_islanded,
+            "disconnected_mw": disconnected_mw,
+            "n_components": n_components_after,
             "non_convergence": non_convergence,
             "lines_overloaded_after": sanitize_for_json(lines_overloaded_after),
             "is_estimated": False,
         }
+        
+
+        # Capture curtailment/load-shedding details for heuristic actions
+        action_data["curtailment_details"] = self._compute_curtailment_details(action_data, obs_n1=obs_n1)
+        action_data["load_shedding_details"] = self._compute_load_shedding_details(action_data, obs_n1=obs_n1)
+
         if not info_action["exception"] and obs_simu_action is not None:
             if self._last_result is None:
                 self._last_result = {"prioritized_actions": {}}
@@ -2430,97 +2601,29 @@ class RecommenderService:
             self._dict_action = {}
         self._dict_action[action_id] = action_data
 
-
-        # Compute load shedding details for this action
-        load_shedding_details = None
-        loads_bus = getattr(action, "loads_bus", None)
-        if loads_bus and obs_simu_action is not None:
-            shed_load_names = [name for name, bus in loads_bus.items() if bus == -1]
-            if shed_load_names:
-                load_shedding_details = []
-                for load_name in shed_load_names:
-                    shedded_mw = 0.0
-                    try:
-                        load_idx = list(obs_simu_action.name_load).index(load_name)
-                        p_before = float(obs_simu_defaut.load_p[load_idx])
-                        p_after = float(obs_simu_action.load_p[load_idx])
-                        shedded_mw = abs(p_before - p_after)
-                    except (ValueError, IndexError):
-                        shedded_mw = 0.0
-                    vl_id = None
-                    try:
-                        from expert_backend.services.network_service import network_service as ns
-                        vl_id = ns.get_load_voltage_level(load_name)
-                    except Exception:
-                        pass
-                    load_shedding_details.append({
-                        "load_name": load_name,
-                        "voltage_level_id": vl_id,
-                        "shedded_mw": round(shedded_mw, 1),
-                    })
-
-        # Compute curtailment details for this action
-        curtailment_details = None
-        gens_bus = getattr(action, "gens_bus", None)
-        if gens_bus and obs_simu_action is not None:
-            curtailed_gen_names = [name for name, bus in gens_bus.items() if bus == -1]
-            if curtailed_gen_names:
-                curtailment_details = []
-                for gen_name in curtailed_gen_names:
-                    # Use a safe renewable check
-                    if not self._is_renewable_gen(gen_name, obs=obs_simu_action or obs_simu_defaut):
-                        continue
-                    curtailed_mw = 0.0
-                    try:
-                        gen_idx = list(obs_simu_action.name_gen).index(gen_name)
-                        if hasattr(obs_simu_defaut, "gen_p"):
-                            p_before = float(obs_simu_defaut.gen_p[gen_idx])
-                            p_after = float(obs_simu_action.gen_p[gen_idx])
-                        else:
-                            p_before = float(obs_simu_defaut.prod_p[gen_idx])
-                            p_after = float(obs_simu_action.prod_p[gen_idx])
-                        curtailed_mw = abs(p_before - p_after)
-                    except (ValueError, IndexError, AttributeError):
-                        curtailed_mw = 0.0
-                    
-                    vl_id = None
-                    try:
-                        from expert_backend.services.network_service import network_service as ns
-                        vl_id = ns.get_generator_voltage_level(gen_name)
-                    except Exception:
-                        pass
-                    
-                    curtailment_details.append({
-                        "gen_name": gen_name,
-                        "voltage_level_id": vl_id,
-                        "curtailed_mw": round(curtailed_mw, 1),
-                    })
-
-        result = {
+        # Sanitize for JSON serialization (remove raw objects and fix float values)
+        serializable_data = {
             "action_id": action_id,
-            "description_unitaire": description_unitaire,
-            "rho_before": sanitize_for_json(rho_before),
-            "rho_after": sanitize_for_json(rho_after),
-            "max_rho": sanitize_for_json(max_rho),
-            "max_rho_line": max_rho_line,
-            "is_rho_reduction": is_rho_reduction,
-            "is_islanded": is_islanded,
-            "n_components": n_components_after,
-            "disconnected_mw": disconnected_mw,
-            "non_convergence": non_convergence,
-            "lines_overloaded": sanitize_for_json(lines_overloaded_names),
-            "lines_overloaded_after": sanitize_for_json(lines_overloaded_after),
-            "content": content,
+            "description_unitaire": action_data.get("description_unitaire") or "No description available",
+            "rho_before": sanitize_for_json(action_data.get("rho_before")),
+            "rho_after": sanitize_for_json(action_data.get("rho_after")),
+            "max_rho": sanitize_for_json(action_data.get("max_rho")),
+            "max_rho_line": action_data.get("max_rho_line", ""),
+            "is_rho_reduction": bool(action_data.get("is_rho_reduction", False)),
+            "is_islanded": bool(action_data.get("is_islanded", False)),
+            "disconnected_mw": sanitize_for_json(action_data.get("disconnected_mw", 0.0)),
+            "n_components": int(action_data.get("n_components", 1)),
+            "non_convergence": action_data.get("non_convergence"),
+            "lines_overloaded": sanitize_for_json(action_data.get("lines_overloaded_after", [])),
+            "lines_overloaded_after": sanitize_for_json(action_data.get("lines_overloaded_after", [])),
+            "is_estimated": False,
+            "action_topology": action_data.get("action_topology"),
+            "curtailment_details": action_data.get("curtailment_details"),
+            "load_shedding_details": action_data.get("load_shedding_details"),
+            "content": action_data.get("content"),
         }
 
-        if topo:
-            result["action_topology"] = topo
-
-        if load_shedding_details:
-            result["load_shedding_details"] = load_shedding_details
-        if curtailment_details:
-            result["curtailment_details"] = curtailment_details
-        return result
+        return serializable_data
 
     def compute_superposition(self, action1_id: str, action2_id: str, disconnected_element: str):
         """Compute the combined effect of two actions using the superposition theorem.

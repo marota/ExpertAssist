@@ -78,8 +78,10 @@ class TestRecommenderRegressions:
         
         # Mock action object returned by action_space
         mock_action = MagicMock()
-        mock_action.gens_bus = {"GEN_TEST": -1}
+        mock_action.gens_bus = {}
         mock_action.loads_bus = {}
+        mock_action.gens_p = {"GEN_TEST": 0.0}
+        mock_action.loads_p = {}
         mock_env.action_space.return_value = mock_action
         
         with patch.object(self.service, "_get_simulation_env", return_value=mock_env), \
@@ -101,7 +103,7 @@ class TestRecommenderRegressions:
             # Verify it was dynamically created and injected
             assert "curtail_GEN_TEST" in self.service._dict_action
             entry = self.service._dict_action["curtail_GEN_TEST"]
-            assert entry["content"]["set_bus"]["generators_id"]["GEN_TEST"] == -1
+            assert entry["content"]["set_gen_p"]["GEN_TEST"] == 0.0
             assert "Renewable curtailment" in entry["description"]
 
             # Verify enriched result contains curtailment_details
