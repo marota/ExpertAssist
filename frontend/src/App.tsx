@@ -78,9 +78,9 @@ function App() {
   } = analysis;
 
   const {
-    activeTab, setActiveTab, nDiagram, n1Diagram, n1Loading,
+    activeTab, nDiagram, n1Diagram, n1Loading,
     selectedActionId, actionDiagram, actionDiagramLoading, actionViewMode,
-    inspectQuery, setInspectQuery, uniqueVoltages, voltageRange, setVoltageRange,
+    inspectQuery, uniqueVoltages, voltageRange,
     vlOverlay, handleViewModeChange, handleManualZoomIn, handleManualZoomOut,
     handleManualReset, handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose,
     inspectableItems,
@@ -303,7 +303,7 @@ function App() {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
-  }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setResult, setError, setSettingsBackup, setIsSettingsOpen, diagrams, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
+  }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setError, setSettingsBackup, setIsSettingsOpen, diagrams, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
 
 
 
@@ -342,7 +342,7 @@ function App() {
     } finally {
       setConfigLoading(false);
     }
-  }, [buildConfigRequest, applyConfigResponse, setResult, setError, diagrams, networkPath, actionPath, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
+  }, [buildConfigRequest, applyConfigResponse, setError, diagrams, networkPath, actionPath, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
 
 
   const handleLoadStudyClick = useCallback(() => {

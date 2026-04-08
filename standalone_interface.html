@@ -1418,6 +1418,17 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const [showActionDictWarning, setShowActionDictWarning] = useState(true);
 
 
+            // Memoized recommender config object for display (avoids re-renders when unrelated state changes)
+            const recommenderConfig = useMemo(() => ({
+                minLineReconnections, minCloseCoupling, minOpenCoupling,
+                minLineDisconnections, minPst, minLoadShedding,
+                minRenewableCurtailmentActions, nPrioritizedActions, ignoreReconnections,
+            }), [
+                minLineReconnections, minCloseCoupling, minOpenCoupling,
+                minLineDisconnections, minPst, minLoadShedding,
+                minRenewableCurtailmentActions, nPrioritizedActions, ignoreReconnections,
+            ]);
+
             const [isSettingsOpen, setIsSettingsOpen] = useState(false);
             const [settingsTab, setSettingsTab] = useState('paths');
             const [settingsBackup, setSettingsBackup] = useState(null);
@@ -1552,23 +1563,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     pypowsybl_fast_mode: pypowsyblFastMode
                 };
 
-                // ── Clear ALL state for a full reset (same as handleLoadConfig) ──
-                setError(''); setInfoMessage('');
-                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
-                setOriginalViewBox(null);
-                setResult(null); setPendingAnalysisResult(null);
-                setSelectedActionId(null);
-                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
-                setAnalysisLoading(false); setAnalysisRan(false);
-                setSelectedOverloads(new Set()); setMonitorDeselected(false);
-                setActiveTab('n'); setActionViewMode('network');
-                setVlOverlay(null); setN1Loading(false);
-                setSelectedBranch(''); committedBranchRef.current = '';
-                setInspectQuery('');
-                setShowMonitoringWarning(false);
-                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
-                lastViewStateN.current = null; lastViewStateN1.current = null;
-                lastZoomState.current = { query: '', branch: '' };
+                resetAllState();
 
                 if (!networkPath || !actionPath) {
                     setSettingsBackup({
@@ -1894,31 +1889,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     pre_existing_overload_threshold: preExistingOverloadThreshold,
                     ignore_reconnections: ignoreReconnections, pypowsybl_fast_mode: pypowsyblFastMode,
                 });
-                // ── Clear ALL state for a full reset ──
                 setConfigLoading(true);
-                setError(''); setInfoMessage('');
-                // Diagrams
-                setNDiagram(null); setN1Diagram(null); setActionDiagram(null);
-                setOriginalViewBox(null);
-                // Analysis
-                setResult(null); setPendingAnalysisResult(null);
-                setSelectedActionId(null);
-                setManualActionIds(new Set()); setManuallyAddedIds(new Set()); setRejectedActionIds(new Set()); setSuggestedByRecommenderIds(new Set());
-                setAnalysisLoading(false); setAnalysisRan(false);
-                // Analysis flow
-                setSelectedOverloads(new Set()); setMonitorDeselected(false);
-                // Visualization
-                setActiveTab('n'); setActionViewMode('network');
-                setVlOverlay(null); setN1Loading(false);
-                // Branch / contingency
-                setSelectedBranch(''); committedBranchRef.current = '';
-                setInspectQuery('');
-                // Warnings
-                setShowMonitoringWarning(false);
-                setDismissedSelectedWarning(false); setDismissedRejectedWarning(false); setDismissedRecommenderWarning(false);
-                // Refs
-                lastViewStateN.current = null; lastViewStateN1.current = null;
-                lastZoomState.current = { query: '', branch: '' };
+                resetAllState();
 
                 const currentCfg = {
                     network_path: networkPath,
@@ -2067,7 +2039,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             };
 
             // Clear all contingency-related analysis state (preserves network/config)
-            const clearContingencyState = () => {
+            const clearContingencyState = useCallback(() => {
                 setResult(null);
                 setPendingAnalysisResult(null);
                 setSelectedActionId(null);
@@ -2090,7 +2062,26 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 setAvailableOverloads([]);
                 setSelectedOverloads(new Set());
                 setMonitorDeselected(false);
-            };
+            }, []);
+
+            // Full reset: contingency state + network/diagram state
+            const resetAllState = useCallback(() => {
+                clearContingencyState();
+                setNDiagram(null);
+                setOriginalViewBox(null);
+                setActionViewMode('network');
+                setAnalysisLoading(false);
+                setN1Loading(false);
+                setSelectedBranch('');
+                committedBranchRef.current = '';
+                setShowMonitoringWarning(false);
+                setDismissedSelectedWarning(false);
+                setDismissedRejectedWarning(false);
+                setDismissedRecommenderWarning(false);
+                lastViewStateN.current = null;
+                lastViewStateN1.current = null;
+                lastZoomState.current = { query: '', branch: '' };
+            }, [clearContingencyState]);
 
             // Fetch N-1 Diagram when contingency is selected (ONLY if valid branch)
             // When switching contingency with existing analysis state, prompt for confirmation.
@@ -6063,9 +6054,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                 Change in settings
                                                             </button>
                                                         </div>
-                                                        <div>• Minimum actions: {minLineReconnections} reco, {minCloseCoupling} close, {minOpenCoupling} open, {minLineDisconnections} disco, {minPst} PST, {minLoadShedding} load shedding, {minRenewableCurtailmentActions} RC</div>
-                                                        <div>• Maximum suggestions: {nPrioritizedActions}</div>
-                                                        <div>• Ignore reconnections: {ignoreReconnections ? 'Yes' : 'No'}</div>
+                                                        <div>• Minimum actions: {recommenderConfig.minLineReconnections} reco, {recommenderConfig.minCloseCoupling} close, {recommenderConfig.minOpenCoupling} open, {recommenderConfig.minLineDisconnections} disco, {recommenderConfig.minPst} PST, {recommenderConfig.minLoadShedding} load shedding, {recommenderConfig.minRenewableCurtailmentActions} RC</div>
+                                                        <div>• Maximum suggestions: {recommenderConfig.nPrioritizedActions}</div>
+                                                        <div>• Ignore reconnections: {recommenderConfig.ignoreReconnections ? 'Yes' : 'No'}</div>
                                                     </div>
                                                 )}
                                             </div>

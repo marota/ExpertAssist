@@ -25,6 +25,60 @@ const extractFunction = (filePath: string, functionName: string) => {
     return new Function(match[1], match[2]);
 };
 
+describe('standalone_interface.html Phase 2 optimizations', () => {
+    const filePath = path.resolve(__dirname, '../../../standalone_interface.html');
+
+    it('has resetAllState function that consolidates reset logic', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // resetAllState should exist as a useCallback
+        expect(content).toContain('const resetAllState = useCallback(');
+        // It should call clearContingencyState inside
+        expect(content).toMatch(/resetAllState[\s\S]*?clearContingencyState\(\)/);
+    });
+
+    it('handleApplySettings uses resetAllState instead of inline resets', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // Extract handleApplySettings function body (large fn with confirmation dialog before reset)
+        const applyIdx = content.indexOf('const handleApplySettings = async ()');
+        expect(applyIdx).toBeGreaterThan(0);
+        // The function should call resetAllState() somewhere within its body
+        const applyBody = content.substring(applyIdx, applyIdx + 4000);
+        expect(applyBody).toContain('resetAllState()');
+        // It should NOT contain the old inline reset pattern (multiple consecutive set calls)
+        expect(applyBody).not.toContain('setNDiagram(null); setN1Diagram(null); setActionDiagram(null);');
+    });
+
+    it('handleLoadConfig uses resetAllState instead of inline resets', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const loadIdx = content.indexOf('const handleLoadConfig = async ()');
+        expect(loadIdx).toBeGreaterThan(0);
+        const loadBody = content.substring(loadIdx, loadIdx + 2000);
+        expect(loadBody).toContain('resetAllState()');
+        // It should NOT contain the old inline reset comments
+        expect(loadBody).not.toContain('// Diagrams\n                setNDiagram(null)');
+    });
+
+    it('clearContingencyState is wrapped with useCallback', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toContain('const clearContingencyState = useCallback(');
+    });
+
+    it('has memoized recommenderConfig object', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        expect(content).toContain('const recommenderConfig = useMemo(');
+        // Should contain the grouped properties
+        expect(content).toMatch(/recommenderConfig[\s\S]*?minLineReconnections.*minCloseCoupling/);
+    });
+
+    it('uses recommenderConfig for settings display', () => {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // Settings display should reference recommenderConfig.minLineReconnections
+        expect(content).toContain('recommenderConfig.minLineReconnections');
+        expect(content).toContain('recommenderConfig.nPrioritizedActions');
+        expect(content).toContain('recommenderConfig.ignoreReconnections');
+    });
+});
+
 describe('standalone_interface.html extraction logic', () => {
     const filePath = path.resolve(__dirname, '../../../standalone_interface.html');
     const getActionTargetVoltageLevels = extractFunction(filePath, 'getActionTargetVoltageLevels');
