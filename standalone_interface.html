@@ -4928,7 +4928,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         };
                         const isSelected = selectedActionId === id;
                         return (
-                            <div key={id} className="card" onClick={() => handleActionSelect(id)} style={{
+                            <div key={id} className="card" onClick={(e) => { if (e.defaultPrevented) return; handleActionSelect(id); }} style={{
                                 borderLeftColor: isSelected ? '#007bff' : sc.border,
                                 cursor: 'pointer',
                                 background: isSelected ? '#e7f1ff' : ((details.non_convergence || details.is_islanded) ? '#fff5f5' : 'white'),
@@ -5052,7 +5052,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                 </div>
                                 {
                                     details.load_shedding_details && details.load_shedding_details.length > 0 && (
-                                        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#fef3c7', color: '#92400e', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #fcd34d', fontWeight: 500 }}>
+                                        <div onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#fef3c7', color: '#92400e', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #fcd34d', fontWeight: 500 }}>
                                             {details.load_shedding_details.map((ls, i) => (
                                                 <div key={ls.load_name} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: i > 0 ? '4px' : 0 }}>
                                                     <span>Shedding on <strong>{ls.load_name}</strong> in MW:</span>
@@ -5081,7 +5081,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                 }
                                 {
                                     details.curtailment_details && details.curtailment_details.length > 0 && (
-                                        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#e0f2fe', color: '#075985', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #7dd3fc', fontWeight: 500 }}>
+                                        <div onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#e0f2fe', color: '#075985', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #7dd3fc', fontWeight: 500 }}>
                                             {details.curtailment_details.map((rc, i) => (
                                                 <div key={rc.gen_name} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: i > 0 ? '4px' : 0 }}>
                                                     <span>Curtailment on <strong>{rc.gen_name}</strong> in MW:</span>
