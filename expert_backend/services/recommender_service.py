@@ -548,7 +548,12 @@ class RecommenderService:
         return action_scores
 
     def _get_pst_tap_start(self, action_id):
-        """Return {pst_name, tap, low_tap, high_tap} for a PST action from the base N-state network, or None."""
+        """Return {pst_name, tap, low_tap, high_tap} for a PST action from the base N-state network, or None.
+
+        Reads tap position directly from the pypowsybl base network's initial variant
+        to guarantee the original N-state value, regardless of any simulation that may
+        have modified the working variant.
+        """
         action_entry = self._dict_action.get(action_id) if self._dict_action else None
         if action_entry is None:
             return None
@@ -566,7 +571,31 @@ class RecommenderService:
         # Get the first PST entry (most actions target a single PST)
         pst_name = next(iter(pst_tap))
 
-        # Query network for current tap position (N-state) and bounds
+        # Read tap position from the base pypowsybl network's initial variant (N-state)
+        try:
+            network = self._get_base_network()
+            original_variant = network.get_working_variant_id()
+            try:
+                # Switch to the N-state variant (or initial variant) to read unmodified taps
+                n_variant = self._get_n_variant()
+                network.set_working_variant(n_variant)
+
+                import pandas as pd
+                ptc = network.get_phase_tap_changers()
+                if ptc is not None and not ptc.empty and pst_name in ptc.index:
+                    row = ptc.loc[pst_name]
+                    return {
+                        "pst_name": pst_name,
+                        "tap": int(row.get("tap_position", 0)) if pd.notna(row.get("tap_position")) else 0,
+                        "low_tap": int(row.get("low_tap_position", 0)) if pd.notna(row.get("low_tap_position")) else None,
+                        "high_tap": int(row.get("high_tap_position", 0)) if pd.notna(row.get("high_tap_position")) else None,
+                    }
+            finally:
+                network.set_working_variant(original_variant)
+        except Exception as e:
+            print(f"[_get_pst_tap_start] Error reading N-state tap for {pst_name}: {e}")
+
+        # Fallback: try via simulation environment (may not be N-state)
         try:
             env = self._get_simulation_env()
             nm = env.network_manager
