@@ -4926,17 +4926,17 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     {vlOverlay.error && (
                                         <div style={{ padding: '12px', color: '#dc3545', fontSize: '12px' }}>{vlOverlay.error}</div>
                                     )}
-                                    <MemoizedSvgContainer
-                                        svg={vlOverlay.svg}
-                                        containerRef={vlSvgContainerRef}
-                                        display="block"
-                                        tabId="overlay"
-                                        style={{
-                                            transformOrigin: '0 0',
-                                            transform: `translate(${overlayTransform.tx}px,${overlayTransform.ty}px) scale(${overlayTransform.scale})`,
-                                            padding: '4px',
-                                        }}
-                                    />
+                                    {vlOverlay.svg && (
+                                        <div
+                                            ref={vlSvgContainerRef}
+                                            style={{
+                                                transformOrigin: '0 0',
+                                                transform: `translate(${overlayTransform.tx}px,${overlayTransform.ty}px) scale(${overlayTransform.scale})`,
+                                                padding: '4px',
+                                            }}
+                                            dangerouslySetInnerHTML={{ __html: vlOverlay.svg }}
+                                        />
+                                    )}
                                 </div>
                             </div>
                         )}
