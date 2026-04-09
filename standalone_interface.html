@@ -6051,7 +6051,10 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                     : null)
                                                                                         : undefined;
                                                                                     const tapEditVal = cardEditTap[item.actionId];
-                                                                                    const effectiveTap = tapEditVal != null ? tapEditVal : (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                                    // Target Tap default: user edit > simulated tap (from pst_details) > start tap
+                                                                                    const simulatedTap = computedPst ? String(computedPst.tap_position) : undefined;
+                                                                                    const defaultTap = simulatedTap != null ? simulatedTap : (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                                    const effectiveTap = tapEditVal != null ? tapEditVal : defaultTap;
                                                                                     const parsedTap = effectiveTap !== undefined ? parseInt(effectiveTap, 10) : null;
                                                                                     const isValidTap = parsedTap !== null && !isNaN(parsedTap) && (tapInfo?.low_tap == null || parsedTap >= tapInfo.low_tap) && (tapInfo?.high_tap == null || parsedTap <= tapInfo.high_tap);
                                                                                     const canResimTap = isPstType && isComputed && isValidTap;
@@ -6093,12 +6096,14 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                         onClick={(e) => e.stopPropagation()}
                                                                                                         onMouseEnter={(e) => showScoreTooltip(e, React.createElement(React.Fragment, null,
                                                                                                             React.createElement('div', { style: { fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' } }, 'Parameters'),
-                                                                                                            ...Object.entries(typeData.params[item.actionId]).map(([k, v]) =>
-                                                                                                                React.createElement('div', { key: k },
+                                                                                                            ...Object.entries(typeData.params[item.actionId]).map(([k, v]) => {
+                                                                                                                const isTargetTapKey = isPstType && (k === 'selected_pst_tap' || (k.toLowerCase().includes('target') && k.toLowerCase().includes('tap')));
+                                                                                                                const displayVal = isTargetTapKey && effectiveTap !== undefined ? effectiveTap : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                                                                                                                return React.createElement('div', { key: k },
                                                                                                                     React.createElement('span', { style: { color: '#adb5bd' } }, k + ':'),
-                                                                                                                    ' ' + (typeof v === 'object' ? JSON.stringify(v) : String(v))
-                                                                                                                )
-                                                                                                            )
+                                                                                                                    ' ' + displayVal
+                                                                                                                );
+                                                                                                            })
                                                                                                         ))}
                                                                                                         onMouseLeave={hideScoreTooltip}
                                                                                                     >ⓘ</span>
@@ -6144,7 +6149,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                         min={tapInfo?.low_tap != null ? tapInfo.low_tap : undefined}
                                                                                                         max={tapInfo?.high_tap != null ? tapInfo.high_tap : undefined}
                                                                                                         step={1}
-                                                                                                        value={cardEditTap[item.actionId] != null ? cardEditTap[item.actionId] : (tapInfo ? String(tapInfo.tap) : '')}
+                                                                                                        value={cardEditTap[item.actionId] != null ? cardEditTap[item.actionId] : (simulatedTap != null ? simulatedTap : (tapInfo ? String(tapInfo.tap) : ''))}
                                                                                                         onChange={(e) => setCardEditTap(prev => ({ ...prev, [item.actionId]: e.target.value }))}
                                                                                                         style={{
                                                                                                             width: '50px',

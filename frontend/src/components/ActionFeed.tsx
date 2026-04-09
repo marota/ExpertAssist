@@ -909,9 +909,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                     // PST tap: read from cardEditTap (synchronized with action card)
                                                                     // Tap Start: "previous tap" from action params (N-state), then tapStartMap, then computedPst
                                                                     const actionParams = isPstType ? typeData.params?.[item.actionId] : undefined;
-                                                                    if (isPstType && actionParams) {
-                                                                        console.log(`[PST tapInfo debug] actionId=${item.actionId} params keys:`, Object.keys(actionParams), 'values:', actionParams);
-                                                                    }
                                                                     // Try multiple key variants for the previous tap value
                                                                     const previousTap = actionParams
                                                                         ? (actionParams['previous tap'] ?? actionParams['previous_tap'] ?? actionParams['previousTap'] ??
@@ -935,11 +932,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                     ? { pst_name: computedPst.pst_name, tap: computedPst.tap_position, low_tap: computedPst.low_tap, high_tap: computedPst.high_tap }
                                                                                     : null)
                                                                         : undefined;
-                                                                    if (isPstType) {
-                                                                        console.log(`[PST tapInfo debug] actionId=${item.actionId} previousTap=${previousTap} tapStartEntry=`, tapStartEntry, 'computedPst=', computedPst, '=> tapInfo=', tapInfo);
-                                                                    }
                                                                     const tapEditVal = cardEditTap[item.actionId];
-                                                                    const effectiveTap = tapEditVal ?? (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                    // Target Tap default: user edit > simulated tap (from pst_details) > start tap
+                                                                    const simulatedTap = computedPst ? String(computedPst.tap_position) : undefined;
+                                                                    const defaultTap = simulatedTap ?? (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                    const effectiveTap = tapEditVal ?? defaultTap;
                                                                     const parsedTap = effectiveTap !== undefined ? parseInt(effectiveTap, 10) : null;
                                                                     const isValidTap = parsedTap !== null && !isNaN(parsedTap) && (tapInfo?.low_tap == null || parsedTap >= tapInfo.low_tap) && (tapInfo?.high_tap == null || parsedTap <= tapInfo.high_tap);
                                                                     const canResimTap = isPstType && isComputed && isValidTap;
@@ -995,11 +992,16 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                                         Islanding: {actions[item.actionId].n_components} components
                                                                                                     </div>
                                                                                                 )}
-                                                                                                {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
-                                                                                                    <div key={k}>
-                                                                                                        <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                                                                                                    </div>
-                                                                                                ))}
+                                                                                                {Object.entries(typeData.params![item.actionId]).map(([k, v]) => {
+                                                                                                    // For PST: overlay current target tap on selected_pst_tap / target_tap fields
+                                                                                                    const isTargetTapKey = isPstType && (k === 'selected_pst_tap' || k.toLowerCase().includes('target') && k.toLowerCase().includes('tap'));
+                                                                                                    const displayVal = isTargetTapKey && effectiveTap !== undefined ? effectiveTap : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                                                                                                    return (
+                                                                                                        <div key={k}>
+                                                                                                            <span style={{ color: '#adb5bd' }}>{k}:</span> {displayVal}
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                })}
                                                                                             </>
                                                                                         ))}
                                                                                         onMouseLeave={hideTooltip}
@@ -1048,7 +1050,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                         min={tapInfo?.low_tap ?? undefined}
                                                                                         max={tapInfo?.high_tap ?? undefined}
                                                                                         step={1}
-                                                                                        value={cardEditTap[item.actionId] ?? (tapInfo ? String(tapInfo.tap) : '')}
+                                                                                        value={cardEditTap[item.actionId] ?? (simulatedTap ?? (tapInfo ? String(tapInfo.tap) : ''))}
                                                                                         onChange={(e) => setCardEditTap(prev => ({ ...prev, [item.actionId]: e.target.value }))}
                                                                                         style={{
                                                                                             width: '50px',

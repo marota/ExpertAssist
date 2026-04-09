@@ -1410,10 +1410,11 @@ describe('ActionFeed', () => {
             expect(tapStartCell.textContent).toMatch(/^27/);
         });
 
-        it('Target Tap input defaults to "previous tap" value when no user edit', async () => {
-            // Default target tap should be the start tap (previous tap) for user convenience
+        it('Target Tap input defaults to "previous tap" (start tap) when action not yet simulated', async () => {
+            // When no action is computed, Target Tap defaults to start tap (previous tap)
             const props = {
                 ...defaultProps,
+                actions: {}, // NOT computed
                 actionScores: makePstScores(),
             };
             render(<ActionFeed {...props} />);
@@ -1421,7 +1422,7 @@ describe('ActionFeed', () => {
             await screen.findByText('Tap Start');
 
             const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
-            // Should default to 27 (the previous tap / start tap)
+            // Should default to 27 (the previous tap / start tap) since not yet simulated
             expect(targetInput.value).toBe('27');
         });
 
@@ -1563,6 +1564,100 @@ describe('ActionFeed', () => {
             const cells = actionRow!.querySelectorAll('td');
             const tapStartCell = cells[1];
             expect(tapStartCell.textContent).toMatch(/^27/);
+        });
+
+        it('Target Tap defaults to simulated tap (not start tap) when action is computed', async () => {
+            // Action was simulated with tap 29. Target Tap should show 29, not 27 (start tap).
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [pstActionId]: makePstAction(29), // simulated with target tap 29
+                },
+                actionScores: makePstScores(),
+            };
+            render(<ActionFeed {...props} />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            await screen.findByText('Tap Start');
+
+            const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
+            // Must be 29 (simulated tap), NOT 27 (start/previous tap)
+            expect(targetInput.value).toBe('29');
+        });
+
+        it('Target Tap defaults to start tap when action is NOT yet simulated', async () => {
+            // Action not yet computed — Target Tap should show 27 (the start tap)
+            const props = {
+                ...defaultProps,
+                actions: {}, // not computed
+                actionScores: makePstScores(),
+            };
+            render(<ActionFeed {...props} />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            await screen.findByText('Tap Start');
+
+            const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
+            expect(targetInput.value).toBe('27');
+        });
+
+        it('Target Tap updates to re-simulated tap value (31) when action re-simulated', async () => {
+            // After re-simulation with tap 31, pst_details has tap_position 31
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [pstActionId]: makePstAction(31), // re-simulated with tap 31
+                },
+                actionScores: makePstScores(),
+            };
+            render(<ActionFeed {...props} />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            await screen.findByText('Tap Start');
+
+            const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
+            // Must show 31 (latest simulated tap), NOT 27 (start) or 29 (first sim)
+            expect(targetInput.value).toBe('31');
+        });
+
+        it('Tap Start stays at 27 while Target Tap shows 29 for a computed action', async () => {
+            // Verifies both columns are independently correct
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [pstActionId]: makePstAction(29),
+                },
+                actionScores: makePstScores(),
+            };
+            render(<ActionFeed {...props} />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            await screen.findByText('Tap Start');
+
+            // Tap Start cell should show 27
+            const rows = screen.getAllByRole('row');
+            const actionRow = rows.find(r => r.textContent?.includes(pstActionId));
+            const cells = actionRow!.querySelectorAll('td');
+            const tapStartCell = cells[1];
+            expect(tapStartCell.textContent).toMatch(/^27/);
+
+            // Target Tap input should show 29
+            const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
+            expect(targetInput.value).toBe('29');
+        });
+
+        it('user editing Target Tap in score table overrides simulated tap', async () => {
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [pstActionId]: makePstAction(29),
+                },
+                actionScores: makePstScores(),
+            };
+            render(<ActionFeed {...props} />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            await screen.findByText('Tap Start');
+
+            const targetInput = screen.getByTestId(`target-tap-${pstActionId}`) as HTMLInputElement;
+            expect(targetInput.value).toBe('29'); // starts at simulated
+            fireEvent.change(targetInput, { target: { value: '25' } });
+            expect(targetInput.value).toBe('25'); // user override
         });
 
         it('re-simulate button in score table calls simulateManualAction with target_tap', async () => {
