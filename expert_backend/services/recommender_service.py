@@ -489,6 +489,7 @@ class RecommenderService:
         """Compute MW at start for each action in action_scores.
 
         Adds a 'mw_start' dict ({action_id: float|null}) to each action type entry.
+        For PST types, also adds 'tap_start' dict ({action_id: {tap, low_tap, high_tap}|null}).
 
         Rules per action type:
         - line_disconnection: abs(p_or) of the disconnected line in N-1 state
@@ -523,8 +524,10 @@ class RecommenderService:
             is_reco = 'reco' in t or 'line_reconnection' in t
             is_close = 'close_coupling' in t
             is_na_type = is_reco or is_close
+            is_pst = 'pst' in t
 
             mw_start = {}
+            tap_start = {} if is_pst else None
             for action_id in scores:
                 if is_na_type:
                     mw_start[action_id] = None
@@ -534,9 +537,52 @@ class RecommenderService:
                                                     line_name_to_idx, load_name_to_idx, gen_name_to_idx)
                 mw_start[action_id] = mw_val
 
+                # For PST types, also compute tap start info
+                if is_pst:
+                    tap_start[action_id] = self._get_pst_tap_start(action_id)
+
             type_data["mw_start"] = sanitize_for_json(mw_start)
+            if tap_start is not None:
+                type_data["tap_start"] = sanitize_for_json(tap_start)
 
         return action_scores
+
+    def _get_pst_tap_start(self, action_id):
+        """Return {tap, low_tap, high_tap} for a PST action, or None."""
+        action_entry = self._dict_action.get(action_id) if self._dict_action else None
+        if action_entry is None:
+            return None
+
+        content = action_entry.get("content", {})
+        if not content:
+            return None
+
+        pst_tap = content.get("pst_tap", {})
+        if not pst_tap:
+            pst_tap = content.get("redispatch", {}).get("pst_tap", {})
+        if not pst_tap:
+            return None
+
+        # Get the first PST entry (most actions target a single PST)
+        pst_name = next(iter(pst_tap))
+        target_tap = int(pst_tap[pst_name])
+
+        # Query network for tap bounds
+        try:
+            env = self._get_simulation_env()
+            nm = env.network_manager
+            pst_info = nm.get_pst_tap_info(pst_name)
+            if pst_info:
+                return {
+                    "pst_name": pst_name,
+                    "tap": target_tap,
+                    "low_tap": pst_info.get("low_tap"),
+                    "high_tap": pst_info.get("high_tap"),
+                }
+        except Exception:
+            pass
+
+        return {"pst_name": pst_name, "tap": target_tap, "low_tap": None, "high_tap": None}
 
     def _get_action_mw_start(self, action_id, action_type, obs_n1, line_idx_map, load_idx_map, gen_idx_map):
         """Return MW at start for a single action, or None if not computable."""
