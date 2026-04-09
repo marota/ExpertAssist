@@ -907,9 +907,16 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                     const isValidTarget = parsedTarget !== null && !isNaN(parsedTarget) && parsedTarget >= 0 && (item.mwStart == null || parsedTarget <= item.mwStart);
                                                                     const canResimulate = isLsOrRcType && isComputed && isValidTarget;
                                                                     // PST tap: read from cardEditTap (synchronized with action card)
-                                                                    const tapInfo = isPstType ? tapStartMap?.[item.actionId] : undefined;
+                                                                    // Tap info: prefer pst_details from computed action, fall back to tap_start from scores
+                                                                    const computedPst = isPstType ? actions[item.actionId]?.pst_details?.[0] : undefined;
+                                                                    const tapInfo = isPstType
+                                                                        ? (computedPst
+                                                                            ? { pst_name: computedPst.pst_name, tap: computedPst.tap_position, low_tap: computedPst.low_tap, high_tap: computedPst.high_tap }
+                                                                            : tapStartMap?.[item.actionId] ?? null)
+                                                                        : undefined;
                                                                     const tapEditVal = cardEditTap[item.actionId];
-                                                                    const parsedTap = tapEditVal !== undefined ? parseInt(tapEditVal, 10) : null;
+                                                                    const effectiveTap = tapEditVal ?? (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                    const parsedTap = effectiveTap !== undefined ? parseInt(effectiveTap, 10) : null;
                                                                     const isValidTap = parsedTap !== null && !isNaN(parsedTap) && (tapInfo?.low_tap == null || parsedTap >= tapInfo.low_tap) && (tapInfo?.high_tap == null || parsedTap <= tapInfo.high_tap);
                                                                     const canResimTap = isPstType && isComputed && isValidTap;
                                                                     return (
@@ -1017,8 +1024,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                         min={tapInfo?.low_tap ?? undefined}
                                                                                         max={tapInfo?.high_tap ?? undefined}
                                                                                         step={1}
-                                                                                        placeholder={tapInfo != null ? String(tapInfo.tap) : '0'}
-                                                                                        value={cardEditTap[item.actionId] ?? ''}
+                                                                                        value={cardEditTap[item.actionId] ?? (tapInfo ? String(tapInfo.tap) : '')}
                                                                                         onChange={(e) => setCardEditTap(prev => ({ ...prev, [item.actionId]: e.target.value }))}
                                                                                         style={{
                                                                                             width: '50px',
