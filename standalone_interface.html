@@ -3877,11 +3877,16 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             // Refresh combined estimations for all pairs that include the given action
             const refreshCombinedEstimations = async (actionId) => {
                 const combined = result && result.combined_actions;
+                console.log('[refreshCombinedEstimations] called for:', actionId,
+                    'combined:', combined ? Object.keys(combined).length : null,
+                    'selectedBranch:', selectedBranch);
                 if (!combined || !selectedBranch) return;
                 const relatedPairs = Object.entries(combined).filter(function([pairId]) {
                     const parts = pairId.split('+').map(function(p) { return p.trim(); });
                     return parts.indexOf(actionId) >= 0;
                 });
+                console.log('[refreshCombinedEstimations] found', relatedPairs.length, 'related pairs:',
+                    relatedPairs.map(function([id]) { return id; }));
                 for (const [pairId] of relatedPairs) {
                     const parts = pairId.split('+').map(function(p) { return p.trim(); });
                     const id1 = parts[0];
@@ -3891,9 +3896,16 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                             action1_id: id1, action2_id: id2, disconnected_element: selectedBranch
                         });
                         const superResult = res.data;
+                        console.log('[refreshCombinedEstimations] superposition result for', pairId, ':', {
+                            error: superResult.error,
+                            estimated_max_rho: superResult.estimated_max_rho,
+                            max_rho: superResult.max_rho,
+                            max_rho_line: superResult.max_rho_line,
+                        });
                         if (!superResult.error) {
                             const estRho = superResult.estimated_max_rho != null ? superResult.estimated_max_rho : superResult.max_rho;
                             const estLine = superResult.estimated_max_rho_line != null ? superResult.estimated_max_rho_line : superResult.max_rho_line;
+                            console.log('[refreshCombinedEstimations] updating pair', pairId, 'with estRho:', estRho, 'estLine:', estLine);
                             setResult(function(prev) {
                                 if (!prev || !prev.combined_actions || !prev.combined_actions[pairId]) return prev;
                                 var updated = Object.assign({}, prev.combined_actions);
