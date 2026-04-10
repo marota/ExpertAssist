@@ -170,6 +170,22 @@ function App() {
     [actionsHook, setResult, wrappedActionSelect]
   );
 
+  const handleUpdateCombinedEstimation = useCallback(
+    (pairId: string, estimation: { estimated_max_rho: number; estimated_max_rho_line: string }) => {
+      setResult(prev => {
+        if (!prev?.combined_actions?.[pairId]) return prev;
+        return {
+          ...prev,
+          combined_actions: {
+            ...prev.combined_actions,
+            [pairId]: { ...prev.combined_actions[pairId], ...estimation },
+          },
+        };
+      });
+    },
+    [setResult]
+  );
+
   const wrappedRunAnalysis = useCallback(
     () => analysis.handleRunAnalysis(selectedBranch, clearContingencyState, actionsHook.setSuggestedByRecommenderIds, diagrams.setActiveTab),
     [analysis, selectedBranch, clearContingencyState, actionsHook.setSuggestedByRecommenderIds, diagrams.setActiveTab]
@@ -658,6 +674,7 @@ function App() {
               actionDictFileName={actionDictFileName}
               actionDictStats={actionDictStats}
               onOpenSettings={handleOpenSettings}
+              onUpdateCombinedEstimation={handleUpdateCombinedEstimation}
             />
           </div>
         </div>

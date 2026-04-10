@@ -3874,6 +3874,39 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 }
             };
 
+            // Refresh combined estimations for all pairs that include the given action
+            const refreshCombinedEstimations = async (actionId) => {
+                const combined = result && result.combined_actions;
+                if (!combined || !selectedBranch) return;
+                const relatedPairs = Object.entries(combined).filter(function([pairId]) {
+                    const parts = pairId.split('+').map(function(p) { return p.trim(); });
+                    return parts.indexOf(actionId) >= 0;
+                });
+                for (const [pairId] of relatedPairs) {
+                    const parts = pairId.split('+').map(function(p) { return p.trim(); });
+                    const id1 = parts[0];
+                    const id2 = parts[1];
+                    try {
+                        const res = await axios.post(API_BASE + '/api/compute-superposition', {
+                            action1_id: id1, action2_id: id2, disconnected_element: selectedBranch
+                        });
+                        const superResult = res.data;
+                        if (!superResult.error) {
+                            const estRho = superResult.estimated_max_rho != null ? superResult.estimated_max_rho : superResult.max_rho;
+                            const estLine = superResult.estimated_max_rho_line != null ? superResult.estimated_max_rho_line : superResult.max_rho_line;
+                            setResult(function(prev) {
+                                if (!prev || !prev.combined_actions || !prev.combined_actions[pairId]) return prev;
+                                var updated = Object.assign({}, prev.combined_actions);
+                                updated[pairId] = Object.assign({}, updated[pairId], { estimated_max_rho: estRho, estimated_max_rho_line: estLine });
+                                return Object.assign({}, prev, { combined_actions: updated });
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to refresh estimation for pair ' + pairId + ':', e);
+                    }
+                }
+            };
+
             // Re-simulate an existing action with a new target MW value
             const handleResimulate = async (actionId, newTargetMw) => {
                 if (!selectedBranch) return;
@@ -3922,6 +3955,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         delete next[actionId];
                         return next;
                     });
+                    // Refresh combined estimations for pairs containing this action
+                    refreshCombinedEstimations(actionId);
                 } catch (err) {
                     console.error('Re-simulation failed:', err);
                 } finally {
@@ -3977,6 +4012,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         delete next[actionId];
                         return next;
                     });
+                    // Refresh combined estimations for pairs containing this action
+                    refreshCombinedEstimations(actionId);
                 } catch (err) {
                     console.error('PST re-simulation failed:', err);
                 } finally {

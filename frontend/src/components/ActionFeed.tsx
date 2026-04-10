@@ -39,6 +39,7 @@ interface ActionFeedProps {
     actionDictFileName?: string | null;
     actionDictStats?: { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null;
     combinedActions: Record<string, CombinedAction> | null;
+    onUpdateCombinedEstimation?: (pairId: string, estimation: { estimated_max_rho: number; estimated_max_rho_line: string }) => void;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -69,6 +70,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     actionDictFileName,
     actionDictStats,
     combinedActions,
+    onUpdateCombinedEstimation,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -298,6 +300,29 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         }
     };
 
+    // Refresh combined estimations for all pairs that include the given action
+    const refreshCombinedEstimations = async (actionId: string) => {
+        if (!combinedActions || !disconnectedElement || !onUpdateCombinedEstimation) return;
+        const relatedPairs = Object.entries(combinedActions).filter(([pairId]) => {
+            const parts = pairId.split('+').map(p => p.trim());
+            return parts.includes(actionId);
+        });
+        for (const [pairId] of relatedPairs) {
+            const parts = pairId.split('+').map(p => p.trim());
+            const [id1, id2] = parts;
+            try {
+                const result = await api.computeSuperposition(id1, id2, disconnectedElement);
+                if (!result.error) {
+                    const estRho = result.estimated_max_rho ?? result.max_rho;
+                    const estLine = result.estimated_max_rho_line ?? result.max_rho_line;
+                    onUpdateCombinedEstimation(pairId, { estimated_max_rho: estRho, estimated_max_rho_line: estLine });
+                }
+            } catch (e) {
+                console.error(`Failed to refresh estimation for pair ${pairId}:`, e);
+            }
+        }
+    };
+
     // Re-simulate an existing action with a new target MW value
     const handleResimulate = async (actionId: string, newTargetMw: number) => {
         if (!disconnectedElement) return;
@@ -329,6 +354,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 delete next[actionId];
                 return next;
             });
+            // Refresh combined estimations for pairs containing this action
+            refreshCombinedEstimations(actionId);
         } catch (e: unknown) {
             console.error('Re-simulation failed:', e);
         } finally {
@@ -367,6 +394,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 delete next[actionId];
                 return next;
             });
+            // Refresh combined estimations for pairs containing this action
+            refreshCombinedEstimations(actionId);
         } catch (e: unknown) {
             console.error('PST re-simulation failed:', e);
         } finally {

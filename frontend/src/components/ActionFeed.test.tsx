@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
@@ -1702,6 +1702,335 @@ describe('ActionFeed', () => {
                     ['LINE_1'],
                     null,
                     30,
+                );
+            });
+        });
+    });
+
+    // =========================================================================
+    // Combined estimation refresh on re-simulation
+    // =========================================================================
+    describe('Combined estimation refresh on re-simulation', () => {
+        beforeEach(() => {
+            vi.mocked(api.simulateManualAction).mockReset();
+            vi.mocked(api.computeSuperposition).mockReset();
+        });
+
+        const actionId = 'load_shedding_LOAD_X';
+        const otherActionId = 'line_reco_1';
+        const pairId = `${actionId}+${otherActionId}`;
+
+        const baseCombined: CombinedAction = {
+            action1_id: actionId,
+            action2_id: otherActionId,
+            betas: [0.5],
+            p_or_combined: [100],
+            max_rho: 0.85,
+            max_rho_line: 'LINE_1',
+            is_rho_reduction: true,
+            description: 'Combined action',
+            rho_after: [0.85],
+            rho_before: [1.05],
+            estimated_max_rho: 0.85,
+            estimated_max_rho_line: 'LINE_1',
+        };
+
+        it('calls computeSuperposition for related combined pairs after MW re-simulation', async () => {
+            const mockSimResult = {
+                action_id: actionId,
+                description_unitaire: 'Load shedding on LOAD_X',
+                rho_before: [0.95],
+                rho_after: [0.60],
+                max_rho: 0.60,
+                max_rho_line: 'LINE_1',
+                is_rho_reduction: true,
+                non_convergence: null,
+                lines_overloaded: ['LINE_1'],
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 25.0 }],
+            };
+            (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSimResult);
+
+            const mockSuperposition: CombinedAction = {
+                ...baseCombined,
+                estimated_max_rho: 0.75,
+                estimated_max_rho_line: 'LINE_2',
+            };
+            (api.computeSuperposition as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSuperposition);
+
+            const onUpdateCombinedEstimation = vi.fn();
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [actionId]: {
+                        description_unitaire: 'Load shedding on LOAD_X',
+                        rho_before: [0.95],
+                        rho_after: [0.70],
+                        max_rho: 0.70,
+                        max_rho_line: 'LINE_1',
+                        is_rho_reduction: true,
+                        non_convergence: null,
+                        load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                        action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                    } as ActionDetail,
+                },
+                combinedActions: { [pairId]: baseCombined },
+                onUpdateCombinedEstimation,
+            };
+            render(<ActionFeed {...props} />);
+
+            // Change MW and re-simulate
+            const mwInput = screen.getByTestId(`edit-mw-${actionId}`);
+            fireEvent.change(mwInput, { target: { value: '25' } });
+            fireEvent.click(screen.getByTestId(`resimulate-${actionId}`));
+
+            await waitFor(() => {
+                expect(api.computeSuperposition).toHaveBeenCalledWith(
+                    actionId, otherActionId, 'LINE_1'
+                );
+            });
+
+            await waitFor(() => {
+                expect(onUpdateCombinedEstimation).toHaveBeenCalledWith(
+                    pairId,
+                    { estimated_max_rho: 0.75, estimated_max_rho_line: 'LINE_2' }
+                );
+            });
+        });
+
+        it('calls computeSuperposition for related combined pairs after PST tap re-simulation', async () => {
+            const pstActionId = 'pst_tap_ARKA_TD_661_inc2';
+            const pstPairId = `${pstActionId}+${otherActionId}`;
+
+            const mockSimResult = {
+                action_id: pstActionId,
+                description_unitaire: 'Variation PST ARKA TD 661',
+                rho_before: [1.1],
+                rho_after: [0.90],
+                max_rho: 0.90,
+                max_rho_line: 'LINE_A',
+                is_rho_reduction: true,
+                non_convergence: null,
+                lines_overloaded: ['LINE_1'],
+                pst_details: [{ pst_name: 'ARKA TD 661', tap_position: 30, low_tap: 8, high_tap: 31 }],
+            };
+            (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSimResult);
+
+            const mockSuperposition: CombinedAction = {
+                ...baseCombined,
+                action1_id: pstActionId,
+                estimated_max_rho: 0.80,
+                estimated_max_rho_line: 'LINE_B',
+            };
+            (api.computeSuperposition as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSuperposition);
+
+            const onUpdateCombinedEstimation = vi.fn();
+            const pstCombined: CombinedAction = {
+                ...baseCombined,
+                action1_id: pstActionId,
+            };
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [pstActionId]: {
+                        description_unitaire: 'Variation PST ARKA TD 661',
+                        rho_before: [1.1],
+                        rho_after: [0.95],
+                        max_rho: 0.95,
+                        max_rho_line: 'LINE_A',
+                        is_rho_reduction: true,
+                        action_topology: { ...emptyTopo, pst_tap: { 'ARKA TD 661': 29 } },
+                        pst_details: [{ pst_name: 'ARKA TD 661', tap_position: 29, low_tap: 8, high_tap: 31 }],
+                    } as ActionDetail,
+                },
+                combinedActions: { [pstPairId]: pstCombined },
+                onUpdateCombinedEstimation,
+            };
+            render(<ActionFeed {...props} />);
+
+            // Change tap and re-simulate
+            const tapInput = screen.getByTestId(`edit-tap-${pstActionId}`);
+            fireEvent.change(tapInput, { target: { value: '30' } });
+            fireEvent.click(screen.getByTestId(`resimulate-tap-${pstActionId}`));
+
+            await waitFor(() => {
+                expect(api.computeSuperposition).toHaveBeenCalledWith(
+                    pstActionId, otherActionId, 'LINE_1'
+                );
+            });
+
+            await waitFor(() => {
+                expect(onUpdateCombinedEstimation).toHaveBeenCalledWith(
+                    pstPairId,
+                    { estimated_max_rho: 0.80, estimated_max_rho_line: 'LINE_B' }
+                );
+            });
+        });
+
+        it('does not call computeSuperposition when no combined actions exist', async () => {
+            const mockSimResult = {
+                action_id: actionId,
+                description_unitaire: 'Load shedding on LOAD_X',
+                rho_before: [0.95],
+                rho_after: [0.60],
+                max_rho: 0.60,
+                max_rho_line: 'LINE_1',
+                is_rho_reduction: true,
+                non_convergence: null,
+                lines_overloaded: ['LINE_1'],
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 25.0 }],
+            };
+            (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSimResult);
+
+            const onUpdateCombinedEstimation = vi.fn();
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [actionId]: {
+                        description_unitaire: 'Load shedding on LOAD_X',
+                        rho_before: [0.95],
+                        rho_after: [0.70],
+                        max_rho: 0.70,
+                        max_rho_line: 'LINE_1',
+                        is_rho_reduction: true,
+                        non_convergence: null,
+                        load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                        action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                    } as ActionDetail,
+                },
+                combinedActions: null,
+                onUpdateCombinedEstimation,
+            };
+            render(<ActionFeed {...props} />);
+
+            // Change MW and re-simulate
+            const mwInput = screen.getByTestId(`edit-mw-${actionId}`);
+            fireEvent.change(mwInput, { target: { value: '25' } });
+            fireEvent.click(screen.getByTestId(`resimulate-${actionId}`));
+
+            await waitFor(() => {
+                expect(api.simulateManualAction).toHaveBeenCalled();
+            });
+
+            // computeSuperposition should NOT be called
+            expect(api.computeSuperposition).not.toHaveBeenCalled();
+            expect(onUpdateCombinedEstimation).not.toHaveBeenCalled();
+        });
+
+        it('does not call onUpdateCombinedEstimation when computeSuperposition returns error', async () => {
+            const mockSimResult = {
+                action_id: actionId,
+                description_unitaire: 'Load shedding on LOAD_X',
+                rho_before: [0.95],
+                rho_after: [0.60],
+                max_rho: 0.60,
+                max_rho_line: 'LINE_1',
+                is_rho_reduction: true,
+                non_convergence: null,
+                lines_overloaded: ['LINE_1'],
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 25.0 }],
+            };
+            (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSimResult);
+
+            const errorResult: CombinedAction = {
+                ...baseCombined,
+                error: 'Estimation failed',
+            };
+            (api.computeSuperposition as ReturnType<typeof vi.fn>).mockResolvedValueOnce(errorResult);
+
+            const onUpdateCombinedEstimation = vi.fn();
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [actionId]: {
+                        description_unitaire: 'Load shedding on LOAD_X',
+                        rho_before: [0.95],
+                        rho_after: [0.70],
+                        max_rho: 0.70,
+                        max_rho_line: 'LINE_1',
+                        is_rho_reduction: true,
+                        non_convergence: null,
+                        load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                        action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                    } as ActionDetail,
+                },
+                combinedActions: { [pairId]: baseCombined },
+                onUpdateCombinedEstimation,
+            };
+            render(<ActionFeed {...props} />);
+
+            const mwInput = screen.getByTestId(`edit-mw-${actionId}`);
+            fireEvent.change(mwInput, { target: { value: '25' } });
+            fireEvent.click(screen.getByTestId(`resimulate-${actionId}`));
+
+            await waitFor(() => {
+                expect(api.computeSuperposition).toHaveBeenCalled();
+            });
+
+            // onUpdateCombinedEstimation should NOT be called because of error
+            expect(onUpdateCombinedEstimation).not.toHaveBeenCalled();
+        });
+
+        it('refreshes multiple combined pairs when action appears in several combinations', async () => {
+            const thirdActionId = 'line_disco_2';
+            const pairId2 = `${actionId}+${thirdActionId}`;
+
+            const mockSimResult = {
+                action_id: actionId,
+                description_unitaire: 'Load shedding on LOAD_X',
+                rho_before: [0.95],
+                rho_after: [0.60],
+                max_rho: 0.60,
+                max_rho_line: 'LINE_1',
+                is_rho_reduction: true,
+                non_convergence: null,
+                lines_overloaded: ['LINE_1'],
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 25.0 }],
+            };
+            (api.simulateManualAction as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockSimResult);
+
+            const mockSuper1: CombinedAction = { ...baseCombined, estimated_max_rho: 0.75, estimated_max_rho_line: 'LINE_2' };
+            const mockSuper2: CombinedAction = { ...baseCombined, action2_id: thirdActionId, estimated_max_rho: 0.80, estimated_max_rho_line: 'LINE_3' };
+            (api.computeSuperposition as ReturnType<typeof vi.fn>)
+                .mockResolvedValueOnce(mockSuper1)
+                .mockResolvedValueOnce(mockSuper2);
+
+            const onUpdateCombinedEstimation = vi.fn();
+            const combined2: CombinedAction = { ...baseCombined, action2_id: thirdActionId };
+            const props = {
+                ...defaultProps,
+                actions: {
+                    [actionId]: {
+                        description_unitaire: 'Load shedding on LOAD_X',
+                        rho_before: [0.95],
+                        rho_after: [0.70],
+                        max_rho: 0.70,
+                        max_rho_line: 'LINE_1',
+                        is_rho_reduction: true,
+                        non_convergence: null,
+                        load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_A', shedded_mw: 42.5 }],
+                        action_topology: { ...emptyTopo, loads_p: { LOAD_X: 0.0 } },
+                    } as ActionDetail,
+                },
+                combinedActions: { [pairId]: baseCombined, [pairId2]: combined2 },
+                onUpdateCombinedEstimation,
+            };
+            render(<ActionFeed {...props} />);
+
+            const mwInput = screen.getByTestId(`edit-mw-${actionId}`);
+            fireEvent.change(mwInput, { target: { value: '25' } });
+            fireEvent.click(screen.getByTestId(`resimulate-${actionId}`));
+
+            await waitFor(() => {
+                expect(api.computeSuperposition).toHaveBeenCalledTimes(2);
+            });
+
+            await waitFor(() => {
+                expect(onUpdateCombinedEstimation).toHaveBeenCalledTimes(2);
+                expect(onUpdateCombinedEstimation).toHaveBeenCalledWith(
+                    pairId, { estimated_max_rho: 0.75, estimated_max_rho_line: 'LINE_2' }
+                );
+                expect(onUpdateCombinedEstimation).toHaveBeenCalledWith(
+                    pairId2, { estimated_max_rho: 0.80, estimated_max_rho_line: 'LINE_3' }
                 );
             });
         });
