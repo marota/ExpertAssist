@@ -2878,10 +2878,36 @@ class RecommenderService:
             act2_obj, action2_id, self._dict_action, classifier, env
         )
 
-        if not line_idxs1 and not sub_idxs1 and not line_idxs2 and not sub_idxs2:
-             # Fallback: if they are in _dict_action, maybe identify_action_elements needs it
-             # but they were already identified above?
-             pass
+        # Fallback for PST actions: _identify_action_elements may return empty
+        # because PST tap changes are not topology changes (no line/bus switches).
+        # Identify the PST transformer line index from the action content instead.
+        def _pst_fallback_line_idxs(action_id):
+            entry = self._dict_action.get(action_id) or all_actions.get(action_id, {})
+            content = entry.get("content", {})
+            pst_tap = content.get("pst_tap", {})
+            if not pst_tap:
+                topo = entry.get("action_topology", {})
+                pst_tap = topo.get("pst_tap", {})
+            if not pst_tap:
+                return []
+            name_line = list(env.name_line)
+            idxs = []
+            for pst_name in pst_tap:
+                if pst_name in name_line:
+                    idxs.append(name_line.index(pst_name))
+            return idxs
+
+        if not line_idxs1 and not sub_idxs1:
+            fallback1 = _pst_fallback_line_idxs(action1_id)
+            if fallback1:
+                line_idxs1 = fallback1
+                print(f"[compute_superposition] PST fallback for action1 '{action1_id}': line_idxs={line_idxs1}")
+
+        if not line_idxs2 and not sub_idxs2:
+            fallback2 = _pst_fallback_line_idxs(action2_id)
+            if fallback2:
+                line_idxs2 = fallback2
+                print(f"[compute_superposition] PST fallback for action2 '{action2_id}': line_idxs={line_idxs2}")
 
         if (not line_idxs1 and not sub_idxs1) or (not line_idxs2 and not sub_idxs2):
              return {"error": f"Cannot identify elements for one or both actions (Act1: {len(line_idxs1)} lines, {len(sub_idxs1)} subs; Act2: {len(line_idxs2)} lines, {len(sub_idxs2)} subs)"}
