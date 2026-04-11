@@ -74,6 +74,8 @@ class RecommenderService:
         self._cached_obs_n1_id = None
         # Pre-built SimulationEnvironment reused across contingency analyses
         self._cached_env_context = None
+        # N-state PST tap positions captured at network load time
+        self._initial_pst_taps = None  # dict: pst_name -> {tap, low_tap, high_tap}
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
@@ -92,6 +94,7 @@ class RecommenderService:
         self._cached_obs_n1 = None
         self._cached_obs_n1_id = None
         self._cached_env_context = None
+        self._initial_pst_taps = None
 
     def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
         """Restore analysis context from a saved session.
@@ -200,6 +203,11 @@ class RecommenderService:
             curtailment = self._compute_curtailment_details(action_data)
             if curtailment:
                 enriched_actions[action_id]["curtailment_details"] = curtailment
+
+            # Detect PST actions and compute tap details with bounds
+            pst_details = self._compute_pst_details(action_data)
+            if pst_details:
+                enriched_actions[action_id]["pst_details"] = pst_details
 
         return enriched_actions
 
@@ -386,6 +394,74 @@ class RecommenderService:
 
         return details if details else None
 
+    def _compute_pst_details(self, action_data):
+        """Compute per-PST tap change details.
+
+        Returns a list of {pst_name, tap_position, low_tap, high_tap} or None.
+        Reads tap bounds from the network via get_pst_tap_info.
+        """
+        action_obj = action_data.get("action")
+        content = action_data.get("content")
+        if action_obj is None and content is None:
+            return None
+
+        # Collect affected PST names and their target tap positions
+        pst_entries = {}
+
+        # From action object attributes
+        pst_tap_attr = getattr(action_obj, "pst_tap", None)
+        if pst_tap_attr is None and isinstance(action_obj, dict):
+            pst_tap_attr = action_obj.get("pst_tap")
+        if pst_tap_attr and isinstance(pst_tap_attr, dict):
+            for name, tap in pst_tap_attr.items():
+                pst_entries[name] = int(tap)
+
+        # From content dict (pst_tap key)
+        if not pst_entries and isinstance(content, dict):
+            pst_tap_content = content.get("pst_tap", {})
+            if pst_tap_content and isinstance(pst_tap_content, dict):
+                for name, tap in pst_tap_content.items():
+                    pst_entries[name] = int(tap)
+
+        # From action_topology
+        action_topo = action_data.get("action_topology", {})
+        if not pst_entries and action_topo:
+            pst_tap_topo = action_topo.get("pst_tap", {})
+            if pst_tap_topo and isinstance(pst_tap_topo, dict):
+                for name, tap in pst_tap_topo.items():
+                    pst_entries[name] = int(tap)
+
+        if not pst_entries:
+            return None
+
+        details = []
+        try:
+            env = self._get_simulation_env()
+            nm = env.network_manager
+        except Exception:
+            nm = None
+
+        for pst_name, tap_position in pst_entries.items():
+            low_tap = None
+            high_tap = None
+            if nm is not None:
+                try:
+                    pst_info = nm.get_pst_tap_info(pst_name)
+                    if pst_info:
+                        low_tap = pst_info.get('low_tap')
+                        high_tap = pst_info.get('high_tap')
+                except Exception:
+                    pass
+
+            details.append({
+                "pst_name": pst_name,
+                "tap_position": tap_position,
+                "low_tap": low_tap,
+                "high_tap": high_tap,
+            })
+
+        return details if details else None
+
     def _is_renewable_gen(self, gen_name, obs=None):
         """Identify if a generator is renewable (WIND/SOLAR)."""
         # 1. If observation is provided and has gen_type, use it for accuracy
@@ -416,6 +492,7 @@ class RecommenderService:
         """Compute MW at start for each action in action_scores.
 
         Adds a 'mw_start' dict ({action_id: float|null}) to each action type entry.
+        For PST types, also adds 'tap_start' dict ({action_id: {tap, low_tap, high_tap}|null}).
 
         Rules per action type:
         - line_disconnection: abs(p_or) of the disconnected line in N-1 state
@@ -450,8 +527,10 @@ class RecommenderService:
             is_reco = 'reco' in t or 'line_reconnection' in t
             is_close = 'close_coupling' in t
             is_na_type = is_reco or is_close
+            is_pst = 'pst' in t
 
             mw_start = {}
+            tap_start = {} if is_pst else None
             for action_id in scores:
                 if is_na_type:
                     mw_start[action_id] = None
@@ -461,9 +540,93 @@ class RecommenderService:
                                                     line_name_to_idx, load_name_to_idx, gen_name_to_idx)
                 mw_start[action_id] = mw_val
 
+                # For PST types, also compute tap start info
+                if is_pst:
+                    tap_start[action_id] = self._get_pst_tap_start(action_id)
+
             type_data["mw_start"] = sanitize_for_json(mw_start)
+            if tap_start is not None:
+                type_data["tap_start"] = sanitize_for_json(tap_start)
 
         return action_scores
+
+    def _get_pst_tap_start(self, action_id):
+        """Return {pst_name, tap, low_tap, high_tap} for a PST action's N-state tap, or None.
+
+        Priority for the N-state (start) tap value:
+        1. Action's 'parameters' -> 'previous tap' (stored in the action JSON file)
+        2. Stable cache captured at network load time (_initial_pst_taps)
+        3. Simulation environment fallback (get_pst_tap_info)
+        """
+        action_entry = self._dict_action.get(action_id) if self._dict_action else None
+        if action_entry is None:
+            return None
+
+        content = action_entry.get("content", {})
+        if not content:
+            return None
+
+        pst_tap = content.get("pst_tap", {})
+        if not pst_tap:
+            pst_tap = content.get("redispatch", {}).get("pst_tap", {})
+        if not pst_tap:
+            return None
+
+        # Get the first PST entry (most actions target a single PST)
+        pst_name = next(iter(pst_tap))
+
+        # Priority 1: read "previous tap" from action parameters (original N-state tap)
+        params = action_entry.get("parameters", {})
+        if params:
+            prev_tap = params.get("previous tap")
+            if prev_tap is not None:
+                # Get bounds from cache or simulation env
+                low_tap, high_tap = None, None
+                if self._initial_pst_taps and pst_name in self._initial_pst_taps:
+                    low_tap = self._initial_pst_taps[pst_name].get("low_tap")
+                    high_tap = self._initial_pst_taps[pst_name].get("high_tap")
+                elif hasattr(self, '_simulation_env') and self._simulation_env:
+                    try:
+                        nm = self._simulation_env.network_manager
+                        pst_info = nm.get_pst_tap_info(pst_name)
+                        if pst_info:
+                            low_tap = pst_info.get("low_tap")
+                            high_tap = pst_info.get("high_tap")
+                    except Exception:
+                        pass
+                return {
+                    "pst_name": pst_name,
+                    "tap": int(prev_tap),
+                    "low_tap": low_tap,
+                    "high_tap": high_tap,
+                }
+
+        # Priority 2: stable cache captured at network load time
+        if self._initial_pst_taps and pst_name in self._initial_pst_taps:
+            info = self._initial_pst_taps[pst_name]
+            return {
+                "pst_name": pst_name,
+                "tap": info["tap"],
+                "low_tap": info["low_tap"],
+                "high_tap": info["high_tap"],
+            }
+
+        # Priority 3: simulation environment fallback
+        try:
+            env = self._get_simulation_env()
+            nm = env.network_manager
+            pst_info = nm.get_pst_tap_info(pst_name)
+            if pst_info:
+                return {
+                    "pst_name": pst_name,
+                    "tap": pst_info.get("tap"),
+                    "low_tap": pst_info.get("low_tap"),
+                    "high_tap": pst_info.get("high_tap"),
+                }
+        except Exception:
+            pass
+
+        return None
 
     def _get_action_mw_start(self, action_id, action_type, obs_n1, line_idx_map, load_idx_map, gen_idx_map):
         """Return MW at start for a single action, or None if not computable."""
@@ -1125,7 +1288,32 @@ class RecommenderService:
         # Convenience method not in pypowsybl API: return line IDs as a list
         n.get_line_ids = lambda: n.get_lines().index.tolist()
         self._base_network = n
+
+        # Capture N-state PST tap positions immediately after loading (before any simulation)
+        self._capture_initial_pst_taps(n)
+
         return self._base_network
+
+    def _capture_initial_pst_taps(self, network):
+        """Snapshot all PST tap positions from the freshly-loaded network.
+
+        Called once at network load time so the values are guaranteed to be
+        the original N-state taps, unaffected by any subsequent simulation.
+        """
+        import pandas as pd
+        self._initial_pst_taps = {}
+        try:
+            ptc = network.get_phase_tap_changers()
+            if ptc is not None and not ptc.empty:
+                for pst_name, row in ptc.iterrows():
+                    self._initial_pst_taps[pst_name] = {
+                        "tap": int(row["tap_position"]) if pd.notna(row.get("tap_position")) else 0,
+                        "low_tap": int(row["low_tap_position"]) if pd.notna(row.get("low_tap_position")) else None,
+                        "high_tap": int(row["high_tap_position"]) if pd.notna(row.get("high_tap_position")) else None,
+                    }
+                print(f"[_capture_initial_pst_taps] Captured {len(self._initial_pst_taps)} PST tap positions")
+        except Exception as e:
+            print(f"[_capture_initial_pst_taps] Warning: could not read phase tap changers: {e}")
 
     def _get_n_variant(self):
         """Return the variant ID for the N state, creating and simulating it if necessary."""
@@ -2093,7 +2281,7 @@ class RecommenderService:
         entry["content"] = content if content else {}
         return entry
 
-    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None, target_mw=None):
+    def simulate_manual_action(self, raw_action_id: str, disconnected_element: str, action_content=None, lines_overloaded=None, target_mw=None, target_tap=None):
         """Simulate a single or combined action and return its impact.
 
         raw_action_id can be a single ID or multiple IDs combined with '+' (e.g. 'act1+act2').
@@ -2105,6 +2293,9 @@ class RecommenderService:
         target_mw: optional MW reduction amount for load shedding / curtailment actions.
                    When provided, the action reduces power by this amount instead of fully
                    shedding/curtailing. The resulting setpoint is (current_mw - target_mw).
+        target_tap: optional integer tap position for PST actions.
+                    When provided, updates the pst_tap content to the given tap value
+                    (clamped to [low_tap, high_tap] from the network).
         """
         if not self._dict_action:
             raise ValueError("No action dictionary loaded. Load a config first.")
@@ -2378,6 +2569,23 @@ class RecommenderService:
                             content["set_gen_p"][gen_name] = sp
                             print(f"[simulate_manual_action] Updated set_gen_p[{gen_name}] = {sp} MW")
 
+        # If target_tap is provided for a PST action, update the pst_tap content
+        if target_tap is not None:
+            for aid in action_ids:
+                if aid in self._dict_action:
+                    content = self._dict_action[aid].get("content", {})
+                    if "pst_tap" in content:
+                        for pst_id in content["pst_tap"]:
+                            # Clamp to valid range from network
+                            pst_info = nm.get_pst_tap_info(pst_id)
+                            if pst_info:
+                                clamped = max(pst_info['low_tap'], min(pst_info['high_tap'], int(target_tap)))
+                                content["pst_tap"][pst_id] = clamped
+                                print(f"[simulate_manual_action] Updated pst_tap[{pst_id}] = {clamped}")
+                            else:
+                                content["pst_tap"][pst_id] = int(target_tap)
+                                print(f"[simulate_manual_action] Updated pst_tap[{pst_id}] = {target_tap} (no bounds info)")
+
         # Build the action object
         try:
             action = None
@@ -2493,6 +2701,19 @@ class RecommenderService:
                 if len(monitored_rho) > 0:
                     max_rho = float(np.max(monitored_rho)) * mf
                     max_rho_line = monitored_names[np.argmax(monitored_rho)]
+                    # Diagnostic: top 5 simulated lines
+                    top_indices = np.argsort(monitored_rho)[::-1][:5]
+                    print(f"[simulate_manual_action] TOP 5 simulated rho (among {len(monitored_rho)} monitored):")
+                    for rank, ti in enumerate(top_indices):
+                        print(f"  #{rank+1}: {monitored_names[ti]} = {float(monitored_rho[ti]):.6f} "
+                              f"(scaled: {float(monitored_rho[ti]) * mf:.4f})")
+                    # Diagnostic: check .BIESL61PRAGN specifically
+                    biesl_mask = (action_names == '.BIESL61PRAGN')
+                    if np.any(biesl_mask):
+                        biesl_in_care = bool(care_mask[np.where(biesl_mask)[0][0]])
+                        biesl_rho = float(action_rho[np.where(biesl_mask)[0][0]])
+                        print(f"[simulate_manual_action] .BIESL61PRAGN: in_care_mask={biesl_in_care}, "
+                              f"rho={biesl_rho:.6f} (scaled: {biesl_rho * mf:.4f})")
                 else:
                     max_rho = 0.0
                     max_rho_line = "N/A"
@@ -2588,6 +2809,7 @@ class RecommenderService:
         # Capture curtailment/load-shedding details for heuristic actions
         action_data["curtailment_details"] = self._compute_curtailment_details(action_data, obs_n1=obs_n1)
         action_data["load_shedding_details"] = self._compute_load_shedding_details(action_data, obs_n1=obs_n1)
+        action_data["pst_details"] = self._compute_pst_details(action_data)
 
         if not info_action["exception"] and obs_simu_action is not None:
             if self._last_result is None:
@@ -2596,10 +2818,27 @@ class RecommenderService:
                 self._last_result["prioritized_actions"] = {}
             self._last_result["prioritized_actions"][action_id] = action_data
 
-        # CRITICAL: Also update the global action registry used by the SLD generator
+        # Update the global action registry: merge into the existing entry
+        # rather than replacing it, so the library's _identify_action_elements
+        # can still find the original structure it expects.
         if self._dict_action is None:
             self._dict_action = {}
-        self._dict_action[action_id] = action_data
+        if action_id in self._dict_action:
+            existing = self._dict_action[action_id]
+            print(f"[simulate_manual_action] Merging into existing _dict_action['{action_id}']")
+            print(f"  existing keys: {list(existing.keys())}")
+            print(f"  action_data keys: {list(action_data.keys())}")
+            existing["observation"] = action_data.get("observation")
+            existing["action"] = action_data.get("action")
+            existing["action_topology"] = action_data.get("action_topology")
+            # Update content with the latest (tap/MW may have changed)
+            if action_data.get("content"):
+                existing["content"] = action_data["content"]
+            print(f"  merged keys: {list(existing.keys())}")
+        else:
+            print(f"[simulate_manual_action] NEW _dict_action['{action_id}'] (no existing entry)")
+            print(f"  action_data keys: {list(action_data.keys())}")
+            self._dict_action[action_id] = action_data
 
         # Sanitize for JSON serialization (remove raw objects and fix float values)
         serializable_data = {
@@ -2620,6 +2859,7 @@ class RecommenderService:
             "action_topology": action_data.get("action_topology"),
             "curtailment_details": action_data.get("curtailment_details"),
             "load_shedding_details": action_data.get("load_shedding_details"),
+            "pst_details": action_data.get("pst_details"),
             "content": action_data.get("content"),
         }
 
@@ -2655,11 +2895,28 @@ class RecommenderService:
 
         env = self._get_simulation_env()
         classifier = ActionClassifier()
-        
+
         # Identify elements for both actions
         # First check if they have action topology enriched
         act1_obj = all_actions[action1_id]["action"]
         act2_obj = all_actions[action2_id]["action"]
+
+        # --- DEBUG: log _dict_action entry keys for the actions ---
+        for _aid in (action1_id, action2_id):
+            _de = self._dict_action.get(_aid) if self._dict_action else None
+            if _de:
+                print(f"[compute_superposition] _dict_action['{_aid}'] keys: {list(_de.keys())}")
+                if "content" in _de:
+                    print(f"[compute_superposition]   content keys: {list(_de['content'].keys()) if isinstance(_de['content'], dict) else type(_de['content'])}")
+                    if isinstance(_de.get("content"), dict) and "pst_tap" in _de["content"]:
+                        print(f"[compute_superposition]   pst_tap: {_de['content']['pst_tap']}")
+            else:
+                print(f"[compute_superposition] _dict_action['{_aid}'] = NOT FOUND")
+            _ae = all_actions.get(_aid)
+            if _ae:
+                print(f"[compute_superposition] all_actions['{_aid}'] keys: {list(_ae.keys())}")
+            else:
+                print(f"[compute_superposition] all_actions['{_aid}'] = NOT FOUND")
 
         line_idxs1, sub_idxs1 = _identify_action_elements(
             act1_obj, action1_id, self._dict_action, classifier, env
@@ -2667,11 +2924,39 @@ class RecommenderService:
         line_idxs2, sub_idxs2 = _identify_action_elements(
             act2_obj, action2_id, self._dict_action, classifier, env
         )
+        print(f"[compute_superposition] _identify_action_elements: act1 line_idxs={line_idxs1}, sub_idxs={sub_idxs1}")
+        print(f"[compute_superposition] _identify_action_elements: act2 line_idxs={line_idxs2}, sub_idxs={sub_idxs2}")
 
-        if not line_idxs1 and not sub_idxs1 and not line_idxs2 and not sub_idxs2:
-             # Fallback: if they are in _dict_action, maybe identify_action_elements needs it
-             # but they were already identified above?
-             pass
+        # Fallback for PST actions: _identify_action_elements may return empty
+        # because PST tap changes are not topology changes (no line/bus switches).
+        # Identify the PST transformer line index from the action content instead.
+        def _pst_fallback_line_idxs(action_id):
+            entry = self._dict_action.get(action_id) or all_actions.get(action_id, {})
+            content = entry.get("content", {})
+            pst_tap = content.get("pst_tap", {})
+            if not pst_tap:
+                topo = entry.get("action_topology", {})
+                pst_tap = topo.get("pst_tap", {})
+            if not pst_tap:
+                return []
+            name_line = list(env.name_line)
+            idxs = []
+            for pst_name in pst_tap:
+                if pst_name in name_line:
+                    idxs.append(name_line.index(pst_name))
+            return idxs
+
+        if not line_idxs1 and not sub_idxs1:
+            fallback1 = _pst_fallback_line_idxs(action1_id)
+            if fallback1:
+                line_idxs1 = fallback1
+                print(f"[compute_superposition] PST fallback for action1 '{action1_id}': line_idxs={line_idxs1}")
+
+        if not line_idxs2 and not sub_idxs2:
+            fallback2 = _pst_fallback_line_idxs(action2_id)
+            if fallback2:
+                line_idxs2 = fallback2
+                print(f"[compute_superposition] PST fallback for action2 '{action2_id}': line_idxs={line_idxs2}")
 
         if (not line_idxs1 and not sub_idxs1) or (not line_idxs2 and not sub_idxs2):
              return {"error": f"Cannot identify elements for one or both actions (Act1: {len(line_idxs1)} lines, {len(sub_idxs1)} subs; Act2: {len(line_idxs2)} lines, {len(sub_idxs2)} subs)"}
@@ -2683,23 +2968,77 @@ class RecommenderService:
         n1_variant_id = self._get_n1_variant(disconnected_element)
         n.set_working_variant(n1_variant_id)
         obs_start = env.get_obs()
+
+        # --- DEBUG: log rho at identified line indexes for obs_start vs obs_act ---
+        name_line = list(env.name_line)
+        for _aid, _lidxs in [(action1_id, line_idxs1), (action2_id, line_idxs2)]:
+            obs_act = all_actions[_aid]["observation"]
+            try:
+                for _li in _lidxs:
+                    _ln = name_line[_li] if _li < len(name_line) else f"idx_{_li}"
+                    print(f"[compute_superposition] rho at {_ln}(idx={_li}): obs_start={float(obs_start.rho[_li]):.6f}, obs_act({_aid})={float(obs_act.rho[_li]):.6f}, delta={float(obs_act.rho[_li] - obs_start.rho[_li]):.6f}")
+                if hasattr(obs_start, 'p_or') and hasattr(obs_act, 'p_or'):
+                    for _li in _lidxs:
+                        _ln = name_line[_li] if _li < len(name_line) else f"idx_{_li}"
+                        print(f"[compute_superposition] p_or at {_ln}(idx={_li}): obs_start={float(obs_start.p_or[_li]):.2f}, obs_act({_aid})={float(obs_act.p_or[_li]):.2f}, delta={float(obs_act.p_or[_li] - obs_start.p_or[_li]):.2f}")
+            except (TypeError, ValueError, IndexError):
+                print(f"[compute_superposition] Could not log rho/p_or for {_aid} (mock or missing data)")
         
         # Filter lines we care about
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
-        lines_overloaded_ids = []
-        for i in range(len(obs_start.rho)):
-            if obs_start.rho[i] >= monitoring_factor:
-                 lines_overloaded_ids.append(i)
-                 
+        worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+
+        name_line_list = list(env.name_line)
+        name_to_idx_map = {l: i for i, l in enumerate(name_line_list)}
+        num_lines = len(name_line_list)
+
         # Get pre-existing rho for reduction calculation
         n_variant_id = self._get_n_variant()
         n.set_working_variant(n_variant_id)
         obs_n = env.get_obs()
         # Only consider a line as "pre-existing" if it is actually an overload in the N state
         pre_existing_rho = {i: obs_n.rho[i] for i in range(len(obs_n.rho)) if obs_n.rho[i] >= monitoring_factor}
-                 
+
         lines_we_care_about, branches_with_limits = self._get_monitoring_parameters(obs_start)
 
+        # Determine lines_overloaded_ids: prefer analysis context (consistent with simulate_manual_action)
+        ctx_overloaded = (self._analysis_context or {}).get("lines_overloaded")
+        if ctx_overloaded:
+            lines_overloaded_ids = [name_to_idx_map[l] for l in ctx_overloaded if l in name_to_idx_map]
+            print(f"[compute_superposition] Using analysis context lines_overloaded: {len(lines_overloaded_ids)} lines")
+        else:
+            # Recompute: filter by lines_we_care_about AND branches_with_limits (matching simulate_manual_action)
+            mf = float(monitoring_factor)
+            wt = float(worsening_threshold)
+            lwca_set = set(lines_we_care_about) if lines_we_care_about else set(name_line_list)
+            bwl_set = set(branches_with_limits)
+            lines_overloaded_ids = []
+            for i in range(len(obs_start.rho)):
+                ln = name_line_list[i]
+                if (obs_start.rho[i] >= mf
+                    and ln in lwca_set
+                    and ln in bwl_set):
+                    # Exclude pre-existing N-state overloads unless worsened
+                    if i in pre_existing_rho:
+                        if obs_start.rho[i] <= pre_existing_rho[i] * (1 + wt):
+                            continue
+                    lines_overloaded_ids.append(i)
+            print(f"[compute_superposition] Computed lines_overloaded from N-1 state: {len(lines_overloaded_ids)} lines "
+                  f"(filtered by {len(lwca_set)} care + {len(bwl_set)} with-limits)")
+
+        # Detect PST actions — same logic the library uses in compute_all_pairs_superposition
+        def _is_pst_action(aid):
+            desc = self._dict_action.get(aid, {}) if self._dict_action else {}
+            action_type = classifier.identify_action_type(desc, by_description=True)
+            return action_type == "pst" or action_type == "pst_tap" or "pst_tap" in aid or "pst_" in aid
+
+        act1_is_pst = _is_pst_action(action1_id)
+        act2_is_pst = _is_pst_action(action2_id)
+
+        print(f"[compute_superposition] Calling compute_combined_pair_superposition with:")
+        print(f"  act1_line_idxs={line_idxs1}, act1_sub_idxs={sub_idxs1}, act1_is_pst={act1_is_pst}")
+        print(f"  act2_line_idxs={line_idxs2}, act2_sub_idxs={sub_idxs2}, act2_is_pst={act2_is_pst}")
+        print(f"  obs_combined present: {all_actions.get(f'{action1_id}+{action2_id}', {}).get('observation') is not None}")
         result = compute_combined_pair_superposition(
             obs_start=obs_start,
             obs_act1=all_actions[action1_id]["observation"],
@@ -2708,30 +3047,27 @@ class RecommenderService:
             act1_sub_idxs=sub_idxs1,
             act2_line_idxs=line_idxs2,
             act2_sub_idxs=sub_idxs2,
-            obs_combined=all_actions.get(f"{action1_id}+{action2_id}", {}).get("observation")
+            obs_combined=all_actions.get(f"{action1_id}+{action2_id}", {}).get("observation"),
+            act1_is_pst=act1_is_pst,
+            act2_is_pst=act2_is_pst,
         )
-        
-        if "error" not in result:
-             # Logic to compute max_rho and other details, similar to compute_all_pairs_superposition
-             name_line = list(env.name_line)
-             num_lines = len(name_line)
-             worsening_threshold = getattr(config, 'PRE_EXISTING_OVERLOAD_WORSENING_THRESHOLD', 0.02)
+        print(f"[compute_superposition] Library result: {'error: ' + str(result.get('error')) if 'error' in result else 'betas=' + str(result.get('betas'))}")
 
-             pre_existing_baseline = np.zeros(num_lines)
-             is_pre_existing = np.zeros(num_lines, dtype=bool)
-             for idx, rho_val in pre_existing_rho.items():
-                 pre_existing_baseline[idx] = rho_val
-                 is_pre_existing[idx] = True
+        if "error" not in result:
+             # Build care_mask matching simulate_manual_action:
+             # 1) lines_we_care_about AND branches_with_limits
+             # 2) exclude pre-existing N-state overloads unless worsened
+             # 3) force-include lines_overloaded_ids (N-1 overloaded lines)
+             mf = float(monitoring_factor)
+             wt = float(worsening_threshold)
 
              if lines_we_care_about is not None and len(lines_we_care_about) > 0:
-                 care_mask = np.isin(name_line, list(lines_we_care_about))
+                 care_mask = np.isin(name_line_list, list(lines_we_care_about))
              else:
                  care_mask = np.ones(num_lines, dtype=bool)
 
-             # Filter out branches without explicit thermal limits in pypowsybl (consistency with simulation)
-             for i, l in enumerate(name_line):
-                 if care_mask[i] and l not in branches_with_limits:
-                     care_mask[i] = False
+             limits_mask = np.isin(name_line_list, list(branches_with_limits))
+             care_mask &= limits_mask
 
              rho_combined = np.abs(
                  (1.0 - sum(result["betas"])) * obs_start.rho +
@@ -2739,17 +3075,55 @@ class RecommenderService:
                  result["betas"][1] * all_actions[action2_id]["observation"].rho
              )
 
-             # Max rho among monitored lines
-             worsened_mask = rho_combined > pre_existing_baseline * (1 + worsening_threshold)
-             eligible_mask = care_mask & (~is_pre_existing | worsened_mask)
+             # Exclude pre-existing N-state overloads unless the combined action worsens them
+             base_rho_n = np.array(obs_n.rho[:num_lines]) if len(obs_n.rho) >= num_lines else np.array(obs_n.rho)
+             pre_existing = (base_rho_n >= mf)
+             not_worsened = (rho_combined[:num_lines] <= base_rho_n * (1 + wt))
+             care_mask &= ~(pre_existing & not_worsened)
 
+             # Always include lines_overloaded_ids (active monitoring) — consistent with simulate_manual_action
+             for idx in lines_overloaded_ids:
+                 if idx < len(care_mask):
+                     care_mask[idx] = True
+
+             # Find max rho among monitored lines
              max_rho = 0.0
              max_rho_line = "N/A"
-             if np.any(eligible_mask):
-                 masked_rho = rho_combined[eligible_mask]
+             if np.any(care_mask):
+                 masked_rho = rho_combined[care_mask]
+                 masked_names = np.array(name_line_list)[care_mask]
                  max_idx = np.argmax(masked_rho)
                  max_rho = float(masked_rho[max_idx])
-                 max_rho_line = name_line[np.where(eligible_mask)[0][max_idx]]
+                 max_rho_line = masked_names[max_idx]
+
+             # Diagnostic: top 5 monitored lines by estimated rho
+             print(f"[compute_superposition] monitored lines: {int(np.sum(care_mask))}/{num_lines}, "
+                   f"lines_overloaded force-included: {len(lines_overloaded_ids)}")
+             if np.any(care_mask):
+                 top_indices = np.argsort(masked_rho)[::-1][:5]
+                 print(f"[compute_superposition] TOP 5 estimated rho (among {len(masked_rho)} monitored):")
+                 for rank, ti in enumerate(top_indices):
+                     print(f"  #{rank+1}: {masked_names[ti]} = {float(masked_rho[ti]):.6f} "
+                           f"(scaled: {float(masked_rho[ti]) * mf:.4f})")
+
+             # Diagnostic: check .BIESL61PRAGN specifically
+             biesl_idx = name_to_idx_map.get('.BIESL61PRAGN')
+             if biesl_idx is not None:
+                 in_care = bool(care_mask[biesl_idx])
+                 in_limits = '.BIESL61PRAGN' in branches_with_limits
+                 in_lwca = lines_we_care_about is None or '.BIESL61PRAGN' in (lines_we_care_about or [])
+                 est_rho = float(rho_combined[biesl_idx])
+                 n1_rho = float(obs_start.rho[biesl_idx])
+                 n_rho = float(obs_n.rho[biesl_idx])
+                 print(f"[compute_superposition] .BIESL61PRAGN check: "
+                       f"in_care_mask={in_care}, in_limits={in_limits}, in_lwca={in_lwca}, "
+                       f"rho_est={est_rho:.6f} (scaled:{est_rho*mf:.4f}), "
+                       f"rho_N1={n1_rho:.6f}, rho_N={n_rho:.6f}")
+             else:
+                 print(f"[compute_superposition] .BIESL61PRAGN NOT FOUND in name_line_list")
+
+             print(f"[compute_superposition] RESULT: max_rho_line={max_rho_line}, "
+                   f"max_rho_raw={max_rho:.6f}, max_rho_scaled={max_rho * mf:.4f}")
 
              # Scale by monitoring_factor for operational loading display
              res_max_rho = max_rho * monitoring_factor

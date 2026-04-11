@@ -1851,6 +1851,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const [scoreTargetMw, setScoreTargetMw] = useState({});
             // Per-action editable MW for action card re-simulation (keyed by actionId)
             const [cardEditMw, setCardEditMw] = useState({});
+            // Per-action editable tap position for PST action re-simulation (keyed by actionId)
+            const [cardEditTap, setCardEditTap] = useState({});
             const [resimulatingId, setResimulatingId] = useState(null);
             const searchDropdownRef = useRef(null);
             const searchInputRef = useRef(null);
@@ -2352,6 +2354,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                         disconnected_mw: detail.disconnected_mw,
                                         load_shedding_details: detail.load_shedding_details,
                                         curtailment_details: detail.curtailment_details,
+                                        pst_details: detail.pst_details,
                                         status: {
                                             is_selected: manualActionIds.has(id),
                                             is_suggested: suggestedByRecommenderIds.has(id),
@@ -2576,6 +2579,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                 n_components: entry.n_components,
                                 disconnected_mw: entry.disconnected_mw,
                                 load_shedding_details: entry.load_shedding_details,
+                                curtailment_details: entry.curtailment_details,
+                                pst_details: entry.pst_details,
                                 is_manual: entry.status.is_manually_simulated,
                             };
                             if (entry.status.is_selected) restoredSelected.add(id);
@@ -3833,6 +3838,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     disconnected_mw: detail.disconnected_mw,
                                     load_shedding_details: detail.load_shedding_details,
                                     curtailment_details: detail.curtailment_details,
+                                    pst_details: detail.pst_details,
                                     action_topology: detail.action_topology,
                                     non_convergence: detail.non_convergence,
                                     is_precomputed: isCombined ? true : (base.actions?.[actionId]?.is_precomputed || false)
@@ -3865,6 +3871,51 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     setSearchError(err?.response?.data?.detail || 'Simulation failed');
                 } finally {
                     setSimulatingActionId(null);
+                }
+            };
+
+            // Refresh combined estimations for all pairs that include the given action
+            const refreshCombinedEstimations = async (actionId) => {
+                const combined = result && result.combined_actions;
+                console.log('[refreshCombinedEstimations] called for:', actionId,
+                    'combined:', combined ? Object.keys(combined).length : null,
+                    'selectedBranch:', selectedBranch);
+                if (!combined || !selectedBranch) return;
+                const relatedPairs = Object.entries(combined).filter(function([pairId]) {
+                    const parts = pairId.split('+').map(function(p) { return p.trim(); });
+                    return parts.indexOf(actionId) >= 0;
+                });
+                console.log('[refreshCombinedEstimations] found', relatedPairs.length, 'related pairs:',
+                    relatedPairs.map(function([id]) { return id; }));
+                for (const [pairId] of relatedPairs) {
+                    const parts = pairId.split('+').map(function(p) { return p.trim(); });
+                    const id1 = parts[0];
+                    const id2 = parts[1];
+                    try {
+                        const res = await axios.post(API_BASE + '/api/compute-superposition', {
+                            action1_id: id1, action2_id: id2, disconnected_element: selectedBranch
+                        });
+                        const superResult = res.data;
+                        console.log('[refreshCombinedEstimations] superposition result for', pairId, ':', {
+                            error: superResult.error,
+                            estimated_max_rho: superResult.estimated_max_rho,
+                            max_rho: superResult.max_rho,
+                            max_rho_line: superResult.max_rho_line,
+                        });
+                        if (!superResult.error) {
+                            const estRho = superResult.estimated_max_rho != null ? superResult.estimated_max_rho : superResult.max_rho;
+                            const estLine = superResult.estimated_max_rho_line != null ? superResult.estimated_max_rho_line : superResult.max_rho_line;
+                            console.log('[refreshCombinedEstimations] updating pair', pairId, 'with estRho:', estRho, 'estLine:', estLine);
+                            setResult(function(prev) {
+                                if (!prev || !prev.combined_actions || !prev.combined_actions[pairId]) return prev;
+                                var updated = Object.assign({}, prev.combined_actions);
+                                updated[pairId] = Object.assign({}, updated[pairId], { estimated_max_rho: estRho, estimated_max_rho_line: estLine });
+                                return Object.assign({}, prev, { combined_actions: updated });
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to refresh estimation for pair ' + pairId + ':', e);
+                    }
                 }
             };
 
@@ -3902,6 +3953,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     disconnected_mw: detail.disconnected_mw,
                                     load_shedding_details: detail.load_shedding_details,
                                     curtailment_details: detail.curtailment_details,
+                                    pst_details: detail.pst_details,
                                     action_topology: detail.action_topology,
                                     non_convergence: detail.non_convergence,
                                 }
@@ -3915,8 +3967,67 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         delete next[actionId];
                         return next;
                     });
+                    // Refresh combined estimations for pairs containing this action
+                    refreshCombinedEstimations(actionId);
                 } catch (err) {
                     console.error('Re-simulation failed:', err);
+                } finally {
+                    setResimulatingId(null);
+                }
+            };
+
+            // Re-simulate an existing PST action with a new tap position
+            const handleResimulateTap = async (actionId, newTap) => {
+                if (!selectedBranch) return;
+                setResimulatingId(actionId);
+                try {
+                    const actionDetail = result?.actions?.[actionId];
+                    const actionContent = actionDetail?.action_topology || null;
+                    const res = await axios.post(API_BASE + '/api/simulate-manual-action', {
+                        action_id: actionId,
+                        disconnected_element: selectedBranch,
+                        action_content: actionContent,
+                        lines_overloaded: result?.lines_overloaded?.length > 0 ? result.lines_overloaded : null,
+                        target_tap: newTap,
+                    });
+                    const detail = res.data;
+                    setResult(prev => {
+                        const base = prev || { actions: {}, lines_overloaded: [] };
+                        return {
+                            ...base,
+                            actions: {
+                                ...(base.actions || {}),
+                                [actionId]: {
+                                    ...(base.actions?.[actionId] || {}),
+                                    description_unitaire: detail.description_unitaire,
+                                    rho_before: detail.rho_before,
+                                    rho_after: detail.rho_after,
+                                    max_rho: detail.max_rho,
+                                    max_rho_line: detail.max_rho_line,
+                                    is_rho_reduction: detail.is_rho_reduction,
+                                    is_islanded: detail.is_islanded,
+                                    n_components: detail.n_components,
+                                    disconnected_mw: detail.disconnected_mw,
+                                    load_shedding_details: detail.load_shedding_details,
+                                    curtailment_details: detail.curtailment_details,
+                                    pst_details: detail.pst_details,
+                                    action_topology: detail.action_topology,
+                                    non_convergence: detail.non_convergence,
+                                }
+                            }
+                        };
+                    });
+                    // Clear the edit input so it picks up the new tap from results
+                    setCardEditTap(prev => {
+                        if (!prev[actionId]) return prev;
+                        const next = { ...prev };
+                        delete next[actionId];
+                        return next;
+                    });
+                    // Refresh combined estimations for pairs containing this action
+                    refreshCombinedEstimations(actionId);
+                } catch (err) {
+                    console.error('PST re-simulation failed:', err);
                 } finally {
                     setResimulatingId(null);
                 }
@@ -4032,6 +4143,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     is_rho_reduction: detail.is_rho_reduction,
                                     load_shedding_details: detail.load_shedding_details,
                                     curtailment_details: detail.curtailment_details,
+                                    pst_details: detail.pst_details,
                                     action_topology: detail.action_topology,
                                     is_manual: true,
                                 }
@@ -4119,6 +4231,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     disconnected_mw: detail.disconnected_mw,
                                     load_shedding_details: detail.load_shedding_details,
                                     curtailment_details: detail.curtailment_details,
+                                    pst_details: detail.pst_details,
                                     action_topology: detail.action_topology,
                                     non_convergence: detail.non_convergence,
                                 }
@@ -5302,6 +5415,41 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                     )
                                 }
                                 {
+                                    details.pst_details && details.pst_details.length > 0 && (
+                                        <div onClick={(e) => { e.stopPropagation(); e.preventDefault(); }} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#f3e8ff', color: '#6b21a8', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #c084fc', fontWeight: 500 }}>
+                                            {details.pst_details.map((pst, i) => (
+                                                <div key={pst.pst_name} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: i > 0 ? '4px' : 0 }}>
+                                                    <span>PST <strong>{pst.pst_name}</strong> tap:</span>
+                                                    <input
+                                                        type="number"
+                                                        min={pst.low_tap != null ? pst.low_tap : undefined}
+                                                        max={pst.high_tap != null ? pst.high_tap : undefined}
+                                                        step={1}
+                                                        value={cardEditTap[id] != null ? cardEditTap[id] : pst.tap_position}
+                                                        onChange={(e) => setCardEditTap(prev => ({ ...prev, [id]: e.target.value }))}
+                                                        style={{ width: '55px', fontSize: '11px', fontFamily: 'monospace', padding: '2px 4px', border: '1px solid #9333ea', borderRadius: '3px', textAlign: 'right' }}
+                                                    />
+                                                    {pst.low_tap != null && pst.high_tap != null && (
+                                                        <span style={{ fontSize: '10px', color: '#7c3aed' }}>
+                                                            [{pst.low_tap}..{pst.high_tap}]
+                                                        </span>
+                                                    )}
+                                                    <button
+                                                        onClick={() => {
+                                                            const tapVal = parseInt(cardEditTap[id] != null ? cardEditTap[id] : String(pst.tap_position), 10);
+                                                            if (!isNaN(tapVal)) handleResimulateTap(id, tapVal);
+                                                        }}
+                                                        disabled={resimulatingId === id}
+                                                        style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '3px', border: '1px solid #9333ea', background: '#c084fc', color: '#3b0764', cursor: resimulatingId === id ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                                    >
+                                                        {resimulatingId === id ? 'Simulating...' : 'Re-simulate'}
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
+                                }
+                                {
                                     details.non_convergence && (
                                         <div style={{ fontSize: '12px', background: '#fff8f1', color: '#9a3412', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #ffedd5', fontWeight: 500 }}>
                                             ⚠️ <strong>LoadFlow Failure:</strong> {details.non_convergence}
@@ -5883,6 +6031,9 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                 const isPerActionParams = paramsKeys.length > 0 && paramsKeys.some(k => scoresKeys.includes(k));
                                                                 const globalParams = isPerActionParams ? null : (paramsKeys.length > 0 ? typeData.params : null);
                                                                 const isLsOrRcType = type === 'load_shedding' || type.includes('load_shedding') || type === 'renewable_curtailment' || type.includes('renewable_curtailment');
+                                                                const isPstType = type === 'pst_tap_change' || type.includes('pst');
+                                                                const hasEditableColumn = isLsOrRcType || isPstType;
+                                                                const tapStartMap = isPstType ? typeData.tap_start : undefined;
 
                                                                 return (
                                                                     <div key={type} style={{ marginBottom: '8px' }}>
@@ -5907,10 +6058,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                         <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
                                                                             <thead>
                                                                                 <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
-                                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: isLsOrRcType ? '40%' : '55%' }}>Action</th>
-                                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '15%' }}>MW Start</th>
+                                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: hasEditableColumn ? '40%' : '55%' }}>Action</th>
+                                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '15%' }}>{isPstType ? 'Tap Start' : 'MW Start'}</th>
                                                                                     {isLsOrRcType && <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>Target MW</th>}
-                                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: isLsOrRcType ? '15%' : '25%' }}>Score</th>
+                                                                                    {isPstType && <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>Target Tap</th>}
+                                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: hasEditableColumn ? '15%' : '25%' }}>Score</th>
                                                                                 </tr>
                                                                             </thead>
                                                                             <tbody>
@@ -5920,6 +6072,41 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                     const parsedTarget = targetVal !== undefined ? parseFloat(targetVal) : null;
                                                                                     const isValidTarget = parsedTarget !== null && !isNaN(parsedTarget) && parsedTarget >= 0 && (item.mwStart == null || parsedTarget <= item.mwStart);
                                                                                     const canResimulate = isLsOrRcType && isComputed && isValidTarget;
+                                                                                    // PST tap: read from cardEditTap (synchronized with action card)
+                                                                                    // Tap Start: "previous tap" from action params (N-state), then tapStartMap, then computedPst
+                                                                                    const actionParams = isPstType ? (typeData.params || {})[item.actionId] : undefined;
+                                                                                    // Try multiple key variants for the previous tap value
+                                                                                    const previousTap = actionParams
+                                                                                        ? (actionParams['previous tap'] != null ? actionParams['previous tap']
+                                                                                           : actionParams['previous_tap'] != null ? actionParams['previous_tap']
+                                                                                           : actionParams['previousTap'] != null ? actionParams['previousTap']
+                                                                                           : (() => { const found = Object.entries(actionParams).find(([k]) => k.toLowerCase().includes('previous') && k.toLowerCase().includes('tap')); return found ? found[1] : undefined; })()
+                                                                                          )
+                                                                                        : undefined;
+                                                                                    const tapStartEntry = isPstType ? (tapStartMap || {})[item.actionId] || null : undefined;
+                                                                                    const computedPst = isPstType && isComputed ? result?.actions?.[item.actionId]?.pst_details?.[0] : undefined;
+                                                                                    const tapInfo = isPstType
+                                                                                        ? (previousTap !== undefined
+                                                                                            ? {
+                                                                                                pst_name: (tapStartEntry || {}).pst_name || (computedPst || {}).pst_name || '',
+                                                                                                tap: previousTap,
+                                                                                                low_tap: (tapStartEntry || {}).low_tap != null ? tapStartEntry.low_tap : (computedPst || {}).low_tap != null ? computedPst.low_tap : null,
+                                                                                                high_tap: (tapStartEntry || {}).high_tap != null ? tapStartEntry.high_tap : (computedPst || {}).high_tap != null ? computedPst.high_tap : null,
+                                                                                            }
+                                                                                            : tapStartEntry
+                                                                                                ? tapStartEntry
+                                                                                                : computedPst
+                                                                                                    ? { pst_name: computedPst.pst_name, tap: computedPst.tap_position, low_tap: computedPst.low_tap, high_tap: computedPst.high_tap }
+                                                                                                    : null)
+                                                                                        : undefined;
+                                                                                    const tapEditVal = cardEditTap[item.actionId];
+                                                                                    // Target Tap default: user edit > simulated tap (from pst_details) > start tap
+                                                                                    const simulatedTap = computedPst ? String(computedPst.tap_position) : undefined;
+                                                                                    const defaultTap = simulatedTap != null ? simulatedTap : (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                                    const effectiveTap = tapEditVal != null ? tapEditVal : defaultTap;
+                                                                                    const parsedTap = effectiveTap !== undefined ? parseInt(effectiveTap, 10) : null;
+                                                                                    const isValidTap = parsedTap !== null && !isNaN(parsedTap) && (tapInfo?.low_tap == null || parsedTap >= tapInfo.low_tap) && (tapInfo?.high_tap == null || parsedTap <= tapInfo.high_tap);
+                                                                                    const canResimTap = isPstType && isComputed && isValidTap;
                                                                                     return (
                                                                                         <tr key={item.actionId}
                                                                                             onClick={() => {
@@ -5928,14 +6115,18 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                     handleResimulate(item.actionId, parsedTarget);
                                                                                                     return;
                                                                                                 }
+                                                                                                if (canResimTap) {
+                                                                                                    handleResimulateTap(item.actionId, parsedTap);
+                                                                                                    return;
+                                                                                                }
                                                                                                 if (isComputed) return;
                                                                                                 const mw = isLsOrRcType && isValidTarget ? parsedTarget : undefined;
                                                                                                 handleAddManualAction(item.actionId, mw);
                                                                                             }}
                                                                                             style={{
                                                                                                 borderBottom: '1px solid #eee',
-                                                                                                cursor: (simulatingActionId || resimulatingId) ? 'wait' : (isComputed && !canResimulate) ? 'not-allowed' : 'pointer',
-                                                                                                color: (isComputed && !canResimulate) ? '#888' : 'inherit',
+                                                                                                cursor: (simulatingActionId || resimulatingId) ? 'wait' : (isComputed && !canResimulate && !canResimTap) ? 'not-allowed' : 'pointer',
+                                                                                                color: (isComputed && !canResimulate && !canResimTap) ? '#888' : 'inherit',
                                                                                                 opacity: (simulatingActionId === item.actionId || resimulatingId === item.actionId) ? 0.7 : 1,
                                                                                                 background: (simulatingActionId === item.actionId || resimulatingId === item.actionId) ? '#e7f1ff' : 'transparent',
                                                                                             }}>
@@ -5954,19 +6145,29 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                         onClick={(e) => e.stopPropagation()}
                                                                                                         onMouseEnter={(e) => showScoreTooltip(e, React.createElement(React.Fragment, null,
                                                                                                             React.createElement('div', { style: { fontWeight: 700, marginBottom: '2px', borderBottom: '1px solid #555', paddingBottom: '2px' } }, 'Parameters'),
-                                                                                                            ...Object.entries(typeData.params[item.actionId]).map(([k, v]) =>
-                                                                                                                React.createElement('div', { key: k },
+                                                                                                            ...Object.entries(typeData.params[item.actionId]).map(([k, v]) => {
+                                                                                                                const isTargetTapKey = isPstType && (k === 'selected_pst_tap' || (k.toLowerCase().includes('target') && k.toLowerCase().includes('tap')));
+                                                                                                                const displayVal = isTargetTapKey && effectiveTap !== undefined ? effectiveTap : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                                                                                                                return React.createElement('div', { key: k },
                                                                                                                     React.createElement('span', { style: { color: '#adb5bd' } }, k + ':'),
-                                                                                                                    ' ' + (typeof v === 'object' ? JSON.stringify(v) : String(v))
-                                                                                                                )
-                                                                                                            )
+                                                                                                                    ' ' + displayVal
+                                                                                                                );
+                                                                                                            })
                                                                                                         ))}
                                                                                                         onMouseLeave={hideScoreTooltip}
                                                                                                     >ⓘ</span>
                                                                                                 )}
                                                                                             </td>
-                                                                                            <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: item.mwStart == null ? '#aaa' : '#333' }}>
-                                                                                                {item.mwStart != null ? item.mwStart.toFixed(1) : 'N/A'}
+                                                                                            <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: (isPstType ? tapInfo == null : item.mwStart == null) ? '#aaa' : '#333' }}>
+                                                                                                {isPstType
+                                                                                                    ? (tapInfo != null ? String(tapInfo.tap) : 'N/A')
+                                                                                                    : (item.mwStart != null ? item.mwStart.toFixed(1) : 'N/A')
+                                                                                                }
+                                                                                                {isPstType && tapInfo && tapInfo.low_tap != null && tapInfo.high_tap != null && (
+                                                                                                    <span style={{ fontSize: '9px', color: '#7c3aed', marginLeft: '2px' }}>
+                                                                                                        [{tapInfo.low_tap}..{tapInfo.high_tap}]
+                                                                                                    </span>
+                                                                                                )}
                                                                                             </td>
                                                                                             {isLsOrRcType && (
                                                                                                 <td style={{ padding: '2px 4px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
@@ -5984,6 +6185,27 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                                                                             fontFamily: 'monospace',
                                                                                                             padding: '2px 4px',
                                                                                                             border: '1px solid #ccc',
+                                                                                                            borderRadius: '3px',
+                                                                                                            textAlign: 'right',
+                                                                                                        }}
+                                                                                                    />
+                                                                                                </td>
+                                                                                            )}
+                                                                                            {isPstType && (
+                                                                                                <td style={{ padding: '2px 4px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                                                                                    <input
+                                                                                                        type="number"
+                                                                                                        min={tapInfo?.low_tap != null ? tapInfo.low_tap : undefined}
+                                                                                                        max={tapInfo?.high_tap != null ? tapInfo.high_tap : undefined}
+                                                                                                        step={1}
+                                                                                                        value={cardEditTap[item.actionId] != null ? cardEditTap[item.actionId] : (simulatedTap != null ? simulatedTap : (tapInfo ? String(tapInfo.tap) : ''))}
+                                                                                                        onChange={(e) => setCardEditTap(prev => ({ ...prev, [item.actionId]: e.target.value }))}
+                                                                                                        style={{
+                                                                                                            width: '50px',
+                                                                                                            fontSize: '11px',
+                                                                                                            fontFamily: 'monospace',
+                                                                                                            padding: '2px 4px',
+                                                                                                            border: '1px solid #9333ea',
                                                                                                             borderRadius: '3px',
                                                                                                             textAlign: 'right',
                                                                                                         }}

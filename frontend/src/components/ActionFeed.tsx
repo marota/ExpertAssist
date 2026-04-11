@@ -39,6 +39,7 @@ interface ActionFeedProps {
     actionDictFileName?: string | null;
     actionDictStats?: { reco: number; disco: number; pst: number; open_coupling: number; close_coupling: number; total: number } | null;
     combinedActions: Record<string, CombinedAction> | null;
+    onUpdateCombinedEstimation?: (pairId: string, estimation: { estimated_max_rho: number; estimated_max_rho_line: string }) => void;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -69,6 +70,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     actionDictFileName,
     actionDictStats,
     combinedActions,
+    onUpdateCombinedEstimation,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -87,6 +89,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     const [scoreTargetMw, setScoreTargetMw] = useState<Record<string, string>>({});
     // Per-action editable MW for action card re-simulation (keyed by actionId)
     const [cardEditMw, setCardEditMw] = useState<Record<string, string>>({});
+    // Per-action editable tap position for PST action re-simulation (keyed by actionId)
+    const [cardEditTap, setCardEditTap] = useState<Record<string, string>>({});
     const [resimulating, setResimulating] = useState<string | null>(null);
     const [dismissedRejectedWarning, setDismissedRejectedWarning] = useState(false);
     const [showActionDictWarning, setShowActionDictWarning] = useState(true);
@@ -237,7 +241,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         return () => document.removeEventListener('mousedown', handler);
     }, [searchOpen]);
 
-    const handleAddAction = async (actionId: string, targetMw?: number) => {
+    const handleAddAction = async (actionId: string, targetMw?: number, targetTap?: number) => {
         const trimmedId = actionId.trim();
         if (!disconnectedElement) {
             setError('Select a contingency first.');
@@ -267,7 +271,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 }
             }
 
-            const result = await api.simulateManualAction(trimmedId, disconnectedElement, actionContent, linesOverloaded, targetMw);
+            const result = await api.simulateManualAction(trimmedId, disconnectedElement, actionContent, linesOverloaded, targetMw, targetTap);
             const detail: ActionDetail = {
                 description_unitaire: result.description_unitaire,
                 rho_before: result.rho_before,
@@ -281,6 +285,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 non_convergence: result.non_convergence,
                 load_shedding_details: result.load_shedding_details,
                 curtailment_details: result.curtailment_details,
+                pst_details: result.pst_details,
 
             };
             onManualActionAdded(trimmedId, detail, result.lines_overloaded || []);
@@ -292,6 +297,42 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             setError(err?.response?.data?.detail || 'Simulation failed');
         } finally {
             setSimulating(null);
+        }
+    };
+
+    // Refresh combined estimations for all pairs that include the given action
+    const refreshCombinedEstimations = async (actionId: string) => {
+        console.log('[refreshCombinedEstimations] called for:', actionId,
+            'combinedActions:', combinedActions ? Object.keys(combinedActions).length : null,
+            'disconnectedElement:', disconnectedElement,
+            'hasCallback:', !!onUpdateCombinedEstimation);
+        if (!combinedActions || !disconnectedElement || !onUpdateCombinedEstimation) return;
+        const relatedPairs = Object.entries(combinedActions).filter(([pairId]) => {
+            const parts = pairId.split('+').map(p => p.trim());
+            return parts.includes(actionId);
+        });
+        console.log('[refreshCombinedEstimations] found', relatedPairs.length, 'related pairs:',
+            relatedPairs.map(([id]) => id));
+        for (const [pairId] of relatedPairs) {
+            const parts = pairId.split('+').map(p => p.trim());
+            const [id1, id2] = parts;
+            try {
+                const result = await api.computeSuperposition(id1, id2, disconnectedElement);
+                console.log('[refreshCombinedEstimations] superposition result for', pairId, ':', {
+                    error: result.error,
+                    estimated_max_rho: result.estimated_max_rho,
+                    max_rho: result.max_rho,
+                    max_rho_line: result.max_rho_line,
+                });
+                if (!result.error) {
+                    const estRho = result.estimated_max_rho ?? result.max_rho;
+                    const estLine = result.estimated_max_rho_line ?? result.max_rho_line;
+                    console.log('[refreshCombinedEstimations] updating pair', pairId, 'with estRho:', estRho, 'estLine:', estLine);
+                    onUpdateCombinedEstimation(pairId, { estimated_max_rho: estRho, estimated_max_rho_line: estLine });
+                }
+            } catch (e) {
+                console.error(`Failed to refresh estimation for pair ${pairId}:`, e);
+            }
         }
     };
 
@@ -316,6 +357,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 non_convergence: result.non_convergence,
                 load_shedding_details: result.load_shedding_details,
                 curtailment_details: result.curtailment_details,
+                pst_details: result.pst_details,
             };
             onManualActionAdded(actionId, newDetail, result.lines_overloaded || []);
             // Clear the edit input so it picks up the new shedded/curtailed MW from results
@@ -325,8 +367,50 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 delete next[actionId];
                 return next;
             });
+            // Refresh combined estimations for pairs containing this action
+            refreshCombinedEstimations(actionId);
         } catch (e: unknown) {
             console.error('Re-simulation failed:', e);
+        } finally {
+            setResimulating(null);
+        }
+    };
+
+    // Re-simulate an existing PST action with a new tap position
+    const handleResimulateTap = async (actionId: string, newTap: number) => {
+        if (!disconnectedElement) return;
+        setResimulating(actionId);
+        try {
+            const detail = actions[actionId];
+            const actionContent = detail?.action_topology ? detail.action_topology as unknown as Record<string, unknown> : null;
+            const result = await api.simulateManualAction(actionId, disconnectedElement, actionContent, linesOverloaded, null, newTap);
+            const newDetail: ActionDetail = {
+                description_unitaire: result.description_unitaire,
+                rho_before: result.rho_before,
+                rho_after: result.rho_after,
+                max_rho: result.max_rho,
+                max_rho_line: result.max_rho_line,
+                is_rho_reduction: result.is_rho_reduction,
+                is_islanded: result.is_islanded,
+                n_components: result.n_components,
+                disconnected_mw: result.disconnected_mw,
+                non_convergence: result.non_convergence,
+                load_shedding_details: result.load_shedding_details,
+                curtailment_details: result.curtailment_details,
+                pst_details: result.pst_details,
+            };
+            onManualActionAdded(actionId, newDetail, result.lines_overloaded || []);
+            // Clear the edit input so it picks up the new tap from results
+            setCardEditTap(prev => {
+                if (!prev[actionId]) return prev;
+                const next = { ...prev };
+                delete next[actionId];
+                return next;
+            });
+            // Refresh combined estimations for pairs containing this action
+            refreshCombinedEstimations(actionId);
+        } catch (e: unknown) {
+            console.error('PST re-simulation failed:', e);
         } finally {
             setResimulating(null);
         }
@@ -524,6 +608,41 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 }}
                                                 disabled={resimulating === id}
                                                 style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '3px', border: '1px solid #0284c7', background: '#38bdf8', color: '#0c4a6e', cursor: resimulating === id ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                            >
+                                                {resimulating === id ? 'Simulating...' : 'Re-simulate'}
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {details.pst_details && details.pst_details.length > 0 && (
+                                <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} style={{ fontSize: '12px', background: '#f3e8ff', color: '#6b21a8', padding: '6px 10px', marginTop: '5px', borderRadius: '4px', border: '1px solid #c084fc', fontWeight: 500 }}>
+                                    {details.pst_details.map((pst, i) => (
+                                        <div key={pst.pst_name} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: i > 0 ? '4px' : 0 }}>
+                                            <span>PST <strong>{pst.pst_name}</strong> tap:</span>
+                                            <input
+                                                data-testid={`edit-tap-${id}`}
+                                                type="number"
+                                                min={pst.low_tap ?? undefined}
+                                                max={pst.high_tap ?? undefined}
+                                                step={1}
+                                                value={cardEditTap[id] ?? pst.tap_position}
+                                                onChange={(e) => setCardEditTap(prev => ({ ...prev, [id]: e.target.value }))}
+                                                style={{ width: '55px', fontSize: '11px', fontFamily: 'monospace', padding: '2px 4px', border: '1px solid #9333ea', borderRadius: '3px', textAlign: 'right' }}
+                                            />
+                                            {pst.low_tap != null && pst.high_tap != null && (
+                                                <span style={{ fontSize: '10px', color: '#7c3aed' }}>
+                                                    [{pst.low_tap}..{pst.high_tap}]
+                                                </span>
+                                            )}
+                                            <button
+                                                data-testid={`resimulate-tap-${id}`}
+                                                onClick={() => {
+                                                    const tapVal = parseInt(cardEditTap[id] ?? String(pst.tap_position), 10);
+                                                    if (!isNaN(tapVal)) handleResimulateTap(id, tapVal);
+                                                }}
+                                                disabled={resimulating === id}
+                                                style={{ fontSize: '10px', padding: '2px 8px', borderRadius: '3px', border: '1px solid #9333ea', background: '#c084fc', color: '#3b0764', cursor: resimulating === id ? 'wait' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
                                             >
                                                 {resimulating === id ? 'Simulating...' : 'Re-simulate'}
                                             </button>
@@ -788,6 +907,9 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                 const globalParams = isPerActionParams ? null : (paramsKeys.length > 0 ? typeData.params : null);
 
                                                 const isLsOrRcType = type === 'load_shedding' || type.includes('load_shedding') || type === 'renewable_curtailment' || type.includes('renewable_curtailment');
+                                                const isPstType = type === 'pst_tap_change' || type.includes('pst');
+                                                const hasEditableColumn = isLsOrRcType || isPstType;
+                                                const tapStartMap = isPstType ? (typeData as { tap_start?: Record<string, { pst_name: string; tap: number; low_tap: number | null; high_tap: number | null } | null> }).tap_start : undefined;
                                                 return (
                                                     <div key={type} style={{ marginBottom: '8px' }}>
                                                         <div style={{ fontSize: '11px', fontWeight: 600, color: '#0056b3', backgroundColor: '#e9ecef', padding: '2px 6px', borderRadius: '4px 4px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -812,10 +934,11 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                         <table style={{ width: '100%', fontSize: '11px', borderCollapse: 'collapse', border: '1px solid #e9ecef', borderTop: 'none' }}>
                                                             <thead>
                                                                 <tr style={{ background: '#f8f9fa', borderBottom: '1px solid #ddd' }}>
-                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: isLsOrRcType ? '40%' : '55%' }}>Action</th>
-                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '15%' }}>MW Start</th>
+                                                                    <th style={{ textAlign: 'left', padding: '4px 6px', width: hasEditableColumn ? '40%' : '55%' }}>Action</th>
+                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: '15%' }}>{isPstType ? 'Tap Start' : 'MW Start'}</th>
                                                                     {isLsOrRcType && <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>Target MW</th>}
-                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: isLsOrRcType ? '15%' : '25%' }}>Score</th>
+                                                                    {isPstType && <th style={{ textAlign: 'right', padding: '4px 6px', width: '20%' }}>Target Tap</th>}
+                                                                    <th style={{ textAlign: 'right', padding: '4px 6px', width: hasEditableColumn ? '15%' : '25%' }}>Score</th>
                                                                 </tr>
                                                             </thead>
                                                             <tbody>
@@ -825,6 +948,40 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                     const parsedTarget = targetVal !== undefined ? parseFloat(targetVal) : null;
                                                                     const isValidTarget = parsedTarget !== null && !isNaN(parsedTarget) && parsedTarget >= 0 && (item.mwStart == null || parsedTarget <= item.mwStart);
                                                                     const canResimulate = isLsOrRcType && isComputed && isValidTarget;
+                                                                    // PST tap: read from cardEditTap (synchronized with action card)
+                                                                    // Tap Start: "previous tap" from action params (N-state), then tapStartMap, then computedPst
+                                                                    const actionParams = isPstType ? typeData.params?.[item.actionId] : undefined;
+                                                                    // Try multiple key variants for the previous tap value
+                                                                    const previousTap = actionParams
+                                                                        ? (actionParams['previous tap'] ?? actionParams['previous_tap'] ?? actionParams['previousTap'] ??
+                                                                           // Fallback: find any key containing "previous" and "tap"
+                                                                           Object.entries(actionParams).find(([k]) => k.toLowerCase().includes('previous') && k.toLowerCase().includes('tap'))?.[1]
+                                                                          ) as number | undefined
+                                                                        : undefined;
+                                                                    const tapStartEntry = isPstType ? tapStartMap?.[item.actionId] ?? null : undefined;
+                                                                    const computedPst = isPstType ? actions[item.actionId]?.pst_details?.[0] : undefined;
+                                                                    const tapInfo = isPstType
+                                                                        ? (previousTap !== undefined
+                                                                            ? {
+                                                                                pst_name: tapStartEntry?.pst_name ?? computedPst?.pst_name ?? '',
+                                                                                tap: previousTap,
+                                                                                low_tap: tapStartEntry?.low_tap ?? computedPst?.low_tap ?? null,
+                                                                                high_tap: tapStartEntry?.high_tap ?? computedPst?.high_tap ?? null,
+                                                                            }
+                                                                            : tapStartEntry
+                                                                                ? tapStartEntry
+                                                                                : computedPst
+                                                                                    ? { pst_name: computedPst.pst_name, tap: computedPst.tap_position, low_tap: computedPst.low_tap, high_tap: computedPst.high_tap }
+                                                                                    : null)
+                                                                        : undefined;
+                                                                    const tapEditVal = cardEditTap[item.actionId];
+                                                                    // Target Tap default: user edit > simulated tap (from pst_details) > start tap
+                                                                    const simulatedTap = computedPst ? String(computedPst.tap_position) : undefined;
+                                                                    const defaultTap = simulatedTap ?? (tapInfo ? String(tapInfo.tap) : undefined);
+                                                                    const effectiveTap = tapEditVal ?? defaultTap;
+                                                                    const parsedTap = effectiveTap !== undefined ? parseInt(effectiveTap, 10) : null;
+                                                                    const isValidTap = parsedTap !== null && !isNaN(parsedTap) && (tapInfo?.low_tap == null || parsedTap >= tapInfo.low_tap) && (tapInfo?.high_tap == null || parsedTap <= tapInfo.high_tap);
+                                                                    const canResimTap = isPstType && isComputed && isValidTap;
                                                                     return (
                                                                         <tr key={item.actionId}
                                                                             onClick={() => {
@@ -833,14 +990,19 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                     handleResimulate(item.actionId, parsedTarget!);
                                                                                     return;
                                                                                 }
+                                                                                if (canResimTap) {
+                                                                                    handleResimulateTap(item.actionId, parsedTap!);
+                                                                                    return;
+                                                                                }
                                                                                 if (isComputed) return;
                                                                                 const mw = isLsOrRcType && isValidTarget ? parsedTarget! : undefined;
-                                                                                handleAddAction(item.actionId, mw);
+                                                                                const tap = isPstType && isValidTap ? parsedTap! : undefined;
+                                                                                handleAddAction(item.actionId, mw, tap);
                                                                             }}
                                                                             style={{
                                                                                 borderBottom: '1px solid #eee',
-                                                                                cursor: (simulating || resimulating) ? 'wait' : (isComputed && !canResimulate) ? 'not-allowed' : 'pointer',
-                                                                                color: (isComputed && !canResimulate) ? '#888' : 'inherit',
+                                                                                cursor: (simulating || resimulating) ? 'wait' : (isComputed && !canResimulate && !canResimTap) ? 'not-allowed' : 'pointer',
+                                                                                color: (isComputed && !canResimulate && !canResimTap) ? '#888' : 'inherit',
                                                                                 opacity: (simulating === item.actionId || resimulating === item.actionId) ? 0.7 : 1,
                                                                                 background: (simulating === item.actionId || resimulating === item.actionId) ? '#e7f1ff' : 'transparent',
                                                                             }}>
@@ -872,19 +1034,32 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                                         Islanding: {actions[item.actionId].n_components} components
                                                                                                     </div>
                                                                                                 )}
-                                                                                                {Object.entries(typeData.params![item.actionId]).map(([k, v]) => (
-                                                                                                    <div key={k}>
-                                                                                                        <span style={{ color: '#adb5bd' }}>{k}:</span> {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                                                                                                    </div>
-                                                                                                ))}
+                                                                                                {Object.entries(typeData.params![item.actionId]).map(([k, v]) => {
+                                                                                                    // For PST: overlay current target tap on selected_pst_tap / target_tap fields
+                                                                                                    const isTargetTapKey = isPstType && (k === 'selected_pst_tap' || k.toLowerCase().includes('target') && k.toLowerCase().includes('tap'));
+                                                                                                    const displayVal = isTargetTapKey && effectiveTap !== undefined ? effectiveTap : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                                                                                                    return (
+                                                                                                        <div key={k}>
+                                                                                                            <span style={{ color: '#adb5bd' }}>{k}:</span> {displayVal}
+                                                                                                        </div>
+                                                                                                    );
+                                                                                                })}
                                                                                             </>
                                                                                         ))}
                                                                                         onMouseLeave={hideTooltip}
                                                                                     >i</span>
                                                                                 )}
                                                                             </td>
-                                                                            <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: item.mwStart == null ? '#aaa' : '#333' }}>
-                                                                                {item.mwStart != null ? item.mwStart.toFixed(1) : 'N/A'}
+                                                                            <td style={{ padding: '4px 6px', textAlign: 'right', fontFamily: 'monospace', color: (isPstType ? tapInfo == null : item.mwStart == null) ? '#aaa' : '#333' }}>
+                                                                                {isPstType
+                                                                                    ? (tapInfo != null ? `${tapInfo.tap}` : 'N/A')
+                                                                                    : (item.mwStart != null ? item.mwStart.toFixed(1) : 'N/A')
+                                                                                }
+                                                                                {isPstType && tapInfo?.low_tap != null && tapInfo?.high_tap != null && (
+                                                                                    <span style={{ fontSize: '9px', color: '#7c3aed', marginLeft: '2px' }}>
+                                                                                        [{tapInfo.low_tap}..{tapInfo.high_tap}]
+                                                                                    </span>
+                                                                                )}
                                                                             </td>
                                                                             {isLsOrRcType && (
                                                                                 <td style={{ padding: '2px 4px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
@@ -903,6 +1078,28 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                                                                                             fontFamily: 'monospace',
                                                                                             padding: '2px 4px',
                                                                                             border: '1px solid #ccc',
+                                                                                            borderRadius: '3px',
+                                                                                            textAlign: 'right',
+                                                                                        }}
+                                                                                    />
+                                                                                </td>
+                                                                            )}
+                                                                            {isPstType && (
+                                                                                <td style={{ padding: '2px 4px', textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                                                                                    <input
+                                                                                        data-testid={`target-tap-${item.actionId}`}
+                                                                                        type="number"
+                                                                                        min={tapInfo?.low_tap ?? undefined}
+                                                                                        max={tapInfo?.high_tap ?? undefined}
+                                                                                        step={1}
+                                                                                        value={cardEditTap[item.actionId] ?? (simulatedTap ?? (tapInfo ? String(tapInfo.tap) : ''))}
+                                                                                        onChange={(e) => setCardEditTap(prev => ({ ...prev, [item.actionId]: e.target.value }))}
+                                                                                        style={{
+                                                                                            width: '50px',
+                                                                                            fontSize: '11px',
+                                                                                            fontFamily: 'monospace',
+                                                                                            padding: '2px 4px',
+                                                                                            border: '1px solid #9333ea',
                                                                                             borderRadius: '3px',
                                                                                             textAlign: 'right',
                                                                                         }}
