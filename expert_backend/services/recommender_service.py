@@ -2973,18 +2973,28 @@ class RecommenderService:
         
         # Filter lines we care about
         monitoring_factor = getattr(config, 'MONITORING_FACTOR_THERMAL_LIMITS', 0.95)
-        lines_overloaded_ids = []
-        for i in range(len(obs_start.rho)):
-            if obs_start.rho[i] >= monitoring_factor:
-                 lines_overloaded_ids.append(i)
-                 
+
+        # Determine lines_overloaded_ids: prefer analysis context (consistent with simulate_manual_action)
+        name_line_list = list(env.name_line)
+        name_to_idx_map = {l: i for i, l in enumerate(name_line_list)}
+        ctx_overloaded = (self._analysis_context or {}).get("lines_overloaded")
+        if ctx_overloaded:
+            lines_overloaded_ids = [name_to_idx_map[l] for l in ctx_overloaded if l in name_to_idx_map]
+            print(f"[compute_superposition] Using analysis context lines_overloaded: {len(lines_overloaded_ids)} lines")
+        else:
+            lines_overloaded_ids = []
+            for i in range(len(obs_start.rho)):
+                if obs_start.rho[i] >= monitoring_factor:
+                     lines_overloaded_ids.append(i)
+            print(f"[compute_superposition] Computed lines_overloaded from N-1 state: {len(lines_overloaded_ids)} lines")
+
         # Get pre-existing rho for reduction calculation
         n_variant_id = self._get_n_variant()
         n.set_working_variant(n_variant_id)
         obs_n = env.get_obs()
         # Only consider a line as "pre-existing" if it is actually an overload in the N state
         pre_existing_rho = {i: obs_n.rho[i] for i in range(len(obs_n.rho)) if obs_n.rho[i] >= monitoring_factor}
-                 
+
         lines_we_care_about, branches_with_limits = self._get_monitoring_parameters(obs_start)
 
         # Detect PST actions — same logic the library uses in compute_all_pairs_superposition
@@ -3046,6 +3056,11 @@ class RecommenderService:
              worsened_mask = rho_combined > pre_existing_baseline * (1 + worsening_threshold)
              eligible_mask = care_mask & (~is_pre_existing | worsened_mask)
 
+             # Always include lines_overloaded_ids (active monitoring) — consistent with simulate_manual_action
+             for idx in lines_overloaded_ids:
+                 if idx < len(eligible_mask):
+                     eligible_mask[idx] = True
+
              max_rho = 0.0
              max_rho_line = "N/A"
              if np.any(eligible_mask):
@@ -3053,6 +3068,10 @@ class RecommenderService:
                  max_idx = np.argmax(masked_rho)
                  max_rho = float(masked_rho[max_idx])
                  max_rho_line = name_line[np.where(eligible_mask)[0][max_idx]]
+
+             print(f"[compute_superposition] eligible lines: {int(np.sum(eligible_mask))}/{num_lines}, "
+                   f"lines_overloaded force-included: {len(lines_overloaded_ids)}, "
+                   f"max_rho_line={max_rho_line}, max_rho_raw={max_rho:.6f}")
 
              # Scale by monitoring_factor for operational loading display
              res_max_rho = max_rho * monitoring_factor
