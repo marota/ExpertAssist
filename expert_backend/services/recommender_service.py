@@ -2701,6 +2701,19 @@ class RecommenderService:
                 if len(monitored_rho) > 0:
                     max_rho = float(np.max(monitored_rho)) * mf
                     max_rho_line = monitored_names[np.argmax(monitored_rho)]
+                    # Diagnostic: top 5 simulated lines
+                    top_indices = np.argsort(monitored_rho)[::-1][:5]
+                    print(f"[simulate_manual_action] TOP 5 simulated rho (among {len(monitored_rho)} monitored):")
+                    for rank, ti in enumerate(top_indices):
+                        print(f"  #{rank+1}: {monitored_names[ti]} = {float(monitored_rho[ti]):.6f} "
+                              f"(scaled: {float(monitored_rho[ti]) * mf:.4f})")
+                    # Diagnostic: check .BIESL61PRAGN specifically
+                    biesl_mask = (action_names == '.BIESL61PRAGN')
+                    if np.any(biesl_mask):
+                        biesl_in_care = bool(care_mask[np.where(biesl_mask)[0][0]])
+                        biesl_rho = float(action_rho[np.where(biesl_mask)[0][0]])
+                        print(f"[simulate_manual_action] .BIESL61PRAGN: in_care_mask={biesl_in_care}, "
+                              f"rho={biesl_rho:.6f} (scaled: {biesl_rho * mf:.4f})")
                 else:
                     max_rho = 0.0
                     max_rho_line = "N/A"
@@ -3078,13 +3091,39 @@ class RecommenderService:
              max_rho_line = "N/A"
              if np.any(care_mask):
                  masked_rho = rho_combined[care_mask]
+                 masked_names = np.array(name_line_list)[care_mask]
                  max_idx = np.argmax(masked_rho)
                  max_rho = float(masked_rho[max_idx])
-                 max_rho_line = name_line_list[np.where(care_mask)[0][max_idx]]
+                 max_rho_line = masked_names[max_idx]
 
+             # Diagnostic: top 5 monitored lines by estimated rho
              print(f"[compute_superposition] monitored lines: {int(np.sum(care_mask))}/{num_lines}, "
-                   f"lines_overloaded force-included: {len(lines_overloaded_ids)}, "
-                   f"max_rho_line={max_rho_line}, max_rho_raw={max_rho:.6f}")
+                   f"lines_overloaded force-included: {len(lines_overloaded_ids)}")
+             if np.any(care_mask):
+                 top_indices = np.argsort(masked_rho)[::-1][:5]
+                 print(f"[compute_superposition] TOP 5 estimated rho (among {len(masked_rho)} monitored):")
+                 for rank, ti in enumerate(top_indices):
+                     print(f"  #{rank+1}: {masked_names[ti]} = {float(masked_rho[ti]):.6f} "
+                           f"(scaled: {float(masked_rho[ti]) * mf:.4f})")
+
+             # Diagnostic: check .BIESL61PRAGN specifically
+             biesl_idx = name_to_idx_map.get('.BIESL61PRAGN')
+             if biesl_idx is not None:
+                 in_care = bool(care_mask[biesl_idx])
+                 in_limits = '.BIESL61PRAGN' in branches_with_limits
+                 in_lwca = lines_we_care_about is None or '.BIESL61PRAGN' in (lines_we_care_about or [])
+                 est_rho = float(rho_combined[biesl_idx])
+                 n1_rho = float(obs_start.rho[biesl_idx])
+                 n_rho = float(obs_n.rho[biesl_idx])
+                 print(f"[compute_superposition] .BIESL61PRAGN check: "
+                       f"in_care_mask={in_care}, in_limits={in_limits}, in_lwca={in_lwca}, "
+                       f"rho_est={est_rho:.6f} (scaled:{est_rho*mf:.4f}), "
+                       f"rho_N1={n1_rho:.6f}, rho_N={n_rho:.6f}")
+             else:
+                 print(f"[compute_superposition] .BIESL61PRAGN NOT FOUND in name_line_list")
+
+             print(f"[compute_superposition] RESULT: max_rho_line={max_rho_line}, "
+                   f"max_rho_raw={max_rho:.6f}, max_rho_scaled={max_rho * mf:.4f}")
 
              # Scale by monitoring_factor for operational loading display
              res_max_rho = max_rho * monitoring_factor
