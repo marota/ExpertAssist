@@ -603,42 +603,48 @@ export function useDiagrams(
 
   // Auto-zoom to selected element via viewBox
   useEffect(() => {
-    if (activeTab === 'overflow') return;
-
     const queryChanged = inspectQuery !== lastZoomState.current.query;
     const branchChanged = !inspectQuery && selectedBranch !== lastZoomState.current.branch;
+    const container = activeTab === 'action' ? actionSvgContainerRef.current
+      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+    const hasSvg = container && container.querySelector('svg');
 
-    if (!queryChanged && !branchChanged) return;
+    console.log('[auto-zoom] effect fired', {
+      activeTab,
+      inspectQuery,
+      selectedBranch,
+      lastZoom: { ...lastZoomState.current },
+      queryChanged,
+      branchChanged,
+      hasContainer: !!container,
+      hasSvg: !!hasSvg,
+      n1DiagramExists: !!n1Diagram,
+      knownItemsSize: knownItemsSet.size,
+    });
+
+    if (activeTab === 'overflow') { console.log('[auto-zoom] SKIP: overflow tab'); return; }
+
+    if (!queryChanged && !branchChanged) { console.log('[auto-zoom] SKIP: no change detected'); return; }
 
     const targetId = inspectQuery || selectedBranch;
 
     // Cleared inspect → reset view
     if (!targetId && queryChanged) {
+      console.log('[auto-zoom] RESET: cleared inspect');
       lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
       handleManualReset();
       return;
     }
 
-    if (!targetId) return;
+    if (!targetId) { console.log('[auto-zoom] SKIP: no targetId'); return; }
 
-    // Only zoom when targetId is a confirmed known element (exact match).
-    // Partial keystrokes like "LIN" won't match → zoom skipped.
-    // Datalist selection sets the input to the full exact value → match fires.
-    if (!knownItemsSet.has(targetId)) return;
+    if (!knownItemsSet.has(targetId)) { console.log('[auto-zoom] SKIP: targetId not in knownItemsSet', targetId); return; }
 
-    // Branch changes should zoom on the N-1 tab, not N.
-    // In the same render cycle, setActiveTab('n-1') is batched but
-    // not committed — this effect still sees activeTab='n'. Skip here;
-    // the effect re-runs when activeTab changes to 'n-1'.
-    if (branchChanged && activeTab === 'n') return;
+    if (branchChanged && activeTab === 'n') { console.log('[auto-zoom] SKIP: branch change on N tab, waiting for n-1'); return; }
 
-    // Only consume the zoom intent when the container has SVG content.
-    // If not ready (e.g. N-1 still loading), skip — the effect re-runs
-    // when n1Diagram changes, and branchChanged will still be true.
-    const container = activeTab === 'action' ? actionSvgContainerRef.current
-      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
-    if (!container || !container.querySelector('svg')) return;
+    if (!container || !hasSvg) { console.log('[auto-zoom] SKIP: container not ready', { container: !!container, hasSvg: !!hasSvg }); return; }
 
+    console.log('[auto-zoom] ZOOMING to', targetId);
     lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
     zoomToElement(targetId);
 
