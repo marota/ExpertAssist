@@ -443,6 +443,10 @@ function App() {
         const res = await api.getN1Diagram(selectedBranch);
         const { svg, viewBox } = processSvg(res.svg, voltageLevels.length);
         diagrams.setN1Diagram({ ...res, svg, originalViewBox: viewBox });
+        // Ensure auto-zoom fires after the new N-1 diagram is ready.
+        // Reset lastZoomState so the auto-zoom effect sees a "branch change"
+        // on the render that has both activeTab='n-1' and the new SVG in DOM.
+        diagrams.lastZoomState.current = { query: '', branch: '' };
       } catch (err) {
         console.error('Failed to fetch N-1 diagram', err);
         setError(`Failed to fetch N-1 diagram for ${selectedBranch}`);
