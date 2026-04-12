@@ -27,7 +27,13 @@ interface Props {
     analysisResult: AnalysisResult | null;
     simulatedActions?: Record<string, ActionDetail>;
     disconnectedElement: string | null;
+    // Called when a COMBINED pair is simulated (green "Simulate Combined"
+    // button). Promotes the new pair into Selected Actions.
     onSimulateCombined: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
+    // Called when a SINGLE action is (re-)simulated from the Explore Pairs
+    // table. Updates the action in place — the action stays in its current
+    // bucket (Suggested / Selected) and is not auto-promoted.
+    onSimulateSingleAction: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     monitoringFactor?: number;
     linesOverloaded?: string[];
 }
@@ -45,6 +51,7 @@ const CombinedActionsModal: React.FC<Props> = ({
     simulatedActions = {},
     disconnectedElement,
     onSimulateCombined,
+    onSimulateSingleAction,
     monitoringFactor = 1.0,
     linesOverloaded = [],
 }) => {
@@ -319,10 +326,27 @@ const CombinedActionsModal: React.FC<Props> = ({
                 action_topology: result.action_topology
             };
             
-            onSimulateCombined(idToSimulate, detail, result.lines_overloaded || []);
-            // Close the modal so the user immediately sees the new action
-            // variant diagram in the main visualization panel.
-            onClose();
+            // A "single action" simulation is one triggered from a row in
+            // the Explore Pairs table (actionId is passed AND does not
+            // contain '+'). In that case the user is just previewing an
+            // individual action to compare before combining — it should
+            // land in Suggested Actions (not Selected).
+            //
+            // A combined pair simulation (no actionId, or an id containing
+            // '+') is an explicit user action to add the pair as a new
+            // candidate and is promoted into Selected Actions.
+            //
+            // In either case we deliberately DO NOT close the modal: the
+            // updated action card and its action-variant diagram are
+            // populated in the background so the user can keep interacting
+            // with the modal (e.g. simulate more rows, compare another
+            // pair) without losing their place.
+            const isSingleActionFromExplore = actionId !== undefined && !actionId.includes('+');
+            if (isSingleActionFromExplore) {
+                onSimulateSingleAction(idToSimulate, detail, result.lines_overloaded || []);
+            } else {
+                onSimulateCombined(idToSimulate, detail, result.lines_overloaded || []);
+            }
         } catch (e: unknown) {
             const err = e as { response?: { data?: { detail?: string } }, message?: string };
             setError(err?.response?.data?.detail || err?.message || 'Simulation failed');

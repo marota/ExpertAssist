@@ -53,6 +53,7 @@ describe('CombinedActionsModal', () => {
         analysisResult: mockAnalysisResult,
         disconnectedElement: 'L_FAULTY',
         onSimulateCombined: vi.fn(),
+        onSimulateSingleAction: vi.fn(),
     };
 
     beforeEach(() => {

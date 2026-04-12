@@ -187,6 +187,14 @@ function App() {
     [actionsHook, setResult, wrappedForcedActionSelect]
   );
 
+  // Re-simulation of an already-present action (edit Target MW / tap on a
+  // suggested card). Does NOT move the action into the selected bucket.
+  const wrappedActionResimulated = useCallback(
+    (actionId: string, detail: ActionDetail, linesOverloaded: string[]) =>
+      actionsHook.handleActionResimulated(actionId, detail, linesOverloaded, setResult, wrappedForcedActionSelect),
+    [actionsHook, setResult, wrappedForcedActionSelect]
+  );
+
   const handleUpdateCombinedEstimation = useCallback(
     (pairId: string, estimation: { estimated_max_rho: number; estimated_max_rho_line: string }) => {
       console.log('[handleUpdateCombinedEstimation] called with pairId:', pairId, 'estimation:', estimation);
@@ -692,6 +700,7 @@ function App() {
               edgesByEquipmentId={diagrams.nMetaIndex?.edgesByEquipmentId ?? null}
               disconnectedElement={selectedBranch || null}
               onManualActionAdded={wrappedManualActionAdded}
+              onActionResimulated={wrappedActionResimulated}
               analysisLoading={analysisLoading}
               monitoringFactor={monitoringFactor}
               onVlDoubleClick={handleVlDoubleClick}

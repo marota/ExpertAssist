@@ -31,6 +31,7 @@ interface ActionFeedProps {
     edgesByEquipmentId: Map<string, EdgeMeta> | null;
     disconnectedElement: string | null;
     onManualActionAdded: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
+    onActionResimulated: (actionId: string, detail: ActionDetail, linesOverloaded: string[]) => void;
     analysisLoading: boolean;
     monitoringFactor: number;
     manuallyAddedIds: Set<string>;
@@ -62,6 +63,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     edgesByEquipmentId,
     disconnectedElement,
     onManualActionAdded,
+    onActionResimulated,
     analysisLoading,
     monitoringFactor,
     manuallyAddedIds,
@@ -362,7 +364,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 curtailment_details: result.curtailment_details,
                 pst_details: result.pst_details,
             };
-            onManualActionAdded(actionId, newDetail, result.lines_overloaded || []);
+            onActionResimulated(actionId, newDetail, result.lines_overloaded || []);
             // Clear the edit input so it picks up the new shedded/curtailed MW from results
             setCardEditMw(prev => {
                 if (!prev[actionId]) return prev;
@@ -403,7 +405,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 curtailment_details: result.curtailment_details,
                 pst_details: result.pst_details,
             };
-            onManualActionAdded(actionId, newDetail, result.lines_overloaded || []);
+            onActionResimulated(actionId, newDetail, result.lines_overloaded || []);
             // Clear the edit input so it picks up the new tap from results
             setCardEditTap(prev => {
                 if (!prev[actionId]) return prev;
@@ -789,6 +791,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 simulatedActions={actions}
                 disconnectedElement={disconnectedElement}
                 onSimulateCombined={onManualActionAdded}
+                onSimulateSingleAction={onActionResimulated}
                 monitoringFactor={monitoringFactor}
                 linesOverloaded={linesOverloaded}
             />

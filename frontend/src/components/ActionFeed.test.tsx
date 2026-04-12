@@ -57,6 +57,7 @@ describe('ActionFeed', () => {
         edgesByEquipmentId: new Map(),
         disconnectedElement: 'LINE_1',
         onManualActionAdded: vi.fn(),
+        onActionResimulated: vi.fn(),
         analysisLoading: false,
         monitoringFactor: 0.95,
         manuallyAddedIds: new Set<string>(),
