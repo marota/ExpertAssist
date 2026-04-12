@@ -398,19 +398,7 @@ export function useDiagrams(
     const container = activeTab === 'action' ? actionSvgContainerRef.current
       : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
     const index = activeTab === 'action' ? actionMetaIndex : activeTab === 'n' ? nMetaIndex : n1MetaIndex;
-    console.log('[zoomToElement] called', {
-      targetId,
-      activeTab,
-      hasPZ: !!currentPZ,
-      hasContainer: !!container,
-      hasIndex: !!index,
-      indexNodeCount: index?.nodesByEquipmentId.size ?? 0,
-      indexEdgeCount: index?.edgesByEquipmentId.size ?? 0,
-    });
-    if (!currentPZ || !container || !index) {
-      console.log('[zoomToElement] ABORT: missing pz/container/index');
-      return;
-    }
+    if (!currentPZ || !container || !index) return;
 
     try {
       const { nodesByEquipmentId, edgesByEquipmentId } = index;
@@ -451,13 +439,6 @@ export function useDiagrams(
         }
       }
 
-      console.log('[zoomToElement] lookup result', {
-        targetId,
-        foundNode: !!targetNode,
-        foundEdge: !!targetEdge,
-        usingFallbackIndex,
-      });
-
       const addNodePointsBySvgId = (svgId: string) => {
         const n = effectiveIndex.nodesBySvgId.get(svgId);
         if (n) points.push({ x: n.x, y: n.y });
@@ -478,8 +459,6 @@ export function useDiagrams(
         if (n1) (effectiveIndex.edgesByNode.get(n1.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
         if (n2) (effectiveIndex.edgesByNode.get(n2.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
       }
-
-      console.log('[zoomToElement] collected', points.length, 'points');
 
       if (points.length > 0) {
         const minX = Math.min(...points.map(p => p.x));
@@ -509,7 +488,6 @@ export function useDiagrams(
         const targetX = centerX - targetW / 2;
         const targetY = centerY - targetH / 2;
 
-        console.log('[zoomToElement] setViewBox', { x: targetX, y: targetY, w: targetW, h: targetH, screenW, screenH });
         currentPZ.setViewBox({ x: targetX, y: targetY, w: targetW, h: targetH });
 
         container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
@@ -517,8 +495,6 @@ export function useDiagrams(
           const el = container.querySelector(`[id="${targetSvgId}"]`);
           if (el) el.classList.add('nad-highlight');
         }
-      } else {
-        console.log('[zoomToElement] ABORT: no points collected for', targetId);
       }
     } catch (e) {
       console.error('Zoom failed:', e);
@@ -627,48 +603,42 @@ export function useDiagrams(
 
   // Auto-zoom to selected element via viewBox
   useEffect(() => {
+    if (activeTab === 'overflow') return;
+
     const queryChanged = inspectQuery !== lastZoomState.current.query;
     const branchChanged = !inspectQuery && selectedBranch !== lastZoomState.current.branch;
-    const container = activeTab === 'action' ? actionSvgContainerRef.current
-      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
-    const hasSvg = container && container.querySelector('svg');
 
-    console.log('[auto-zoom] effect fired', {
-      activeTab,
-      inspectQuery,
-      selectedBranch,
-      lastZoom: { ...lastZoomState.current },
-      queryChanged,
-      branchChanged,
-      hasContainer: !!container,
-      hasSvg: !!hasSvg,
-      n1DiagramExists: !!n1Diagram,
-      knownItemsSize: knownItemsSet.size,
-    });
-
-    if (activeTab === 'overflow') { console.log('[auto-zoom] SKIP: overflow tab'); return; }
-
-    if (!queryChanged && !branchChanged) { console.log('[auto-zoom] SKIP: no change detected'); return; }
+    if (!queryChanged && !branchChanged) return;
 
     const targetId = inspectQuery || selectedBranch;
 
     // Cleared inspect → reset view
     if (!targetId && queryChanged) {
-      console.log('[auto-zoom] RESET: cleared inspect');
       lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
       handleManualReset();
       return;
     }
 
-    if (!targetId) { console.log('[auto-zoom] SKIP: no targetId'); return; }
+    if (!targetId) return;
 
-    if (!knownItemsSet.has(targetId)) { console.log('[auto-zoom] SKIP: targetId not in knownItemsSet', targetId); return; }
+    // Only zoom when targetId is a confirmed known element (exact match).
+    // Partial keystrokes like "LIN" won't match → zoom skipped.
+    // Datalist selection sets the input to the full exact value → match fires.
+    if (!knownItemsSet.has(targetId)) return;
 
-    if (branchChanged && activeTab === 'n') { console.log('[auto-zoom] SKIP: branch change on N tab, waiting for n-1'); return; }
+    // Branch changes should zoom on the N-1 tab, not N.
+    // In the same render cycle, setActiveTab('n-1') is batched but
+    // not committed — this effect still sees activeTab='n'. Skip here;
+    // the effect re-runs when activeTab changes to 'n-1'.
+    if (branchChanged && activeTab === 'n') return;
 
-    if (!container || !hasSvg) { console.log('[auto-zoom] SKIP: container not ready', { container: !!container, hasSvg: !!hasSvg }); return; }
+    // Only consume the zoom intent when the container has SVG content.
+    // If not ready (e.g. N-1 still loading), skip — the effect re-runs
+    // when n1Diagram changes, and branchChanged will still be true.
+    const container = activeTab === 'action' ? actionSvgContainerRef.current
+      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+    if (!container || !container.querySelector('svg')) return;
 
-    console.log('[auto-zoom] ZOOMING to', targetId);
     lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
     zoomToElement(targetId);
 
