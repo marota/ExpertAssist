@@ -118,11 +118,18 @@ Split the four worst offenders into focused subcomponents:
 | `SldOverlay.test.tsx` | 14 | Header, close/tab callbacks, mode indicator, loading/error, conditional tabs |
 | `useSldOverlay.test.ts` | 13 | Hook init, vlOverlay state, fetchSldVariant success/error, interaction logging |
 
-### 3.2 Missing React Error Boundary
+### 3.2 ~~Missing React Error Boundary~~ ✅ FIXED
 
-No `ErrorBoundary` component exists. An unhandled exception in any component will crash the entire application with a white screen.
+Added `ErrorBoundary` class component at `frontend/src/components/ErrorBoundary.tsx` and wired it into `main.tsx` wrapping `<App />` inside `<StrictMode>`. The boundary:
 
-**Recommendation:** Add an Error Boundary wrapping the app root with a fallback UI.
+- Catches render/lifecycle errors via `getDerivedStateFromError` + `componentDidCatch`
+- Logs the error and React component stack to `console.error`
+- Renders a styled fallback UI (`role="alert"`) with the error name/message, a collapsible `<details>` block containing the full stack trace, and two recovery actions:
+  - **Try again** — resets boundary state (re-mounts the child tree)
+  - **Reload page** — calls `window.location.reload()`
+- Accepts an optional `fallback` prop to override the default UI
+
+Covered by 7 new unit tests in `ErrorBoundary.test.tsx` (happy path, default fallback, custom fallback, console logging, reset, reload, details block). Total frontend test count is now 578 (was 571).
 
 ### 3.3 Python Type Hint Coverage
 
@@ -267,7 +274,7 @@ Repository
 1. ~~**Fix path traversal**~~ ✅ `_validate_path_within()` added to session save/load; PDF copy restricted
 2. ~~**Refactor `recommender_service.py`**~~ ✅ Split into 5 modules via mixin architecture
 3. ~~**Replace silent exceptions**~~ ✅ 80+ print→logger, 15 bare except→logged
-4. **Add a React Error Boundary** wrapping the app root — still pending
+4. ~~**Add a React Error Boundary**~~ ✅ `ErrorBoundary` wraps `<App />` in `main.tsx` with styled fallback + recovery buttons
 
 ### Short-Term (High Value)
 
