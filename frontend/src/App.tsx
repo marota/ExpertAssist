@@ -136,7 +136,12 @@ function App() {
     setError('');
     analysis.setInfoMessage('');
     diagrams.setInspectQuery('');
-    diagrams.lastZoomState.current = { query: '', branch: '' };
+    // Do NOT reset lastZoomState here.  Resetting it causes the auto-zoom
+    // effect to detect a spurious "branch change" during the same render
+    // cycle in which the old n1Diagram SVG is still mounted, firing the
+    // zoom on stale data and consuming the intent before the new diagram
+    // loads.  Leaving lastZoomState intact lets the natural selectedBranch
+    // change trigger the zoom correctly after the new SVG is ready.
   }, [setError, actionsHook, analysis, diagrams]);
 
   // Full reset: contingency state + network/diagram state
@@ -438,6 +443,10 @@ function App() {
         const res = await api.getN1Diagram(selectedBranch);
         const { svg, viewBox } = processSvg(res.svg, voltageLevels.length);
         diagrams.setN1Diagram({ ...res, svg, originalViewBox: viewBox });
+        // Ensure auto-zoom fires after the new N-1 diagram is ready.
+        // Reset lastZoomState so the auto-zoom effect sees a "branch change"
+        // on the render that has both activeTab='n-1' and the new SVG in DOM.
+        diagrams.lastZoomState.current = { query: '', branch: '' };
       } catch (err) {
         console.error('Failed to fetch N-1 diagram', err);
         setError(`Failed to fetch N-1 diagram for ${selectedBranch}`);

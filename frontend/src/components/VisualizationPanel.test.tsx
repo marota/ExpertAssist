@@ -331,4 +331,110 @@ describe('VisualizationPanel', () => {
             expect(textEl).toHaveClass('some-other-class');
         });
     });
+
+    // ===== Regression tests for auto-zoom double-injection fix =====
+    // The N / N-1 / action diagram containers (MemoizedSvgContainer) are kept
+    // ALWAYS mounted with an empty-string placeholder.  This prevents React
+    // StrictMode from double-invoking the layout effect on mount, which would
+    // overwrite the viewBox that the auto-zoom effect just applied.
+
+    describe('Always-mounted SVG containers (auto-zoom preservation)', () => {
+        it('keeps N container mounted even before nDiagram loads', () => {
+            const { container } = render(<VisualizationPanel {...createDefaultProps()} />);
+            // Container div always present
+            expect(container.querySelector('#n-svg-container')).toBeInTheDocument();
+            // Placeholder message shown via overlay
+            expect(screen.getByText('Load configuration to see diagram')).toBeInTheDocument();
+        });
+
+        it('keeps N-1 container mounted even before n1Diagram loads', () => {
+            const { container } = render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n-1',
+                selectedBranch: 'LINE_A',
+            })} />);
+            expect(container.querySelector('#n-1-svg-container')).toBeInTheDocument();
+            // Prompt message shown as overlay
+            expect(screen.getByText(/Select a contingency element/)).toBeInTheDocument();
+        });
+
+        it('keeps N-1 container mounted while n1Loading is true (overlays loading message)', () => {
+            const { container } = render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n-1',
+                selectedBranch: 'LINE_A',
+                n1Loading: true,
+            })} />);
+            // Container still present — not unmounted by loading state
+            expect(container.querySelector('#n-1-svg-container')).toBeInTheDocument();
+            // Loading message overlay shown
+            expect(screen.getByText('Generating N-1 Diagram...')).toBeInTheDocument();
+        });
+
+        it('keeps action container mounted even before actionDiagram loads', () => {
+            const { container } = render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action',
+            })} />);
+            expect(container.querySelector('#action-svg-container')).toBeInTheDocument();
+        });
+
+        it('keeps action container mounted while actionDiagramLoading is true', () => {
+            const { container } = render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action',
+                selectedActionId: 'act_1',
+                actionDiagramLoading: true,
+            })} />);
+            expect(container.querySelector('#action-svg-container')).toBeInTheDocument();
+            expect(screen.getByText('Generating Action Variant Diagram...')).toBeInTheDocument();
+        });
+
+        it('does NOT unmount N-1 container when transitioning loading → loaded', () => {
+            const { container, rerender } = render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n-1',
+                selectedBranch: 'LINE_A',
+                n1Loading: true,
+            })} />);
+            const loadingContainer = container.querySelector('#n-1-svg-container');
+            expect(loadingContainer).toBeInTheDocument();
+
+            // Simulate fetchN1 completing
+            const n1Diagram: DiagramData = {
+                svg: '<svg viewBox="0 0 100 100"><g/></svg>',
+                metadata: null,
+            };
+            rerender(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n-1',
+                selectedBranch: 'LINE_A',
+                n1Loading: false,
+                n1Diagram,
+            })} />);
+
+            // Same container div — NOT a fresh remount
+            const loadedContainer = container.querySelector('#n-1-svg-container');
+            expect(loadedContainer).toBeInTheDocument();
+            expect(loadedContainer).toBe(loadingContainer);
+            // Loading overlay gone
+            expect(screen.queryByText('Generating N-1 Diagram...')).not.toBeInTheDocument();
+        });
+
+        it('does NOT unmount N container when configLoading flips false', () => {
+            const { container, rerender } = render(<VisualizationPanel {...createDefaultProps({
+                configLoading: true,
+            })} />);
+            const initialContainer = container.querySelector('#n-svg-container');
+            expect(initialContainer).toBeInTheDocument();
+            expect(screen.getByText('Loading configuration...')).toBeInTheDocument();
+
+            const nDiagram: DiagramData = {
+                svg: '<svg viewBox="0 0 100 100"><g/></svg>',
+                metadata: null,
+            };
+            rerender(<VisualizationPanel {...createDefaultProps({
+                configLoading: false,
+                nDiagram,
+            })} />);
+
+            const afterContainer = container.querySelector('#n-svg-container');
+            expect(afterContainer).toBe(initialContainer);
+            expect(screen.queryByText('Loading configuration...')).not.toBeInTheDocument();
+        });
+    });
 });
