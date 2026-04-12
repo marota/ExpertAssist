@@ -270,14 +270,15 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     visibility: activeTab === 'n' ? 'visible' : 'hidden',
                     pointerEvents: activeTab === 'n' ? 'auto' : 'none',
                 }}>
-                    {configLoading ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                    {/* Always mounted — see comment on N-1 container below. */}
+                    <MemoizedSvgContainer svg={nDiagram?.svg || ''} containerRef={nSvgContainerRef} display="block" tabId="n" />
+                    {configLoading && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                             Loading configuration...
                         </div>
-                    ) : nDiagram?.svg ? (
-                        <MemoizedSvgContainer svg={nDiagram.svg} containerRef={nSvgContainerRef} display="block" tabId="n" />
-                    ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                    )}
+                    {!configLoading && !nDiagram?.svg && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
                             Load configuration to see diagram
                         </div>
                     )}
@@ -302,14 +303,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
                         </div>
                     )}
-                    {n1Loading ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                    {/* MemoizedSvgContainer ALWAYS mounted to avoid unmount/remount
+                        cycles when n1Diagram flips from null to loaded.  Remounting
+                        would cause StrictMode to double-invoke its layout effect,
+                        and the second DOM injection would overwrite the auto-zoom
+                        viewBox that was applied between the two invocations. */}
+                    <MemoizedSvgContainer svg={n1Diagram?.svg || ''} containerRef={n1SvgContainerRef} display="block" tabId="n-1" />
+                    {n1Loading && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                             Generating N-1 Diagram...
                         </div>
-                    ) : n1Diagram?.svg ? (
-                        <MemoizedSvgContainer svg={n1Diagram.svg} containerRef={n1SvgContainerRef} display="block" tabId="n-1" />
-                    ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px' }}>
+                    )}
+                    {!n1Loading && !n1Diagram?.svg && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
                             Select a contingency element from the dropdown to view the N-1 state.
                         </div>
                     )}
@@ -334,18 +340,20 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             AC load flow: {actionDiagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
                         </div>
                     )}
-                    {actionDiagramLoading ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                    {/* Always mounted — see comment on N-1 container. */}
+                    <MemoizedSvgContainer svg={actionDiagram?.svg || ''} containerRef={actionSvgContainerRef} display="block" tabId="action" />
+                    {actionDiagramLoading && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                             Generating Action Variant Diagram...
                         </div>
-                    ) : actionDiagram?.svg ? (
-                        <MemoizedSvgContainer svg={actionDiagram.svg} containerRef={actionSvgContainerRef} display="block" tabId="action" />
-                    ) : selectedActionId ? (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999' }}>
+                    )}
+                    {!actionDiagramLoading && !actionDiagram?.svg && selectedActionId && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
                             Failed to load diagram for action {selectedActionId}
                         </div>
-                    ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px' }}>
+                    )}
+                    {!actionDiagramLoading && !actionDiagram?.svg && !selectedActionId && (
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
                             Select an action card from the suggestions panel to view its effect on the network.
                         </div>
                     )}

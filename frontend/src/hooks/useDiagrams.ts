@@ -398,7 +398,19 @@ export function useDiagrams(
     const container = activeTab === 'action' ? actionSvgContainerRef.current
       : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
     const index = activeTab === 'action' ? actionMetaIndex : activeTab === 'n' ? nMetaIndex : n1MetaIndex;
-    if (!currentPZ || !container || !index) return;
+    console.log('[zoomToElement] called', {
+      targetId,
+      activeTab,
+      hasPZ: !!currentPZ,
+      hasContainer: !!container,
+      hasIndex: !!index,
+      indexNodeCount: index?.nodesByEquipmentId.size ?? 0,
+      indexEdgeCount: index?.edgesByEquipmentId.size ?? 0,
+    });
+    if (!currentPZ || !container || !index) {
+      console.log('[zoomToElement] ABORT: missing pz/container/index');
+      return;
+    }
 
     try {
       const { nodesByEquipmentId, edgesByEquipmentId } = index;
@@ -439,6 +451,13 @@ export function useDiagrams(
         }
       }
 
+      console.log('[zoomToElement] lookup result', {
+        targetId,
+        foundNode: !!targetNode,
+        foundEdge: !!targetEdge,
+        usingFallbackIndex,
+      });
+
       const addNodePointsBySvgId = (svgId: string) => {
         const n = effectiveIndex.nodesBySvgId.get(svgId);
         if (n) points.push({ x: n.x, y: n.y });
@@ -459,6 +478,8 @@ export function useDiagrams(
         if (n1) (effectiveIndex.edgesByNode.get(n1.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
         if (n2) (effectiveIndex.edgesByNode.get(n2.svgId) || []).forEach(e => { addNodePointsBySvgId(e.node1); addNodePointsBySvgId(e.node2); });
       }
+
+      console.log('[zoomToElement] collected', points.length, 'points');
 
       if (points.length > 0) {
         const minX = Math.min(...points.map(p => p.x));
@@ -488,6 +509,7 @@ export function useDiagrams(
         const targetX = centerX - targetW / 2;
         const targetY = centerY - targetH / 2;
 
+        console.log('[zoomToElement] setViewBox', { x: targetX, y: targetY, w: targetW, h: targetH, screenW, screenH });
         currentPZ.setViewBox({ x: targetX, y: targetY, w: targetW, h: targetH });
 
         container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
@@ -495,6 +517,8 @@ export function useDiagrams(
           const el = container.querySelector(`[id="${targetSvgId}"]`);
           if (el) el.classList.add('nad-highlight');
         }
+      } else {
+        console.log('[zoomToElement] ABORT: no points collected for', targetId);
       }
     } catch (e) {
       console.error('Zoom failed:', e);
