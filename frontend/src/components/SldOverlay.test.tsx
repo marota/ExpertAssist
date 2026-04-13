@@ -238,4 +238,77 @@ describe('SldOverlay', () => {
             expect(container.querySelectorAll('.sld-highlight-overloaded').length).toBe(0);
         });
     });
+
+    // When the user pans or zooms the SLD overlay, React reconciles the
+    // <div dangerouslySetInnerHTML> wrapper, which in some cases wipes
+    // out the highlight clones that were imperatively inserted as svg
+    // siblings. The previous implementation only re-applied highlights
+    // when a dep in its dep array changed, so a pan would leave the
+    // user looking at a diagram with no highlights until they switched
+    // tabs. The new implementation uses a self-gating layout effect
+    // that runs after every render and re-plants the clones whenever
+    // the DOM has lost them.
+    describe('highlight persistence across pan/re-render (regression)', () => {
+        const buildOverlay = (): VlOverlay => ({
+            vlName: 'VL_400',
+            actionId: null,
+            svg:
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                + '<g><rect id="cell_n1" width="10" height="10"/></g>'
+                + '</svg>',
+            sldMetadata: JSON.stringify({
+                nodes: [{ id: 'cell_n1', equipmentId: 'LINE_N1' }],
+            }),
+            loading: false,
+            error: null,
+            tab: 'n-1' as SldTab,
+        });
+
+        const result = {
+            actions: {},
+            lines_overloaded: ['LINE_N1'],
+            pdf_path: null,
+            pdf_url: null,
+            message: '',
+            dc_fallback: false,
+        } as unknown as AnalysisResult;
+
+        it('replants highlight clones after they are wiped from the DOM', () => {
+            const vlOverlay = buildOverlay();
+            const { container, rerender } = render(
+                <SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />,
+            );
+            // Initial render plants exactly one overload clone for cell_n1.
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length).toBe(1);
+
+            // Simulate what React's reconciliation does during a pan: it
+            // reinjects the SVG into its wrapper, blowing away the
+            // clones we planted.
+            container.querySelectorAll('.sld-highlight-clone').forEach(el => el.remove());
+            expect(container.querySelectorAll('.sld-highlight-clone').length).toBe(0);
+
+            // A subsequent render (e.g. from the pan transform state
+            // updating) must replant the clones, even though no
+            // highlight-relevant prop changed.
+            rerender(
+                <SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />,
+            );
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length).toBe(1);
+            expect(container.querySelector('#cell_n1.sld-highlight-overloaded-original')).toBeTruthy();
+        });
+
+        it('does not duplicate clones when a render fires but nothing changed', () => {
+            const vlOverlay = buildOverlay();
+            const { container, rerender } = render(
+                <SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />,
+            );
+            // Multiple rerenders with no DOM wipeout must NOT stack up
+            // additional clones — the signature guard keeps the effect
+            // idempotent.
+            rerender(<SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />);
+            rerender(<SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />);
+            rerender(<SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />);
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length).toBe(1);
+        });
+    });
 });
