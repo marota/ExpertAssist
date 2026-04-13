@@ -214,6 +214,77 @@ describe('SldOverlay', () => {
             expect(container.querySelector('#cell_n1.sld-highlight-overloaded-original')).toBeTruthy();
         });
 
+        // Regression: a persistent overload (the N-1 overloaded line is
+        // STILL overloaded after the action — its equipment id is in
+        // BOTH `result.lines_overloaded` and
+        // `actionDetail.lines_overloaded_after`) must get a
+        // `sld-highlight-overloaded` clone on the ACTION tab.
+        it('highlights a persistent overload on the ACTION tab', () => {
+            const vlOverlay = buildHighlightOverlay('action');
+            const result = {
+                actions: {
+                    action_1: {
+                        ...baseActionDetail,
+                        // LINE_N1 was overloaded in N-1 and stays overloaded
+                        // after the action.
+                        lines_overloaded_after: ['LINE_N1'],
+                    },
+                },
+                lines_overloaded: ['LINE_N1'],
+                pdf_path: null,
+                pdf_url: null,
+                message: '',
+                dc_fallback: false,
+            } as unknown as AnalysisResult;
+
+            const { container } = render(
+                <SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />,
+            );
+
+            expect(
+                container.querySelector('#cell_n1.sld-highlight-overloaded-original'),
+            ).toBeTruthy();
+            expect(
+                container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length,
+            ).toBe(1);
+        });
+
+        // Regression: when the action creates MULTIPLE post-action
+        // overloads — a mix of persistent and brand-new ones — ALL of
+        // them must be highlighted on the ACTION tab.
+        it('highlights a mix of persistent and newly-created overloads on the ACTION tab', () => {
+            const vlOverlay = buildHighlightOverlay('action');
+            const result = {
+                actions: {
+                    action_1: {
+                        ...baseActionDetail,
+                        // LINE_N1 was in N-1 and stays overloaded.
+                        // LINE_NEW is a new overload the action created.
+                        lines_overloaded_after: ['LINE_N1', 'LINE_NEW'],
+                    },
+                },
+                // LINE_RESOLVED was in N-1 but is resolved by the action
+                // — it must NOT get a highlight on the ACTION tab.
+                lines_overloaded: ['LINE_N1', 'LINE_RESOLVED'],
+                pdf_path: null,
+                pdf_url: null,
+                message: '',
+                dc_fallback: false,
+            } as unknown as AnalysisResult;
+
+            const { container } = render(
+                <SldOverlay {...defaultProps} vlOverlay={vlOverlay} result={result} selectedBranch="L_FAULTY" />,
+            );
+
+            expect(container.querySelector('#cell_n1.sld-highlight-overloaded-original')).toBeTruthy();
+            expect(container.querySelector('#cell_new.sld-highlight-overloaded-original')).toBeTruthy();
+            // The resolved overload must NOT be highlighted.
+            expect(container.querySelector('#cell_resolved.sld-highlight-overloaded-original')).toBeNull();
+            expect(
+                container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length,
+            ).toBe(2);
+        });
+
         // When the action solves ALL overloads (lines_overloaded_after is
         // empty) no `sld-highlight-overloaded` clones are added at all.
         it('adds no overload clones when the action solves every overload', () => {
