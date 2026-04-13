@@ -24,6 +24,7 @@ import { useAnalysis } from './hooks/useAnalysis';
 import { useDiagrams } from './hooks/useDiagrams';
 import { useSession } from './hooks/useSession';
 import { useDetachedTabs } from './hooks/useDetachedTabs';
+import { useTiedTabsSync } from './hooks/useTiedTabsSync';
 import { interactionLogger } from './utils/interactionLogger';
 
 function App() {
@@ -71,6 +72,19 @@ function App() {
   const { detachedTabs, detach: detachTab, reattach: reattachTab, focus: focusDetachedTab } = detachedTabsHook;
 
   const diagrams = useDiagrams(branches, voltageLevels, selectedBranch, detachedTabs);
+
+  // ===== Tied Detached Tabs =====
+  // When a detached tab is "tied", its viewBox is mirrored one-way
+  // into the main window's active tab on every pan/zoom change —
+  // supporting side-by-side comparison workflows. See
+  // docs/detachable-viz-tabs.md#tied-detached-tabs for the full
+  // design rationale.
+  const tiedTabsHook = useTiedTabsSync(
+    { 'n': diagrams.nPZ, 'n-1': diagrams.n1PZ, 'action': diagrams.actionPZ },
+    diagrams.activeTab,
+    detachedTabs,
+  );
+  const { isTied: isTabTied, toggleTie: toggleTabTie } = tiedTabsHook;
 
   // Confirmation dialog state for contingency change / load study /
   // apply settings / change network path.
@@ -708,6 +722,14 @@ function App() {
     diagrams.setInspectQuery(q);
   }, [diagrams]);
 
+  // Per-tab inspect variant. Lets a detached tab's overlay zoom its
+  // own tab rather than the main-window activeTab — see
+  // useDiagrams.setInspectQueryForTab for the full story.
+  const handleInspectQueryChangeFor = useCallback((targetTab: TabId, q: string) => {
+    interactionLogger.record('inspect_query_changed', { query: q, target_tab: targetTab });
+    diagrams.setInspectQueryForTab(targetTab, q);
+  }, [diagrams]);
+
   const handleVlOpen = useCallback((vlName: string) => {
     handleVlDoubleClick(activeTab === 'action' ? selectedActionId || '' : '', vlName);
   }, [handleVlDoubleClick, activeTab, selectedActionId]);
@@ -848,6 +870,7 @@ function App() {
             onViewModeChange={handleViewModeChange}
             inspectQuery={inspectQuery}
             onInspectQueryChange={handleInspectQueryChange}
+            onInspectQueryChangeFor={handleInspectQueryChangeFor}
             inspectableItems={inspectableItems}
             onResetView={handleManualReset}
             onZoomIn={handleManualZoomIn}
@@ -866,6 +889,8 @@ function App() {
             onDetachTab={handleDetachTab}
             onReattachTab={handleReattachTab}
             onFocusDetachedTab={focusDetachedTab}
+            isTabTied={isTabTied}
+            onToggleTabTie={toggleTabTie}
           />
         </div>
       </div>

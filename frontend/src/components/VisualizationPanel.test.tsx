@@ -128,24 +128,36 @@ describe('VisualizationPanel', () => {
         expect(screen.getByText('Generating Action Variant Diagram...')).toBeInTheDocument();
     });
 
-    it('renders zoom controls when not on overflow tab', () => {
-        render(<VisualizationPanel {...createDefaultProps()} />);
-        expect(screen.getByTitle('Zoom In')).toBeInTheDocument();
-        expect(screen.getByTitle('Zoom Out')).toBeInTheDocument();
+    it('renders zoom controls inside a tab when that tab has a diagram', () => {
+        // Zoom controls now live inside each tab container and are
+        // only shown when the tab has a diagram to zoom, so the test
+        // must provide a diagram for the active tab.
+        const nDiagram: DiagramData = { svg: '<svg>n</svg>', metadata: null };
+        render(<VisualizationPanel {...createDefaultProps({ nDiagram })} />);
+        expect(screen.getAllByTitle('Zoom In').length).toBeGreaterThan(0);
+        expect(screen.getAllByTitle('Zoom Out').length).toBeGreaterThan(0);
     });
 
-    it('calls zoom handlers', async () => {
+    it('calls zoom handlers (with target tab argument) when the per-tab buttons are clicked', async () => {
         const user = userEvent.setup();
         const onZoomIn = vi.fn();
         const onZoomOut = vi.fn();
         const onResetView = vi.fn();
-        render(<VisualizationPanel {...createDefaultProps({ onZoomIn, onZoomOut, onResetView })} />);
+        const nDiagram: DiagramData = { svg: '<svg>n</svg>', metadata: null };
+        render(<VisualizationPanel {...createDefaultProps({
+            nDiagram, onZoomIn, onZoomOut, onResetView,
+        })} />);
 
-        await user.click(screen.getByTitle('Zoom In'));
-        expect(onZoomIn).toHaveBeenCalled();
+        // Use getAllByTitle because each tab renders its own copy —
+        // even though only the active-tab copy is visible, all four
+        // are in the DOM for performance reasons. The N tab is the
+        // active one in this test.
+        await user.click(screen.getAllByTitle('Zoom In')[0]);
+        // Per-tab click now passes the tabId as the first argument.
+        expect(onZoomIn).toHaveBeenCalledWith('n');
 
-        await user.click(screen.getByTitle('Zoom Out'));
-        expect(onZoomOut).toHaveBeenCalled();
+        await user.click(screen.getAllByTitle('Zoom Out')[0]);
+        expect(onZoomOut).toHaveBeenCalledWith('n');
     });
 
     it('shows view mode toggle when diagram is loaded', () => {
@@ -186,13 +198,17 @@ describe('VisualizationPanel', () => {
         expect(screen.getByText(/MAX_ITERATION_REACHED/)).toBeInTheDocument();
     });
 
-    it('renders inspect input when branches exist', () => {
-        render(<VisualizationPanel {...createDefaultProps({ hasBranches: true })} />);
-        expect(screen.getByPlaceholderText(/Inspect/)).toBeInTheDocument();
+    it('renders inspect input when branches exist and the active tab has a diagram', () => {
+        // Inspect now lives inside each tab overlay and only appears
+        // when the tab has a diagram AND there are branches.
+        const nDiagram: DiagramData = { svg: '<svg>n</svg>', metadata: null };
+        render(<VisualizationPanel {...createDefaultProps({ hasBranches: true, nDiagram })} />);
+        expect(screen.getAllByPlaceholderText(/Inspect/).length).toBeGreaterThan(0);
     });
 
-    it('does not render inspect input when no branches', () => {
-        render(<VisualizationPanel {...createDefaultProps({ hasBranches: false })} />);
+    it('does not render inspect input when there are no branches', () => {
+        const nDiagram: DiagramData = { svg: '<svg>n</svg>', metadata: null };
+        render(<VisualizationPanel {...createDefaultProps({ hasBranches: false, nDiagram })} />);
         expect(screen.queryByPlaceholderText(/Inspect/)).not.toBeInTheDocument();
     });
 

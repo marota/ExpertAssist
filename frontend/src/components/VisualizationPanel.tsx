@@ -34,10 +34,17 @@ interface VisualizationPanelProps {
     onViewModeChange: (mode: 'network' | 'delta') => void;
     inspectQuery: string;
     onInspectQueryChange: (query: string) => void;
+    /**
+     * Same as `onInspectQueryChange` but records which tab the
+     * auto-zoom should target — used by per-tab overlays rendered
+     * inside a detached popup so they zoom their own tab instead of
+     * the main-window activeTab.
+     */
+    onInspectQueryChangeFor?: (targetTab: TabId, query: string) => void;
     inspectableItems: string[];
-    onResetView: () => void;
-    onZoomIn: () => void;
-    onZoomOut: () => void;
+    onResetView: (targetTab?: TabId) => void;
+    onZoomIn: (targetTab?: TabId) => void;
+    onZoomOut: (targetTab?: TabId) => void;
     hasBranches: boolean;
     selectedBranch: string;
     vlOverlay: VlOverlay | null;
@@ -60,6 +67,10 @@ interface VisualizationPanelProps {
     onReattachTab?: (tab: TabId) => void;
     /** Bring focus to the popup window hosting a detached tab. */
     onFocusDetachedTab?: (tab: TabId) => void;
+    /** True iff the given tab is currently "tied" to the main window's activeTab. */
+    isTabTied?: (tab: TabId) => boolean;
+    /** Toggle the "tied" flag for the given tab. */
+    onToggleTabTie?: (tab: TabId) => void;
 }
 
 
@@ -103,22 +114,23 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onDetachTab,
     onReattachTab,
     onFocusDetachedTab,
+    onInspectQueryChangeFor,
+    isTabTied,
+    onToggleTabTie,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
     const detachTabCb = onDetachTab ?? (() => {});
     const reattachTabCb = onReattachTab ?? (() => {});
     const focusDetachedTabCb = onFocusDetachedTab ?? (() => {});
+    const inspectQueryChangeForCb = onInspectQueryChangeFor
+        ?? ((_tab: TabId, q: string) => onInspectQueryChange(q));
+    const isTabTiedFn = isTabTied ?? (() => false);
+    const toggleTabTieCb = onToggleTabTie ?? (() => {});
     const [warningDismissed, setWarningDismissed] = useState(false);
     const [voltageFilterExpanded, setVoltageFilterExpanded] = useState(false);
 
     const hasAnyDiagram = !!(nDiagram?.svg || n1Diagram?.svg || actionDiagram?.svg);
     const showPathWarning = !warningDismissed && !hasAnyDiagram;
-
-    const showViewModeToggle = activeTab !== 'overflow' && (
-        (activeTab === 'n' && !!nDiagram?.svg) ||
-        (activeTab === 'n-1' && !!n1Diagram?.svg) ||
-        (activeTab === 'action' && !!actionDiagram?.svg)
-    );
 
     const filteredInspectables = useMemo(() => {
         const q = inspectQuery.toUpperCase();
@@ -156,6 +168,199 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             </button>
         </div>
     );
+
+    // Renders the per-tab control overlay (zoom in/out/reset, inspect
+    // search, Flow/Impacts toggle, and the "tie" button for detached
+    // tabs). This lives INSIDE each DetachableTabHost's children so
+    // that when the tab is relocated into a popup the controls move
+    // with it — which is how the operator gets zoom / asset focus /
+    // flow-impacts interactions inside the detached window.
+    //
+    // Note that every tab renders its own copy of the overlay, but
+    // only the currently-visible one (active-in-main-window OR
+    // detached) is visible, because the tab container's home
+    // placeholder carries `visibility: hidden` when neither applies.
+    const renderTabOverlay = (tabId: TabId, supportsViewMode: boolean) => {
+        if (tabId === 'overflow') return null;
+        const isDetachedTab = !!detachedTabs[tabId];
+        const hasDiagramForTab =
+            (tabId === 'n' && !!nDiagram?.svg) ||
+            (tabId === 'n-1' && !!n1Diagram?.svg) ||
+            (tabId === 'action' && !!actionDiagram?.svg);
+        const tied = isTabTiedFn(tabId);
+
+        return (
+            <>
+                {/* Top-right cluster: Flow/Impacts + Tie button.
+                    Only rendered when the tab actually has a diagram
+                    so we don't clutter empty tabs. */}
+                {hasDiagramForTab && (supportsViewMode || isDetachedTab) && (
+                    <div style={{
+                        position: 'absolute', top: '10px', right: '10px', zIndex: 100,
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                    }}>
+                        {supportsViewMode && (
+                            <div style={{
+                                display: 'flex',
+                                borderRadius: '6px',
+                                overflow: 'hidden',
+                                border: '1px solid #ccc',
+                                boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                backgroundColor: '#fff',
+                            }}>
+                                <button
+                                    onClick={() => onViewModeChange('network')}
+                                    style={{
+                                        padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                        backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
+                                        color: actionViewMode === 'network' ? '#fff' : '#555',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    Flows
+                                </button>
+                                <button
+                                    onClick={() => onViewModeChange('delta')}
+                                    style={{
+                                        padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                        backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
+                                        color: actionViewMode === 'delta' ? '#fff' : '#555',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    Impacts
+                                </button>
+                            </div>
+                        )}
+                        {isDetachedTab && (
+                            <button
+                                onClick={() => toggleTabTieCb(tabId)}
+                                title={tied
+                                    ? 'Untie: the main window no longer mirrors this tab\'s pan/zoom'
+                                    : 'Tie: pan/zoom in this window is mirrored into the main window\'s active tab'}
+                                style={{
+                                    padding: '4px 10px', border: `1px solid ${tied ? '#2c7be5' : '#ccc'}`,
+                                    borderRadius: '6px', cursor: 'pointer',
+                                    backgroundColor: tied ? '#e8f0fe' : '#fff',
+                                    color: tied ? '#2c7be5' : '#555',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                {tied ? '\u{1F517} Tied' : '\u{26D3} Tie'}
+                            </button>
+                        )}
+                    </div>
+                )}
+
+                {/* Bottom-left cluster: zoom controls + inspect search. */}
+                {hasDiagramForTab && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '12px',
+                        left: '12px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        alignItems: 'flex-start',
+                    }}>
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <button
+                                onClick={() => onZoomIn(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom In"
+                            >
+                                +
+                            </button>
+                            <button
+                                onClick={() => onResetView(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 14px', cursor: 'pointer',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                🔍 Unzoom
+                            </button>
+                            <button
+                                onClick={() => onZoomOut(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom Out"
+                            >
+                                -
+                            </button>
+                        </div>
+                        {hasBranches && (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <input
+                                    list={`inspectables-${tabId}`}
+                                    value={inspectQuery}
+                                    onChange={e => inspectQueryChangeForCb(tabId, e.target.value)}
+                                    placeholder="🔍 Inspect..."
+                                    style={{
+                                        padding: '5px 10px',
+                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        width: '180px',
+                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        background: 'white',
+                                    }}
+                                />
+                                <datalist id={`inspectables-${tabId}`}>
+                                    {filteredInspectables.map(b => <option key={b} value={b} />)}
+                                </datalist>
+                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
+                                    <button
+                                        onClick={() => onVlOpen(inspectQuery)}
+                                        style={{
+                                            background: '#d1fae5', color: '#065f46', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            fontWeight: 600
+                                        }}
+                                        title="Open Single Line Diagram"
+                                    >
+                                        📄 SLD
+                                    </button>
+                                )}
+                                {inspectQuery && (
+                                    <button
+                                        onClick={() => inspectQueryChangeForCb(tabId, '')}
+                                        style={{
+                                            background: '#e74c3c', color: 'white', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        }}
+                                        title="Clear"
+                                    >
+                                        X
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </>
+        );
+    };
 
     // Placeholder shown in the main window in place of a detached tab's
     // content. The tab's DOM lives in a popup — we show a friendly
@@ -266,46 +471,10 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
 
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                {/* View Mode Overlay */}
-                {showViewModeToggle && (
-                    <div style={{
-                        position: 'absolute',
-                        top: '10px',
-                        right: '75px',
-                        zIndex: 100,
-                        display: 'flex',
-                        borderRadius: '6px',
-                        overflow: 'hidden',
-                        border: '1px solid #ccc',
-                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        backgroundColor: '#fff',
-                    }}>
-                        <button
-                            onClick={() => onViewModeChange('network')}
-                            style={{
-                                padding: '4px 12px', border: 'none', cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'network' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            Flows
-                        </button>
-                        <button
-                            onClick={() => onViewModeChange('delta')}
-                            style={{
-                                padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'delta' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            Impacts
-                        </button>
-                    </div>
-                )}
+                {/* Flow/Impacts, zoom, inspect and tie controls now
+                    live INSIDE each tab container (see renderTabOverlay).
+                    That way they move with the tab into a detached
+                    popup window. */}
 
                 {/* Path Warning Banner */}
                 {!nDiagram?.svg && !configLoading && showPathWarning && (
@@ -427,6 +596,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 Load configuration to see diagram
                             </div>
                         )}
+                        {renderTabOverlay('n', true)}
                     </div>
                 </DetachableTabHost>
                 {activeTab === 'n' && detachedTabs['n'] && renderDetachedPlaceholder('n', 'Network (N)', '#3498db')}
@@ -474,6 +644,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 Select a contingency element from the dropdown to view the N-1 state.
                             </div>
                         )}
+                        {renderTabOverlay('n-1', true)}
                     </div>
                 </DetachableTabHost>
                 {activeTab === 'n-1' && detachedTabs['n-1'] && renderDetachedPlaceholder('n-1', 'Contingency (N-1)', '#e74c3c')}
@@ -522,6 +693,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 Select an action card from the suggestions panel to view its effect on the network.
                             </div>
                         )}
+                        {renderTabOverlay('action', true)}
                     </div>
                 </DetachableTabHost>
                 {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
@@ -617,110 +789,10 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     />
                 )}
 
-                {/* Bottom-left overlay: Zoom + Inspect */}
-                {activeTab !== 'overflow' && (
-                    <div style={{
-                        position: 'absolute',
-                        bottom: '12px',
-                        left: '12px',
-                        zIndex: 100,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        alignItems: 'flex-start',
-                    }}>
-                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                            <button
-                                onClick={onZoomIn}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 12px', cursor: 'pointer',
-                                    fontSize: '14px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                                title="Zoom In"
-                            >
-                                +
-                            </button>
-                            <button
-                                onClick={onResetView}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 14px', cursor: 'pointer',
-                                    fontSize: '12px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                            >
-                                🔍 Unzoom
-                            </button>
-                            <button
-                                onClick={onZoomOut}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 12px', cursor: 'pointer',
-                                    fontSize: '14px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                                title="Zoom Out"
-                            >
-                                -
-                            </button>
-                        </div>
-
-                        {hasBranches && (
-                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                <input
-                                    list="inspectables"
-                                    value={inspectQuery}
-                                    onChange={e => onInspectQueryChange(e.target.value)}
-                                    placeholder="🔍 Inspect..."
-                                    style={{
-                                        padding: '5px 10px',
-                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
-                                        borderRadius: '4px',
-                                        fontSize: '12px',
-                                        width: '180px',
-                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                        background: 'white',
-                                    }}
-                                />
-                                <datalist id="inspectables">
-                                    {filteredInspectables.map(b => <option key={b} value={b} />)}
-                                </datalist>
-                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
-                                    <button
-                                        onClick={() => onVlOpen(inspectQuery)}
-                                        style={{
-                                            background: '#d1fae5', color: '#065f46', border: 'none',
-                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
-                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                            fontWeight: 600
-                                        }}
-                                        title="Open Single Line Diagram"
-                                    >
-                                        📄 SLD
-                                    </button>
-                                )}
-                                {inspectQuery && (
-                                    <button
-                                        onClick={() => onInspectQueryChange('')}
-                                        style={{
-                                            background: '#e74c3c', color: 'white', border: 'none',
-                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
-                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                        }}
-                                        title="Clear"
-                                    >
-                                        X
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
+                {/* (Zoom, inspect, Flow/Impacts and Tie controls are
+                    rendered INSIDE each tab container via
+                    renderTabOverlay so they follow detached tabs
+                    into their popup windows.) */}
             </div>
         </>
     );

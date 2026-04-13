@@ -48,6 +48,13 @@ export interface DiagramsState {
   setOriginalViewBox: (v: ViewBox | null) => void;
   inspectQuery: string;
   setInspectQuery: (v: string) => void;
+  /**
+   * Sets `inspectQuery` AND records which tab the auto-zoom effect
+   * should target on its next tick. Used by per-tab inspect overlays
+   * rendered inside a detached popup — they need to zoom their own
+   * tab, not the main window's `activeTab`.
+   */
+  setInspectQueryForTab: (targetTab: TabId, query: string) => void;
 
   // SVG Container Refs
   nSvgContainerRef: RefObject<HTMLDivElement | null>;
@@ -93,9 +100,9 @@ export interface DiagramsState {
     setError: (v: string) => void,
     force?: boolean,
   ) => Promise<void>;
-  handleManualZoomIn: () => void;
-  handleManualZoomOut: () => void;
-  handleManualReset: () => void;
+  handleManualZoomIn: (targetTab?: TabId) => void;
+  handleManualZoomOut: (targetTab?: TabId) => void;
+  handleManualReset: (targetTab?: TabId) => void;
   handleVlDoubleClick: (actionId: string, vlName: string) => void;
   handleOverlaySldTabChange: (sldTab: SldTab) => void;
   handleOverlayClose: () => void;
@@ -106,7 +113,7 @@ export interface DiagramsState {
     selectedActionId: string | null,
     handleActionSelectFn: (actionId: string | null) => void,
   ) => void;
-  zoomToElement: (targetId: string) => void;
+  zoomToElement: (targetId: string, targetTab?: TabId) => void;
 
   // Computed
   inspectableItems: string[];
@@ -181,6 +188,13 @@ export function useDiagrams(
   // Zoom state
   const lastZoomState = useRef({ query: '', branch: '' });
   const actionSyncSourceRef = useRef<ViewBox | null>(null);
+  // When a detached-tab overlay drives an inspect query, it records
+  // which tab the auto-zoom should target here (rather than the
+  // main-window `activeTab`). Cleared when the query changes via the
+  // main-window overlay or when inspect is cleared. Using a ref
+  // rather than state avoids triggering an extra render just to
+  // carry the target forward into the effect.
+  const inspectFocusTabRef = useRef<TabId | null>(null);
 
   // Branch refs
   const committedBranchRef = useRef('');
@@ -319,14 +333,29 @@ export function useDiagrams(
     }
   }, [selectedActionId, actionPZ.viewBox, n1PZ.viewBox, nPZ.viewBox]);
 
+  // Helper used by per-tab inspect overlays: records which tab
+  // should be zoomed on the auto-zoom effect's next tick, then
+  // updates the shared inspect query so the effect sees the change.
+  const setInspectQueryForTab = useCallback((targetTab: TabId, query: string) => {
+    inspectFocusTabRef.current = targetTab;
+    setInspectQuery(query);
+  }, []);
+
   // ===== Zoom Controls =====
-  const handleManualZoomIn = useCallback(() => {
-    interactionLogger.record('zoom_in', { tab: activeTab });
-    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
-    const vb = currentPZ?.viewBox;
-    if (currentPZ && vb) {
+  // These accept an optional `targetTab` so that a zoom button
+  // rendered inside a detached-tab overlay can operate on that
+  // specific tab's pan/zoom instance rather than on the main
+  // window's `activeTab` (the two may be different while the tab is
+  // detached into a popup).
+  const handleManualZoomIn = useCallback((targetTab?: TabId) => {
+    const tab = targetTab ?? activeTab;
+    if (tab === 'overflow') return;
+    interactionLogger.record('zoom_in', { tab });
+    const pz = tab === 'action' ? actionPZ : tab === 'n' ? nPZ : n1PZ;
+    const vb = pz?.viewBox;
+    if (pz && vb) {
       const scale = 0.8;
-      currentPZ.setViewBox({
+      pz.setViewBox({
         x: vb.x + vb.w * (1 - scale) / 2,
         y: vb.y + vb.h * (1 - scale) / 2,
         w: vb.w * scale,
@@ -335,13 +364,15 @@ export function useDiagrams(
     }
   }, [activeTab, actionPZ, nPZ, n1PZ]);
 
-  const handleManualZoomOut = useCallback(() => {
-    interactionLogger.record('zoom_out', { tab: activeTab });
-    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
-    const vb = currentPZ?.viewBox;
-    if (currentPZ && vb) {
+  const handleManualZoomOut = useCallback((targetTab?: TabId) => {
+    const tab = targetTab ?? activeTab;
+    if (tab === 'overflow') return;
+    interactionLogger.record('zoom_out', { tab });
+    const pz = tab === 'action' ? actionPZ : tab === 'n' ? nPZ : n1PZ;
+    const vb = pz?.viewBox;
+    if (pz && vb) {
       const scale = 1.25;
-      currentPZ.setViewBox({
+      pz.setViewBox({
         x: vb.x + vb.w * (1 - scale) / 2,
         y: vb.y + vb.h * (1 - scale) / 2,
         w: vb.w * scale,
@@ -350,21 +381,23 @@ export function useDiagrams(
     }
   }, [activeTab, actionPZ, nPZ, n1PZ]);
 
-  const handleManualReset = useCallback(() => {
-    interactionLogger.record('zoom_reset', { tab: activeTab });
+  const handleManualReset = useCallback((targetTab?: TabId) => {
+    const tab = targetTab ?? activeTab;
+    if (tab === 'overflow') return;
+    interactionLogger.record('zoom_reset', { tab });
     setInspectQuery('');
 
-    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
-    const currentDiagram = activeTab === 'action' ? actionDiagram : activeTab === 'n' ? nDiagram : n1Diagram;
-    const viewBox = currentDiagram?.originalViewBox || originalViewBox;
+    const pz = tab === 'action' ? actionPZ : tab === 'n' ? nPZ : n1PZ;
+    const diagram = tab === 'action' ? actionDiagram : tab === 'n' ? nDiagram : n1Diagram;
+    const viewBox = diagram?.originalViewBox || originalViewBox;
 
-    if (currentPZ && viewBox) {
-      currentPZ.setViewBox(viewBox);
+    if (pz && viewBox) {
+      pz.setViewBox(viewBox);
       lastZoomState.current = { query: '', branch: '' };
     }
 
-    const container = activeTab === 'action' ? actionSvgContainerRef.current
-      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+    const container = tab === 'action' ? actionSvgContainerRef.current
+      : tab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
     if (container) {
       container.querySelectorAll('.nad-highlight').forEach(el => el.classList.remove('nad-highlight'));
     }
@@ -419,11 +452,17 @@ export function useDiagrams(
   }, []);
 
   // ===== Zoom to Element =====
-  const zoomToElement = useCallback((targetId: string) => {
-    const currentPZ = activeTab === 'action' ? actionPZ : activeTab === 'n' ? nPZ : n1PZ;
-    const container = activeTab === 'action' ? actionSvgContainerRef.current
-      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
-    const index = activeTab === 'action' ? actionMetaIndex : activeTab === 'n' ? nMetaIndex : n1MetaIndex;
+  // Accepts an optional `targetTab` so an in-tab inspect overlay can
+  // zoom its OWN tab rather than the main-window `activeTab` — this
+  // is what makes asset focus work inside a detached popup for a
+  // tab that isn't currently the main activeTab.
+  const zoomToElement = useCallback((targetId: string, targetTab?: TabId) => {
+    const tab = targetTab ?? activeTab;
+    if (tab === 'overflow') return;
+    const currentPZ = tab === 'action' ? actionPZ : tab === 'n' ? nPZ : n1PZ;
+    const container = tab === 'action' ? actionSvgContainerRef.current
+      : tab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+    const index = tab === 'action' ? actionMetaIndex : tab === 'n' ? nMetaIndex : n1MetaIndex;
     if (!currentPZ || !container || !index) return;
 
     try {
@@ -629,7 +668,13 @@ export function useDiagrams(
 
   // Auto-zoom to selected element via viewBox
   useEffect(() => {
-    if (activeTab === 'overflow') return;
+    // Resolve which tab to zoom on. A detached-tab overlay can
+    // override the default (the main-window activeTab) by setting
+    // `inspectFocusTabRef.current` just before updating the inspect
+    // query. This is how asset focus works inside a detached popup
+    // for a tab that isn't currently activeTab.
+    const focusTab = inspectFocusTabRef.current ?? activeTab;
+    if (focusTab === 'overflow') return;
 
     const queryChanged = inspectQuery !== lastZoomState.current.query;
     const branchChanged = !inspectQuery && selectedBranch !== lastZoomState.current.branch;
@@ -641,7 +686,9 @@ export function useDiagrams(
     // Cleared inspect → reset view
     if (!targetId && queryChanged) {
       lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-      handleManualReset();
+      handleManualReset(focusTab);
+      // Clear the focus override once the query has been consumed.
+      inspectFocusTabRef.current = null;
       return;
     }
 
@@ -656,17 +703,18 @@ export function useDiagrams(
     // In the same render cycle, setActiveTab('n-1') is batched but
     // not committed — this effect still sees activeTab='n'. Skip here;
     // the effect re-runs when activeTab changes to 'n-1'.
-    if (branchChanged && activeTab === 'n') return;
+    if (branchChanged && focusTab === 'n') return;
 
     // Only consume the zoom intent when the container has SVG content.
     // If not ready (e.g. N-1 still loading), skip — the effect re-runs
-    // when n1Diagram changes, and branchChanged will still be true.
-    const container = activeTab === 'action' ? actionSvgContainerRef.current
-      : activeTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
+    // when the diagram changes, and branchChanged will still be true.
+    const container = focusTab === 'action' ? actionSvgContainerRef.current
+      : focusTab === 'n' ? nSvgContainerRef.current : n1SvgContainerRef.current;
     if (!container || !container.querySelector('svg')) return;
 
     lastZoomState.current = { query: inspectQuery, branch: selectedBranch };
-    zoomToElement(targetId);
+    zoomToElement(targetId, focusTab);
+    inspectFocusTabRef.current = null;
 
   }, [activeTab, nDiagram, n1Diagram, actionDiagram, inspectQuery, selectedBranch, handleManualReset, zoomToElement, knownItemsSet]);
 
@@ -682,6 +730,7 @@ export function useDiagrams(
     handleViewModeChange,
     originalViewBox, setOriginalViewBox,
     inspectQuery, setInspectQuery,
+    setInspectQueryForTab,
     nSvgContainerRef, n1SvgContainerRef, actionSvgContainerRef,
     nPZ, n1PZ, actionPZ,
     nMetaIndex, n1MetaIndex, actionMetaIndex,
@@ -715,5 +764,6 @@ export function useDiagrams(
     handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose,
     handleAssetClick, zoomToElement, inspectableItems,
     selectedBranchForSld, setVlOverlay,
+    setInspectQueryForTab,
   ]);
 }

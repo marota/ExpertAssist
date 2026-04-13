@@ -34,8 +34,21 @@ which design decisions were made along the way.
   into the main window automatically.
 - Zoom level, pan, auto-zoom viewBox, SLD overlay position and all React
   refs survive the detach → reattach round-trip unchanged.
-- Detach and reattach events are recorded in the interaction log so that
-  session replays can reproduce the operator's window layout.
+- **Full interaction set inside the popup**: the zoom in/unzoom/zoom out
+  buttons, asset search/focus input, and the Flow/Impacts view-mode
+  toggle now live INSIDE each tab container. They move with the tab
+  into the popup, so the operator can zoom, focus on an asset, or
+  switch flow-vs-impacts view entirely from within the detached
+  window.
+- **Tie/Untie**: the detached popup gets an extra "⛓ Tie" button.
+  When tied, the popup's pan/zoom is one-way-mirrored into the main
+  window's active tab — so the operator can drag around inside the
+  popup and see the main view stay locked on the same region of the
+  network. Perfect for side-by-side comparison workflows (e.g., the
+  Network (N) popup stays in sync with the Remedial Action main view).
+- Detach, reattach, tie and untie events are all recorded in the
+  interaction log so that session replays can reproduce the operator's
+  window layout AND any synchronisation they set up.
 
 ## Architecture
 
@@ -321,6 +334,75 @@ concrete choices / deviations:
 - **`frontend/src/types.ts`** — two new `InteractionType` variants
   (`tab_detached`, `tab_reattached`).
 
+## In-tab controls overlay
+
+**Problem (third iteration)** — the first iteration left the zoom
+buttons, inspect search and Flow/Impacts view-mode toggle as
+**siblings** of the tab containers, rendered at the bottom-left /
+top-right of the content area. Those overlays lived in the main
+window only: when the operator detached the Network tab, the popup
+had an SVG but no zoom buttons and no inspect input, and the
+Flow/Impacts toggle was invisible too.
+
+**Fix** — a `renderTabOverlay(tabId, supportsViewMode)` helper now
+renders the zoom/inspect/view-mode cluster INSIDE each tab container
+(inside `DetachableTabHost`), so the overlay moves with the tab into
+the popup.
+
+Because all four tab sub-trees are always mounted (see the
+always-mounted-container invariant), we render **four copies** of the
+overlay — but only the currently-visible one shows, thanks to the
+`visibility: hidden` + `pointer-events: none` flags on the home
+placeholders of inactive tabs. In practice the DOM nodes are cheap
+and the visual/UX gain is substantial.
+
+To make per-tab zoom work, the existing `handleManualZoomIn/Out/Reset`
+callbacks in `useDiagrams.ts` now accept an optional `targetTab?: TabId`
+parameter. Omitting it keeps the old behaviour (operate on the main
+window's active tab). The in-tab overlay passes its own tab id so
+that clicking zoom inside the N popup drives N's pan/zoom instance,
+not whatever tab happens to be active in the main window.
+
+Similarly, `zoomToElement` accepts a `targetTab` parameter, and the
+auto-zoom effect reads from an `inspectFocusTabRef` that per-tab
+inspect inputs set via the new `setInspectQueryForTab(tabId, query)`
+helper. This is what makes "type a substation name in the detached
+popup" actually zoom to that substation inside the popup.
+
+## Tied detached tabs
+
+A tab that is detached AND tied gets its pan/zoom state mirrored
+one-way into the main window's active tab. The feature is
+implemented in `frontend/src/hooks/useTiedTabsSync.ts` and wired
+into `App.tsx`.
+
+**Why one-way?** Bidirectional sync caused ping-pong loops when both
+sides' viewBox were observed in the same effect. The
+"detached is the driver, main follows" model avoids the loop and
+gives the operator a clear mental model: they interact with the
+popup, and the main view updates to match.
+
+**How it's implemented:**
+
+1. `useTiedTabsSync` keeps a `Set<TabId>` of tied tabs in state.
+2. The hook takes the three pan/zoom instances (`nPZ`, `n1PZ`,
+   `actionPZ`), the main window's `activeTab`, and the
+   `detachedTabs` map.
+3. A `useEffect` observes each PZ's `viewBox` and, whenever one
+   changes, checks if any tied+detached tab has a source viewBox
+   to mirror. If so, it writes that viewBox into the main window's
+   active-tab PZ via `setViewBox`.
+4. A `lastMirroredRef` guards against re-applying the same
+   viewBox on every tick, keeping the interaction log clean.
+5. The UI lives inside `VisualizationPanel.renderTabOverlay`: each
+   detached tab's top-right cluster adds an extra "⛓ Tie" /
+   "🔗 Tied" toggle button that calls `onToggleTabTie(tabId)` (a
+   callback fed from `App.tsx`'s `tiedTabsHook.toggleTie`).
+
+Interaction log: `tab_tied` and `tab_untied` events are emitted by
+the hook so session replays can reproduce the operator's
+synchronisation choices.
+
 ## Bugs fixed in the second iteration
 
 The initial shipment (commit `ca80547`) worked visually but suffered
@@ -374,6 +456,52 @@ Additionally, the reattached tab now also preserves the **zoom level
 that was active inside the popup** — because the SVG element (and
 therefore its `viewBox`) is the same DOM node before, during, and
 after the move.
+
+## Regression tests
+
+The four bug fixes and the new features are covered by dedicated
+Vitest suites:
+
+- **`frontend/src/components/DetachableTabHost.test.tsx`** (7 tests)
+  — mounts a probe child that records every mount + DOM identity,
+  then rerenders the host with different `detachedMountNode` values
+  and asserts that the probe was mounted exactly once across detach
+  → reattach → detach cycles. This is the direct test that the
+  stable-portal-target + imperative DOM move design does NOT
+  unmount the sub-tree (and therefore preserves all the state that
+  the bugs depended on).
+
+- **`frontend/src/hooks/useDetachedTabs.test.ts`**
+  (new: "reattach defers popup close until after layout effects")
+  — uses `act()` to observe that `reattach()` does NOT synchronously
+  call `window.close()` from inside the call itself; the popup is
+  only closed after effects flush. This is the regression test for
+  the "blank other tabs on reattach" bug (Bug 3).
+
+- **`frontend/src/hooks/useDiagrams.test.ts`**
+  (new: "useDiagrams accepts detachedTabs for pan/zoom activation")
+  — asserts the hook accepts the `detachedTabs` 4th arg without
+  throwing, and that SVG container refs are preserved when the map
+  changes. Covers Bug 1 (detached window frozen because
+  `usePanZoom` was gated on `activeTab` alone).
+
+- **`frontend/src/hooks/usePanZoom.test.tsx`**
+  (new: "drag listeners bind to the element's current ownerWindow
+  per-drag") — four tests that verify (a) no global
+  mousemove/mouseup are bound at effect time, (b) mousemove/mouseup
+  ARE bound on the element's owner window when mousedown fires,
+  (c) they are unbound on mouseup, and (d) the owner window is
+  resolved fresh per-drag so a container that was moved to a popup
+  binds to the popup's window. This is the regression for the
+  "drag-pan doesn't work in the detached window / doesn't work
+  after reattach" half of Bugs 1 and 4.
+
+- **`frontend/src/hooks/useTiedTabsSync.test.ts`** (8 tests) —
+  covers the tied-detached-tabs feature: empty initial set;
+  tie/untie/toggleTie update the set and log events; mirroring a
+  tied+detached tab's viewBox into the main active PZ; no-op when
+  the tab is tied but not detached, when activeTab === tied tab,
+  or when activeTab is the overflow tab.
 
 ## Known limitations
 
