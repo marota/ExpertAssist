@@ -23,6 +23,7 @@ import { useActions } from './hooks/useActions';
 import { useAnalysis } from './hooks/useAnalysis';
 import { useDiagrams } from './hooks/useDiagrams';
 import { useSession } from './hooks/useSession';
+import { useDetachedTabs } from './hooks/useDetachedTabs';
 import { interactionLogger } from './utils/interactionLogger';
 
 function App() {
@@ -125,6 +126,36 @@ function App() {
   const {
     showReloadModal, setShowReloadModal, sessionList, sessionListLoading, sessionRestoring
   } = session;
+
+  // ===== Detached Visualization Tabs =====
+  // Each viz tab (N / N-1 / Action / Overflow) can be detached into a
+  // secondary browser window and reattached on demand. The hook manages
+  // the popup lifecycle; `VisualizationPanel` uses React portals to
+  // relocate the tab's DOM subtree into the popup without unmounting it
+  // (this preserves zoom/viewBox state across the round-trip).
+  const detachedTabsHook = useDetachedTabs({
+    onPopupBlocked: () => setError('Popup blocked by the browser. Please allow popups for this site to detach tabs.'),
+  });
+  const { detachedTabs, detach: detachTab, reattach: reattachTab, focus: focusDetachedTab } = detachedTabsHook;
+
+  const handleDetachTab = useCallback((tabId: TabId) => {
+    interactionLogger.record('tab_detached', { tab: tabId });
+    const entry = detachTab(tabId);
+    // If the user detached the currently-active tab, switch the main
+    // window to any other available tab so the main panel doesn't show
+    // an empty slot by default. Prefers the first tab that is not itself
+    // detached; falls back to 'n' (which is always available).
+    if (entry && diagrams.activeTab === tabId) {
+      const order: TabId[] = ['n', 'n-1', 'action', 'overflow'];
+      const fallback = order.find(t => t !== tabId && !detachedTabs[t]);
+      diagrams.setActiveTab(fallback ?? 'n');
+    }
+  }, [detachTab, diagrams, detachedTabs]);
+
+  const handleReattachTab = useCallback((tabId: TabId) => {
+    interactionLogger.record('tab_reattached', { tab: tabId });
+    reattachTab(tabId);
+  }, [reattachTab]);
 
   // ===== Cross-Hook Wiring wrappers (all memoized) =====
 
@@ -828,6 +859,10 @@ function App() {
             networkPath={networkPath}
             layoutPath={layoutPath}
             onOpenSettings={handleOpenSettings}
+            detachedTabs={detachedTabs}
+            onDetachTab={handleDetachTab}
+            onReattachTab={handleReattachTab}
+            onFocusDetachedTab={focusDetachedTab}
           />
         </div>
       </div>

@@ -255,16 +255,22 @@ export const usePanZoom = (
             commitViewBox(); // Sync to React state on drag end
         };
 
+        // Use the element's own window so pan/zoom keeps working when the
+        // tab is detached into a secondary browser window (popup).
+        // `ownerDocument.defaultView` points at the popup when the DOM
+        // subtree has been portaled there, and falls back to the main
+        // `window` otherwise.
+        const ownerWindow = el.ownerDocument.defaultView ?? window;
         el.addEventListener('wheel', handleWheel, { passive: false });
         el.addEventListener('mousedown', handleMouseDown);
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
+        ownerWindow.addEventListener('mousemove', handleMouseMove);
+        ownerWindow.addEventListener('mouseup', handleMouseUp);
 
         return () => {
             el.removeEventListener('wheel', handleWheel);
             el.removeEventListener('mousedown', handleMouseDown);
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
+            ownerWindow.removeEventListener('mousemove', handleMouseMove);
+            ownerWindow.removeEventListener('mouseup', handleMouseUp);
             if (wheelTimerId.current) clearTimeout(wheelTimerId.current);
             if (rafId.current) cancelAnimationFrame(rafId.current);
             if (wheelRafId.current) cancelAnimationFrame(wheelRafId.current);

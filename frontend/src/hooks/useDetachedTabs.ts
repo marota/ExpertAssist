@@ -1,0 +1,196 @@
+// Copyright (c) 2025-2026, RTE (https://www.rte-france.com)
+// This Source Code Form is subject to the terms of the Mozilla Public License, version 2.0.
+// If a copy of the Mozilla Public License, version 2.0 was not distributed with this file,
+// you can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
+
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { TabId } from '../types';
+
+/**
+ * A "detached" tab lives in a secondary browser window. The React component
+ * tree for the tab content is still rendered from App.tsx — only the final
+ * DOM output is relocated via `createPortal` into the popup's body. This
+ * preserves refs, viewBox state and zoom handlers across detach/reattach,
+ * because the sub-tree is never unmounted.
+ */
+export interface DetachedTabEntry {
+    /** The opened popup window — closed popups are pruned automatically. */
+    window: Window;
+    /** The <div id="root"> inside the popup, used as the portal target. */
+    mountNode: HTMLElement;
+}
+
+export type DetachedTabsMap = Partial<Record<TabId, DetachedTabEntry>>;
+
+const DEFAULT_POPUP_FEATURES = 'popup=yes,width=1100,height=800,resizable=yes,scrollbars=yes';
+
+const TAB_TITLES: Record<TabId, string> = {
+    'n': 'Network (N)',
+    'n-1': 'Contingency (N-1)',
+    'action': 'Remedial Action',
+    'overflow': 'Overflow Analysis',
+};
+
+/**
+ * Clone all <style> and <link rel="stylesheet"> nodes from the opener
+ * document into the popup document so the portaled React tree picks up the
+ * same CSS rules (Vite HMR injects styles as <style> elements, and in
+ * production we get a stylesheet <link>).
+ */
+function cloneStylesIntoPopup(popupDoc: Document): void {
+    const openerDoc = window.document;
+    const head = popupDoc.head;
+    openerDoc.querySelectorAll('link[rel="stylesheet"], style').forEach(node => {
+        head.appendChild(node.cloneNode(true));
+    });
+    // Ensure the body fills the viewport so absolutely-positioned children
+    // (tab content uses position:absolute + inset:0) have something to
+    // size themselves against.
+    const bodyStyle = popupDoc.body.style;
+    bodyStyle.margin = '0';
+    bodyStyle.height = '100vh';
+    bodyStyle.width = '100vw';
+    bodyStyle.display = 'flex';
+    bodyStyle.flexDirection = 'column';
+    bodyStyle.background = 'white';
+    popupDoc.documentElement.style.height = '100%';
+}
+
+/**
+ * Build the popup's mount node — a flex-growing div inside body — so that
+ * the portaled tab content can use height:100% and position:absolute.
+ */
+function buildMountNode(popupDoc: Document): HTMLElement {
+    const mount = popupDoc.createElement('div');
+    mount.id = 'costudy4grid-detached-root';
+    mount.style.cssText = 'flex: 1; position: relative; width: 100%; min-height: 0; background: white;';
+    popupDoc.body.appendChild(mount);
+    return mount;
+}
+
+export interface UseDetachedTabsResult {
+    detachedTabs: DetachedTabsMap;
+    /** True if the tab is currently opened in a secondary window. */
+    isDetached: (tabId: TabId) => boolean;
+    /**
+     * Detach a tab into a new popup window. Returns the popup entry or null
+     * if window.open was blocked. Subsequent calls for the same tab focus
+     * the existing popup instead of creating a new one.
+     */
+    detach: (tabId: TabId) => DetachedTabEntry | null;
+    /** Close the popup for the given tab (if any) and fold it back inline. */
+    reattach: (tabId: TabId) => void;
+    /** Focus the popup for the given tab if it exists. No-op otherwise. */
+    focus: (tabId: TabId) => void;
+}
+
+export function useDetachedTabs(
+    options: { onPopupBlocked?: () => void } = {}
+): UseDetachedTabsResult {
+    const [detachedTabs, setDetachedTabs] = useState<DetachedTabsMap>({});
+    // Ref mirror so stable callbacks can read the latest map without
+    // re-binding their identity on every change. Updated in a
+    // useLayoutEffect to stay compatible with React strict-mode's
+    // "no ref writes during render" rule.
+    const detachedRef = useRef<DetachedTabsMap>({});
+    const onPopupBlockedRef = useRef(options.onPopupBlocked);
+    useLayoutEffect(() => {
+        detachedRef.current = detachedTabs;
+    }, [detachedTabs]);
+    useLayoutEffect(() => {
+        onPopupBlockedRef.current = options.onPopupBlocked;
+    }, [options.onPopupBlocked]);
+
+    const pruneTab = useCallback((tabId: TabId) => {
+        setDetachedTabs(prev => {
+            if (!prev[tabId]) return prev;
+            const next = { ...prev };
+            delete next[tabId];
+            return next;
+        });
+    }, []);
+
+    const reattach = useCallback((tabId: TabId) => {
+        const entry = detachedRef.current[tabId];
+        if (entry && !entry.window.closed) {
+            try { entry.window.close(); } catch { /* ignore */ }
+        }
+        pruneTab(tabId);
+    }, [pruneTab]);
+
+    const detach = useCallback((tabId: TabId): DetachedTabEntry | null => {
+        const existing = detachedRef.current[tabId];
+        if (existing && !existing.window.closed) {
+            try { existing.window.focus(); } catch { /* ignore */ }
+            return existing;
+        }
+
+        const popup = window.open('', `costudy4grid_tab_${tabId}`, DEFAULT_POPUP_FEATURES);
+        if (!popup) {
+            onPopupBlockedRef.current?.();
+            return null;
+        }
+
+        popup.document.open();
+        popup.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Co-Study4Grid — ${TAB_TITLES[tabId]}</title></head><body></body></html>`);
+        popup.document.close();
+        cloneStylesIntoPopup(popup.document);
+        const mountNode = buildMountNode(popup.document);
+
+        // When the popup is closed (by the user, by reload, or by our
+        // reattach() call) we must prune it from state so the content
+        // folds back into the main window. Using 'pagehide' is more
+        // reliable than 'beforeunload' in modern browsers.
+        const handleClose = () => pruneTab(tabId);
+        popup.addEventListener('pagehide', handleClose);
+        popup.addEventListener('beforeunload', handleClose);
+
+        const entry: DetachedTabEntry = { window: popup, mountNode };
+        setDetachedTabs(prev => ({ ...prev, [tabId]: entry }));
+        return entry;
+    }, [pruneTab]);
+
+    const isDetached = useCallback((tabId: TabId) => {
+        const entry = detachedRef.current[tabId];
+        return !!entry && !entry.window.closed;
+    }, []);
+
+    const focus = useCallback((tabId: TabId) => {
+        const entry = detachedRef.current[tabId];
+        if (entry && !entry.window.closed) {
+            try { entry.window.focus(); } catch { /* ignore */ }
+        }
+    }, []);
+
+    // Poll periodically to catch popups that were closed without firing
+    // pagehide (rare, but observed on some browsers during tab-crashes).
+    useEffect(() => {
+        const tabIds = Object.keys(detachedTabs) as TabId[];
+        if (tabIds.length === 0) return;
+        const intervalId = window.setInterval(() => {
+            for (const tabId of tabIds) {
+                const entry = detachedTabs[tabId];
+                if (entry && entry.window.closed) pruneTab(tabId);
+            }
+        }, 1000);
+        return () => window.clearInterval(intervalId);
+    }, [detachedTabs, pruneTab]);
+
+    // On App unmount (full page reload / navigation) close any live popups
+    // so they don't linger as orphans pointing at a dead React tree.
+    useEffect(() => {
+        return () => {
+            const entries = detachedRef.current;
+            for (const key of Object.keys(entries) as TabId[]) {
+                const entry = entries[key];
+                if (entry && !entry.window.closed) {
+                    try { entry.window.close(); } catch { /* ignore */ }
+                }
+            }
+        };
+    }, []);
+
+    return { detachedTabs, isDetached, detach, reattach, focus };
+}

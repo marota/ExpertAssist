@@ -376,6 +376,8 @@ export type InteractionType =
     | 'combine_pair_simulated'
     // Visualization
     | 'diagram_tab_changed'
+    | 'tab_detached'
+    | 'tab_reattached'
     | 'view_mode_changed'
     | 'voltage_range_changed'
     | 'asset_clicked'
