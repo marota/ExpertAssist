@@ -640,26 +640,30 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
         return () => el.removeEventListener('wheel', onWheel);
     }, []);
 
+    // Use the owner window of the event target so drag still works when
+    // the SLD overlay is portaled into a detached popup window.
     const startOverlayDrag = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
         e.preventDefault();
+        const ownerWindow = (e.currentTarget as HTMLElement).ownerDocument.defaultView ?? window;
         const x0 = e.clientX, y0 = e.clientY;
         const px0 = overlayPos.x, py0 = overlayPos.y;
         const onMove = (ev: MouseEvent) => setOverlayPos({ x: px0 + ev.clientX - x0, y: py0 + ev.clientY - y0 });
-        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
+        const onUp = () => { ownerWindow.removeEventListener('mousemove', onMove); ownerWindow.removeEventListener('mouseup', onUp); };
+        ownerWindow.addEventListener('mousemove', onMove);
+        ownerWindow.addEventListener('mouseup', onUp);
     };
 
     const startOverlayPan = (e: React.MouseEvent) => {
         if (e.button !== 0) return;
         e.preventDefault();
+        const ownerWindow = (e.currentTarget as HTMLElement).ownerDocument.defaultView ?? window;
         const x0 = e.clientX, y0 = e.clientY;
         const tx0 = overlayTransform.tx, ty0 = overlayTransform.ty;
         const onMove = (ev: MouseEvent) => setOverlayTransform(prev => ({ ...prev, tx: tx0 + ev.clientX - x0, ty: ty0 + ev.clientY - y0 }));
-        const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
+        const onUp = () => { ownerWindow.removeEventListener('mousemove', onMove); ownerWindow.removeEventListener('mouseup', onUp); };
+        ownerWindow.addEventListener('mousemove', onMove);
+        ownerWindow.addEventListener('mouseup', onUp);
     };
 
     return (

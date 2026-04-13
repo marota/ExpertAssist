@@ -204,13 +204,6 @@ export const usePanZoom = (
             }, 150);
         };
 
-        const handleMouseDown = (e: MouseEvent) => {
-            if (!activeRef.current || !viewBoxRef.current) return;
-            isDragging.current = true;
-            startPoint.current = { x: e.clientX, y: e.clientY, pendingX: e.clientX, pendingY: e.clientY };
-            setInteracting(true);
-        };
-
         // rAF-throttled drag: at most one DOM update per display frame
         const handleMouseMove = (e: MouseEvent) => {
             if (!activeRef.current || !viewBoxRef.current || !isDragging.current) return;
@@ -245,6 +238,11 @@ export const usePanZoom = (
             });
         };
 
+        // Track the window where mousemove/mouseup are currently bound for
+        // an active drag, so handleMouseUp knows where to unbind. Using a
+        // closure-level variable keeps the API minimal.
+        let activeDragWindow: Window | null = null;
+
         const handleMouseUp = () => {
             isDragging.current = false;
             setInteracting(false);
@@ -252,19 +250,45 @@ export const usePanZoom = (
                 cancelAnimationFrame(rafId.current);
                 rafId.current = null;
             }
+            if (activeDragWindow) {
+                activeDragWindow.removeEventListener('mousemove', handleMouseMove);
+                activeDragWindow.removeEventListener('mouseup', handleMouseUp);
+                activeDragWindow = null;
+            }
             commitViewBox(); // Sync to React state on drag end
+        };
+
+        const handleMouseDown = (e: MouseEvent) => {
+            if (!activeRef.current || !viewBoxRef.current) return;
+            isDragging.current = true;
+            startPoint.current = { x: e.clientX, y: e.clientY, pendingX: e.clientX, pendingY: e.clientY };
+            setInteracting(true);
+
+            // Resolve the element's CURRENT owner window per-drag rather
+            // than capturing it at effect-bind time. This is critical for
+            // detachable tabs: when the tab's DOM is relocated to a popup
+            // window via imperative move, `el.ownerDocument.defaultView`
+            // points at the popup, so drag-pan keeps working there —
+            // whereas a captured `window` reference would still listen
+            // to the main window and ignore events in the popup.
+            const dragWindow = el.ownerDocument.defaultView ?? window;
+            activeDragWindow = dragWindow;
+            dragWindow.addEventListener('mousemove', handleMouseMove);
+            dragWindow.addEventListener('mouseup', handleMouseUp);
         };
 
         el.addEventListener('wheel', handleWheel, { passive: false });
         el.addEventListener('mousedown', handleMouseDown);
-        window.addEventListener('mousemove', handleMouseMove);
-        window.addEventListener('mouseup', handleMouseUp);
 
         return () => {
             el.removeEventListener('wheel', handleWheel);
             el.removeEventListener('mousedown', handleMouseDown);
-            window.removeEventListener('mousemove', handleMouseMove);
-            window.removeEventListener('mouseup', handleMouseUp);
+            // Clean up any in-flight drag listeners.
+            if (activeDragWindow) {
+                activeDragWindow.removeEventListener('mousemove', handleMouseMove);
+                activeDragWindow.removeEventListener('mouseup', handleMouseUp);
+                activeDragWindow = null;
+            }
             if (wheelTimerId.current) clearTimeout(wheelTimerId.current);
             if (rafId.current) cancelAnimationFrame(rafId.current);
             if (wheelRafId.current) cancelAnimationFrame(wheelRafId.current);

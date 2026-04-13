@@ -9,6 +9,8 @@ import React, { useState, useMemo, type RefObject } from 'react';
 import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab } from '../types';
 import MemoizedSvgContainer from './MemoizedSvgContainer';
 import SldOverlay from './SldOverlay';
+import DetachableTabHost from './DetachableTabHost';
+import type { DetachedTabsMap } from '../hooks/useDetachedTabs';
 
 interface VisualizationPanelProps {
     activeTab: TabId;
@@ -30,12 +32,32 @@ interface VisualizationPanelProps {
     onVoltageRangeChange: (range: [number, number]) => void;
     actionViewMode: 'network' | 'delta';
     onViewModeChange: (mode: 'network' | 'delta') => void;
+    /**
+     * Resolves the Flow/Impacts view mode for a specific tab. A
+     * detached tab has its own view mode independent of the main
+     * window's `actionViewMode` — see App.tsx's `detachedViewModes`.
+     */
+    viewModeForTab?: (tab: TabId) => 'network' | 'delta';
+    /**
+     * Per-tab Flow/Impacts toggle handler. Routes the change into
+     * either the main-window `actionViewMode` or the detached
+     * tab's entry in `detachedViewModes` based on whether the tab
+     * is currently detached.
+     */
+    onViewModeChangeForTab?: (tab: TabId, mode: 'network' | 'delta') => void;
     inspectQuery: string;
     onInspectQueryChange: (query: string) => void;
+    /**
+     * Same as `onInspectQueryChange` but records which tab the
+     * auto-zoom should target — used by per-tab overlays rendered
+     * inside a detached popup so they zoom their own tab instead of
+     * the main-window activeTab.
+     */
+    onInspectQueryChangeFor?: (targetTab: TabId, query: string) => void;
     inspectableItems: string[];
-    onResetView: () => void;
-    onZoomIn: () => void;
-    onZoomOut: () => void;
+    onResetView: (targetTab?: TabId) => void;
+    onZoomIn: (targetTab?: TabId) => void;
+    onZoomOut: (targetTab?: TabId) => void;
     hasBranches: boolean;
     selectedBranch: string;
     vlOverlay: VlOverlay | null;
@@ -46,6 +68,22 @@ interface VisualizationPanelProps {
     networkPath: string;
     layoutPath: string;
     onOpenSettings: (tab?: 'recommender' | 'configurations' | 'paths') => void;
+    /**
+     * Map of tabs currently living in a secondary browser window.
+     * Optional so existing call sites / tests that don't care about the
+     * detach feature continue to work without wiring the props up.
+     */
+    detachedTabs?: DetachedTabsMap;
+    /** Detach a tab into a new popup window. */
+    onDetachTab?: (tab: TabId) => void;
+    /** Close the popup for a tab and fold it back inline. */
+    onReattachTab?: (tab: TabId) => void;
+    /** Bring focus to the popup window hosting a detached tab. */
+    onFocusDetachedTab?: (tab: TabId) => void;
+    /** True iff the given tab is currently "tied" to the main window's activeTab. */
+    isTabTied?: (tab: TabId) => boolean;
+    /** Toggle the "tied" flag for the given tab. */
+    onToggleTabTie?: (tab: TabId) => void;
 }
 
 
@@ -85,18 +123,34 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     networkPath,
     layoutPath,
     onOpenSettings,
+    detachedTabs = {},
+    onDetachTab,
+    onReattachTab,
+    onFocusDetachedTab,
+    onInspectQueryChangeFor,
+    viewModeForTab,
+    onViewModeChangeForTab,
+    isTabTied,
+    onToggleTabTie,
 }) => {
+    // No-op fallbacks so conditional branches don't need to guard.
+    const detachTabCb = onDetachTab ?? (() => {});
+    const reattachTabCb = onReattachTab ?? (() => {});
+    const focusDetachedTabCb = onFocusDetachedTab ?? (() => {});
+    const inspectQueryChangeForCb = onInspectQueryChangeFor
+        ?? ((_tab: TabId, q: string) => onInspectQueryChange(q));
+    // When the per-tab view mode hooks are not wired up (older call
+    // sites / tests) we fall back to the global `actionViewMode`
+    // state passed in as a prop. That preserves backward compatibility.
+    const viewModeForTabFn = viewModeForTab ?? (() => actionViewMode);
+    const viewModeChangeForTabCb = onViewModeChangeForTab ?? ((_tab: TabId, mode: 'network' | 'delta') => onViewModeChange(mode));
+    const isTabTiedFn = isTabTied ?? (() => false);
+    const toggleTabTieCb = onToggleTabTie ?? (() => {});
     const [warningDismissed, setWarningDismissed] = useState(false);
     const [voltageFilterExpanded, setVoltageFilterExpanded] = useState(false);
 
     const hasAnyDiagram = !!(nDiagram?.svg || n1Diagram?.svg || actionDiagram?.svg);
     const showPathWarning = !warningDismissed && !hasAnyDiagram;
-
-    const showViewModeToggle = activeTab !== 'overflow' && (
-        (activeTab === 'n' && !!nDiagram?.svg) ||
-        (activeTab === 'n-1' && !!n1Diagram?.svg) ||
-        (activeTab === 'action' && !!actionDiagram?.svg)
-    );
 
     const filteredInspectables = useMemo(() => {
         const q = inspectQuery.toUpperCase();
@@ -104,9 +158,284 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         return inspectableItems.filter(b => b.toUpperCase().includes(q)).slice(0, 50);
     }, [inspectableItems, inspectQuery]);
 
+    // When a tab is portaled into a secondary window we inject a small
+    // floating header with a Reattach button. This is the ONLY thing the
+    // popup-specific wrapper adds on top of the regular tab content — the
+    // rest of the layout (MemoizedSvgContainer, warning banners, etc.)
+    // is the exact same React tree that lives in the main window, which
+    // is why refs and zoom state survive the detach/reattach round-trip.
+    const renderDetachedHeader = (tabId: TabId, label: string, accentColor: string) => (
+        <div style={{
+            position: 'absolute', top: 8, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 400, display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '4px 10px', background: 'rgba(255,255,255,0.95)',
+            border: `1px solid ${accentColor}`, borderRadius: '14px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px', fontWeight: 600,
+            color: '#2c3e50', pointerEvents: 'auto',
+        }}>
+            <span style={{ color: accentColor }}>●</span>
+            <span>{label}</span>
+            <button
+                onClick={() => reattachTabCb(tabId)}
+                title="Reattach this tab to the main window"
+                style={{
+                    border: `1px solid ${accentColor}`, background: 'white',
+                    color: accentColor, borderRadius: '10px',
+                    padding: '2px 10px', fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+                }}
+            >
+                {'\u21A9 Reattach'}
+            </button>
+        </div>
+    );
+
+    // Renders the per-tab control overlay (zoom in/out/reset, inspect
+    // search, Flow/Impacts toggle, and the "tie" button for detached
+    // tabs). This lives INSIDE each DetachableTabHost's children so
+    // that when the tab is relocated into a popup the controls move
+    // with it — which is how the operator gets zoom / asset focus /
+    // flow-impacts interactions inside the detached window.
+    //
+    // Note that every tab renders its own copy of the overlay, but
+    // only the currently-visible one (active-in-main-window OR
+    // detached) is visible, because the tab container's home
+    // placeholder carries `visibility: hidden` when neither applies.
+    const renderTabOverlay = (tabId: TabId, supportsViewMode: boolean) => {
+        if (tabId === 'overflow') return null;
+        const isDetachedTab = !!detachedTabs[tabId];
+        const hasDiagramForTab =
+            (tabId === 'n' && !!nDiagram?.svg) ||
+            (tabId === 'n-1' && !!n1Diagram?.svg) ||
+            (tabId === 'action' && !!actionDiagram?.svg);
+        const tied = isTabTiedFn(tabId);
+        // Per-tab view mode: each detached popup tracks its own
+        // Flow/Impacts state, independent of the main window — so
+        // the toggle inside the popup only affects the popup, and
+        // vice versa.
+        const tabViewMode = viewModeForTabFn(tabId);
+
+        return (
+            <>
+                {/* Top-right cluster: Flow/Impacts + Tie button.
+                    Only rendered when the tab actually has a
+                    diagram so we don't clutter empty tabs. The Tie
+                    button lives DOWN in the bottom-left cluster next
+                    to the controls it actually synchronises
+                    (zoom / inspect), not here. */}
+                {hasDiagramForTab && supportsViewMode && (
+                    <div style={{
+                        position: 'absolute', top: '10px', right: '10px', zIndex: 100,
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            border: '1px solid #ccc',
+                            boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            backgroundColor: '#fff',
+                        }}>
+                            <button
+                                onClick={() => viewModeChangeForTabCb(tabId, 'network')}
+                                style={{
+                                    padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                    backgroundColor: tabViewMode === 'network' ? '#007bff' : '#fff',
+                                    color: tabViewMode === 'network' ? '#fff' : '#555',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                Flows
+                            </button>
+                            <button
+                                onClick={() => viewModeChangeForTabCb(tabId, 'delta')}
+                                style={{
+                                    padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                    backgroundColor: tabViewMode === 'delta' ? '#007bff' : '#fff',
+                                    color: tabViewMode === 'delta' ? '#fff' : '#555',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                Impacts
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Bottom-left cluster: Tie (detached only) + zoom
+                    controls + inspect search. The Tie button sits
+                    directly above the zoom + inspect row so it's
+                    visually associated with the interactions it
+                    actually synchronises — pan/zoom and asset
+                    focus. It is deliberately NOT grouped with the
+                    Flow/Impacts toggle in the top-right because
+                    view mode is per-window and never tied. */}
+                {hasDiagramForTab && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '12px',
+                        left: '12px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        alignItems: 'flex-start',
+                    }}>
+                        {isDetachedTab && (
+                            <button
+                                onClick={() => toggleTabTieCb(tabId)}
+                                title={tied
+                                    ? 'Untie: pan/zoom and asset focus no longer mirror between this window and the main window'
+                                    : 'Tie: pan/zoom and asset focus will be mirrored between this window and the main window\'s active tab'}
+                                style={{
+                                    padding: '4px 10px', border: `1px solid ${tied ? '#2c7be5' : '#ccc'}`,
+                                    borderRadius: '6px', cursor: 'pointer',
+                                    backgroundColor: tied ? '#e8f0fe' : '#fff',
+                                    color: tied ? '#2c7be5' : '#555',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                {tied ? '\u{1F517} Tied' : '\u{26D3} Tie'}
+                            </button>
+                        )}
+                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <button
+                                onClick={() => onZoomIn(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom In"
+                            >
+                                +
+                            </button>
+                            <button
+                                onClick={() => onResetView(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 14px', cursor: 'pointer',
+                                    fontSize: '12px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                            >
+                                🔍 Unzoom
+                            </button>
+                            <button
+                                onClick={() => onZoomOut(tabId)}
+                                style={{
+                                    background: 'white', color: '#333',
+                                    border: '1px solid #ccc', borderRadius: '4px',
+                                    padding: '5px 12px', cursor: 'pointer',
+                                    fontSize: '14px', fontWeight: 600,
+                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                }}
+                                title="Zoom Out"
+                            >
+                                -
+                            </button>
+                        </div>
+                        {hasBranches && (
+                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                <input
+                                    list={`inspectables-${tabId}`}
+                                    value={inspectQuery}
+                                    onChange={e => inspectQueryChangeForCb(tabId, e.target.value)}
+                                    placeholder="🔍 Inspect..."
+                                    style={{
+                                        padding: '5px 10px',
+                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
+                                        borderRadius: '4px',
+                                        fontSize: '12px',
+                                        width: '180px',
+                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        background: 'white',
+                                    }}
+                                />
+                                <datalist id={`inspectables-${tabId}`}>
+                                    {filteredInspectables.map(b => <option key={b} value={b} />)}
+                                </datalist>
+                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
+                                    <button
+                                        onClick={() => onVlOpen(inspectQuery)}
+                                        style={{
+                                            background: '#d1fae5', color: '#065f46', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                            fontWeight: 600
+                                        }}
+                                        title="Open Single Line Diagram"
+                                    >
+                                        📄 SLD
+                                    </button>
+                                )}
+                                {inspectQuery && (
+                                    <button
+                                        onClick={() => inspectQueryChangeForCb(tabId, '')}
+                                        style={{
+                                            background: '#e74c3c', color: 'white', border: 'none',
+                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
+                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                                        }}
+                                        title="Clear"
+                                    >
+                                        X
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+            </>
+        );
+    };
+
+    // Placeholder shown in the main window in place of a detached tab's
+    // content. The tab's DOM lives in a popup — we show a friendly
+    // "click to focus" indicator so the main-window user can find it.
+    const renderDetachedPlaceholder = (tabId: TabId, label: string, accentColor: string) => (
+        <div style={{
+            position: 'absolute', inset: 0,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            gap: '12px', background: '#f8fafc', color: '#475569', fontSize: '13px',
+        }}>
+            <div style={{ fontSize: '32px', color: accentColor }}>{'\u21D7'}</div>
+            <div style={{ fontWeight: 600 }}>"{label}" is open in a separate window</div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                    onClick={() => focusDetachedTabCb(tabId)}
+                    style={{
+                        border: `1px solid ${accentColor}`, background: 'white', color: accentColor,
+                        borderRadius: '4px', padding: '6px 14px', fontSize: '12px',
+                        fontWeight: 600, cursor: 'pointer',
+                    }}
+                >
+                    Focus window
+                </button>
+                <button
+                    onClick={() => reattachTabCb(tabId)}
+                    style={{
+                        border: '1px solid #cbd5e1', background: '#f1f5f9', color: '#475569',
+                        borderRadius: '4px', padding: '6px 14px', fontSize: '12px',
+                        fontWeight: 600, cursor: 'pointer',
+                    }}
+                >
+                    Reattach
+                </button>
+            </div>
+        </div>
+    );
+
     return (
         <>
-            {/* Tab bar — all 4 tabs always visible; unavailable ones show placeholder */}
+            {/* Tab bar — all 4 tabs always visible; unavailable ones show placeholder.
+                Each tab exposes a small detach/reattach button so the user can move
+                its content into a secondary browser window and back. */}
             <div style={{ display: 'flex', borderBottom: '1px solid #ccc', flexShrink: 0 }}>
                 {(
                     [
@@ -117,71 +446,68 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     ] as const
                 ).map(tab => {
                     const isActive = activeTab === tab.id;
+                    const isDetached = !!detachedTabs[tab.id];
                     return (
-                        <button
+                        <div
                             key={tab.id}
-                            onClick={() => onTabChange(tab.id)}
-                            title={tab.available ? undefined : tab.placeholder}
                             style={{
-                                flex: 1, borderRadius: 0, border: 'none', padding: '8px 6px',
-                                cursor: 'pointer',
-                                fontWeight: isActive && tab.available ? 'bold' : 400,
-                                fontStyle: !tab.available ? 'italic' : 'normal',
-                                background: isActive ? 'white' : '#ecf0f1',
-                                color: tab.available ? (isActive ? '#2c3e50' : tab.dimColor) : '#bbb',
-                                borderBottom: isActive && tab.available ? `3px solid ${tab.accentColor}` : 'none',
-                                fontSize: tab.id === 'action' && selectedActionId ? '0.75rem' : '0.85rem',
-                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                flex: 1, display: 'flex', alignItems: 'stretch',
+                                background: isActive && !isDetached ? 'white' : '#ecf0f1',
+                                borderBottom: isActive && tab.available && !isDetached ? `3px solid ${tab.accentColor}` : 'none',
+                                minWidth: 0,
                             }}
                         >
-                            {tab.label}
-                        </button>
+                            <button
+                                onClick={() => {
+                                    if (isDetached) {
+                                        focusDetachedTabCb(tab.id);
+                                    } else {
+                                        onTabChange(tab.id);
+                                    }
+                                }}
+                                title={isDetached ? 'Tab is open in a separate window — click to focus it' : (tab.available ? undefined : tab.placeholder)}
+                                style={{
+                                    flex: 1, borderRadius: 0, border: 'none', padding: '8px 6px',
+                                    cursor: 'pointer',
+                                    fontWeight: isActive && tab.available && !isDetached ? 'bold' : 400,
+                                    fontStyle: !tab.available || isDetached ? 'italic' : 'normal',
+                                    background: 'transparent',
+                                    color: isDetached ? '#7c8894' : (tab.available ? (isActive ? '#2c3e50' : tab.dimColor) : '#bbb'),
+                                    fontSize: tab.id === 'action' && selectedActionId ? '0.75rem' : '0.85rem',
+                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    minWidth: 0,
+                                }}
+                            >
+                                {tab.label}{isDetached ? ' \u21D7' : ''}
+                            </button>
+                            {tab.available && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (isDetached) reattachTabCb(tab.id);
+                                        else detachTabCb(tab.id);
+                                    }}
+                                    title={isDetached ? 'Reattach this tab to the main window' : 'Detach this tab into a separate window'}
+                                    style={{
+                                        border: 'none', background: 'transparent', cursor: 'pointer',
+                                        padding: '0 8px', color: isDetached ? tab.accentColor : '#7c8894',
+                                        fontSize: '13px', fontWeight: 700,
+                                    }}
+                                >
+                                    {isDetached ? '\u21A9' : '\u29C9'}
+                                </button>
+                            )}
+                        </div>
                     );
                 })}
             </div>
 
             {/* Content area */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                {/* View Mode Overlay */}
-                {showViewModeToggle && (
-                    <div style={{
-                        position: 'absolute',
-                        top: '10px',
-                        right: '75px',
-                        zIndex: 100,
-                        display: 'flex',
-                        borderRadius: '6px',
-                        overflow: 'hidden',
-                        border: '1px solid #ccc',
-                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        backgroundColor: '#fff',
-                    }}>
-                        <button
-                            onClick={() => onViewModeChange('network')}
-                            style={{
-                                padding: '4px 12px', border: 'none', cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'network' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'network' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            Flows
-                        </button>
-                        <button
-                            onClick={() => onViewModeChange('delta')}
-                            style={{
-                                padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
-                                backgroundColor: actionViewMode === 'delta' ? '#007bff' : '#fff',
-                                color: actionViewMode === 'delta' ? '#fff' : '#555',
-                                transition: 'all 0.15s ease'
-                            }}
-                        >
-                            Impacts
-                        </button>
-                    </div>
-                )}
+                {/* Flow/Impacts, zoom, inspect and tie controls now
+                    live INSIDE each tab container (see renderTabOverlay).
+                    That way they move with the tab into a detached
+                    popup window. */}
 
                 {/* Path Warning Banner */}
                 {!nDiagram?.svg && !configLoading && showPathWarning && (
@@ -230,13 +556,25 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     </div>
                 )}
 
-                {/* Overflow Container */}
-                {activeTab === 'overflow' && (
+                {/* Overflow Container — always rendered via DetachableTabHost so
+                    its sub-tree stays mounted across detach/reattach. */}
+                <DetachableTabHost
+                    detachedMountNode={detachedTabs['overflow']?.mountNode ?? null}
+                    homeStyle={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                        backgroundColor: 'white',
+                        zIndex: !detachedTabs['overflow'] && activeTab === 'overflow' ? 20 : -1,
+                        visibility: !detachedTabs['overflow'] && activeTab === 'overflow' ? 'visible' : 'hidden',
+                        pointerEvents: !detachedTabs['overflow'] && activeTab === 'overflow' ? 'auto' : 'none',
+                    }}
+                >
                     <div style={{
                         width: '100%', height: '100%',
                         position: 'absolute', top: 0, left: 0,
-                        backgroundColor: 'white', zIndex: 20,
+                        backgroundColor: 'white',
                     }}>
+                        {detachedTabs['overflow'] && renderDetachedHeader('overflow', 'Overflow Analysis', '#27ae60')}
                         {result?.pdf_url ? (
                             <iframe
                                 src={`http://localhost:8000${result.pdf_url}`}
@@ -261,103 +599,137 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             </div>
                         )}
                     </div>
-                )}
+                </DetachableTabHost>
+                {activeTab === 'overflow' && detachedTabs['overflow'] && renderDetachedPlaceholder('overflow', 'Overflow Analysis', '#27ae60')}
 
-                <div style={{
-                    width: '100%', height: '100%',
-                    position: 'absolute', top: 0, left: 0,
-                    zIndex: activeTab === 'n' ? 10 : -1,
-                    visibility: activeTab === 'n' ? 'visible' : 'hidden',
-                    pointerEvents: activeTab === 'n' ? 'auto' : 'none',
-                }}>
-                    {/* Always mounted — see comment on N-1 container below. */}
-                    <MemoizedSvgContainer svg={nDiagram?.svg || ''} containerRef={nSvgContainerRef} display="block" tabId="n" />
-                    {configLoading && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
-                            Loading configuration...
-                        </div>
-                    )}
-                    {!configLoading && !nDiagram?.svg && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
-                            Load configuration to see diagram
-                        </div>
-                    )}
-                </div>
+                <DetachableTabHost
+                    detachedMountNode={detachedTabs['n']?.mountNode ?? null}
+                    homeStyle={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                        zIndex: !detachedTabs['n'] && activeTab === 'n' ? 10 : -1,
+                        visibility: !detachedTabs['n'] && activeTab === 'n' ? 'visible' : 'hidden',
+                        pointerEvents: !detachedTabs['n'] && activeTab === 'n' ? 'auto' : 'none',
+                    }}
+                >
+                    <div style={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                    }}>
+                        {detachedTabs['n'] && renderDetachedHeader('n', 'Network (N)', '#3498db')}
+                        {/* Always mounted — see comment on N-1 container below. */}
+                        <MemoizedSvgContainer svg={nDiagram?.svg || ''} containerRef={nSvgContainerRef} display="block" tabId="n" />
+                        {configLoading && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
+                                Loading configuration...
+                            </div>
+                        )}
+                        {!configLoading && !nDiagram?.svg && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
+                                Load configuration to see diagram
+                            </div>
+                        )}
+                        {renderTabOverlay('n', true)}
+                    </div>
+                </DetachableTabHost>
+                {activeTab === 'n' && detachedTabs['n'] && renderDetachedPlaceholder('n', 'Network (N)', '#3498db')}
 
                 {/* N-1 Container — always mounted, hidden via CSS to preserve zoom state */}
-                <div style={{
-                    width: '100%', height: '100%',
-                    position: 'absolute', top: 0, left: 0,
-                    zIndex: activeTab === 'n-1' ? 10 : -1,
-                    visibility: activeTab === 'n-1' ? 'visible' : 'hidden',
-                    pointerEvents: activeTab === 'n-1' ? 'auto' : 'none',
-                }}>
-                    {/* Convergence warning banner */}
-                    {n1Diagram && n1Diagram.lf_converged === false && (
-                        <div style={{
-                            position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
-                            background: '#fff3cd', color: '#856404', padding: '6px 12px',
-                            fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
-                            textAlign: 'center', pointerEvents: 'none',
-                        }}>
-                            AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
-                        </div>
-                    )}
-                    {/* MemoizedSvgContainer ALWAYS mounted to avoid unmount/remount
-                        cycles when n1Diagram flips from null to loaded.  Remounting
-                        would cause StrictMode to double-invoke its layout effect,
-                        and the second DOM injection would overwrite the auto-zoom
-                        viewBox that was applied between the two invocations. */}
-                    <MemoizedSvgContainer svg={n1Diagram?.svg || ''} containerRef={n1SvgContainerRef} display="block" tabId="n-1" />
-                    {n1Loading && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
-                            Generating N-1 Diagram...
-                        </div>
-                    )}
-                    {!n1Loading && !n1Diagram?.svg && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
-                            Select a contingency element from the dropdown to view the N-1 state.
-                        </div>
-                    )}
-                </div>
+                <DetachableTabHost
+                    detachedMountNode={detachedTabs['n-1']?.mountNode ?? null}
+                    homeStyle={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                        zIndex: !detachedTabs['n-1'] && activeTab === 'n-1' ? 10 : -1,
+                        visibility: !detachedTabs['n-1'] && activeTab === 'n-1' ? 'visible' : 'hidden',
+                        pointerEvents: !detachedTabs['n-1'] && activeTab === 'n-1' ? 'auto' : 'none',
+                    }}
+                >
+                    <div style={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                    }}>
+                        {detachedTabs['n-1'] && renderDetachedHeader('n-1', 'Contingency (N-1)', '#e74c3c')}
+                        {/* Convergence warning banner */}
+                        {n1Diagram && n1Diagram.lf_converged === false && (
+                            <div style={{
+                                position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                textAlign: 'center', pointerEvents: 'none',
+                            }}>
+                                AC load flow: {n1Diagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                            </div>
+                        )}
+                        {/* MemoizedSvgContainer ALWAYS mounted to avoid unmount/remount
+                            cycles when n1Diagram flips from null to loaded.  Remounting
+                            would cause StrictMode to double-invoke its layout effect,
+                            and the second DOM injection would overwrite the auto-zoom
+                            viewBox that was applied between the two invocations. */}
+                        <MemoizedSvgContainer svg={n1Diagram?.svg || ''} containerRef={n1SvgContainerRef} display="block" tabId="n-1" />
+                        {n1Loading && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
+                                Generating N-1 Diagram...
+                            </div>
+                        )}
+                        {!n1Loading && !n1Diagram?.svg && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
+                                Select a contingency element from the dropdown to view the N-1 state.
+                            </div>
+                        )}
+                        {renderTabOverlay('n-1', true)}
+                    </div>
+                </DetachableTabHost>
+                {activeTab === 'n-1' && detachedTabs['n-1'] && renderDetachedPlaceholder('n-1', 'Contingency (N-1)', '#e74c3c')}
 
                 {/* Action Variant Container — always mounted, hidden via CSS to preserve zoom state */}
-                <div style={{
-                    width: '100%', height: '100%',
-                    position: 'absolute', top: 0, left: 0,
-                    zIndex: activeTab === 'action' ? 10 : -1,
-                    visibility: activeTab === 'action' ? 'visible' : 'hidden',
-                    pointerEvents: activeTab === 'action' ? 'auto' : 'none',
-                }}>
-                    {/* Convergence warning banner */}
-                    {actionDiagram && actionDiagram.lf_converged === false && (
-                        <div style={{
-                            position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
-                            background: '#fff3cd', color: '#856404', padding: '6px 12px',
-                            fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
-                            textAlign: 'center', pointerEvents: 'none',
-                        }}>
-                            AC load flow: {actionDiagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
-                        </div>
-                    )}
-                    {/* Always mounted — see comment on N-1 container. */}
-                    <MemoizedSvgContainer svg={actionDiagram?.svg || ''} containerRef={actionSvgContainerRef} display="block" tabId="action" />
-                    {actionDiagramLoading && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
-                            Generating Action Variant Diagram...
-                        </div>
-                    )}
-                    {!actionDiagramLoading && !actionDiagram?.svg && selectedActionId && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
-                            Failed to load diagram for action {selectedActionId}
-                        </div>
-                    )}
-                    {!actionDiagramLoading && !actionDiagram?.svg && !selectedActionId && (
-                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
-                            Select an action card from the suggestions panel to view its effect on the network.
-                        </div>
-                    )}
-                </div>
+                <DetachableTabHost
+                    detachedMountNode={detachedTabs['action']?.mountNode ?? null}
+                    homeStyle={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                        zIndex: !detachedTabs['action'] && activeTab === 'action' ? 10 : -1,
+                        visibility: !detachedTabs['action'] && activeTab === 'action' ? 'visible' : 'hidden',
+                        pointerEvents: !detachedTabs['action'] && activeTab === 'action' ? 'auto' : 'none',
+                    }}
+                >
+                    <div style={{
+                        width: '100%', height: '100%',
+                        position: 'absolute', top: 0, left: 0,
+                    }}>
+                        {detachedTabs['action'] && renderDetachedHeader('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
+                        {/* Convergence warning banner */}
+                        {actionDiagram && actionDiagram.lf_converged === false && (
+                            <div style={{
+                                position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,
+                                background: '#fff3cd', color: '#856404', padding: '6px 12px',
+                                fontSize: '0.8rem', borderBottom: '1px solid #ffc107',
+                                textAlign: 'center', pointerEvents: 'none',
+                            }}>
+                                AC load flow: {actionDiagram.lf_status || 'did not converge'} — voltage values may be missing or approximate
+                            </div>
+                        )}
+                        {/* Always mounted — see comment on N-1 container. */}
+                        <MemoizedSvgContainer svg={actionDiagram?.svg || ''} containerRef={actionSvgContainerRef} display="block" tabId="action" />
+                        {actionDiagramLoading && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
+                                Generating Action Variant Diagram...
+                            </div>
+                        )}
+                        {!actionDiagramLoading && !actionDiagram?.svg && selectedActionId && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'white' }}>
+                                Failed to load diagram for action {selectedActionId}
+                            </div>
+                        )}
+                        {!actionDiagramLoading && !actionDiagram?.svg && !selectedActionId && (
+                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
+                                Select an action card from the suggestions panel to view its effect on the network.
+                            </div>
+                        )}
+                        {renderTabOverlay('action', true)}
+                    </div>
+                </DetachableTabHost>
+                {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
 
                 {/* Voltage Range Sidebar — collapsed by default, toggle to expand */}
                 {uniqueVoltages.length > 1 && (() => {
@@ -450,110 +822,10 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     />
                 )}
 
-                {/* Bottom-left overlay: Zoom + Inspect */}
-                {activeTab !== 'overflow' && (
-                    <div style={{
-                        position: 'absolute',
-                        bottom: '12px',
-                        left: '12px',
-                        zIndex: 100,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        alignItems: 'flex-start',
-                    }}>
-                        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                            <button
-                                onClick={onZoomIn}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 12px', cursor: 'pointer',
-                                    fontSize: '14px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                                title="Zoom In"
-                            >
-                                +
-                            </button>
-                            <button
-                                onClick={onResetView}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 14px', cursor: 'pointer',
-                                    fontSize: '12px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                            >
-                                🔍 Unzoom
-                            </button>
-                            <button
-                                onClick={onZoomOut}
-                                style={{
-                                    background: 'white', color: '#333',
-                                    border: '1px solid #ccc', borderRadius: '4px',
-                                    padding: '5px 12px', cursor: 'pointer',
-                                    fontSize: '14px', fontWeight: 600,
-                                    boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                }}
-                                title="Zoom Out"
-                            >
-                                -
-                            </button>
-                        </div>
-
-                        {hasBranches && (
-                            <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                <input
-                                    list="inspectables"
-                                    value={inspectQuery}
-                                    onChange={e => onInspectQueryChange(e.target.value)}
-                                    placeholder="🔍 Inspect..."
-                                    style={{
-                                        padding: '5px 10px',
-                                        border: inspectQuery ? '2px solid #3498db' : '1px solid #ccc',
-                                        borderRadius: '4px',
-                                        fontSize: '12px',
-                                        width: '180px',
-                                        boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                        background: 'white',
-                                    }}
-                                />
-                                <datalist id="inspectables">
-                                    {filteredInspectables.map(b => <option key={b} value={b} />)}
-                                </datalist>
-                                {inspectQuery && voltageLevels.includes(inspectQuery) && (
-                                    <button
-                                        onClick={() => onVlOpen(inspectQuery)}
-                                        style={{
-                                            background: '#d1fae5', color: '#065f46', border: 'none',
-                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
-                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                            fontWeight: 600
-                                        }}
-                                        title="Open Single Line Diagram"
-                                    >
-                                        📄 SLD
-                                    </button>
-                                )}
-                                {inspectQuery && (
-                                    <button
-                                        onClick={() => onInspectQueryChange('')}
-                                        style={{
-                                            background: '#e74c3c', color: 'white', border: 'none',
-                                            borderRadius: '4px', padding: '4px 8px', cursor: 'pointer',
-                                            fontSize: '12px', boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                        }}
-                                        title="Clear"
-                                    >
-                                        X
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                    </div>
-                )}
+                {/* (Zoom, inspect, Flow/Impacts and Tie controls are
+                    rendered INSIDE each tab container via
+                    renderTabOverlay so they follow detached tabs
+                    into their popup windows.) */}
             </div>
         </>
     );
