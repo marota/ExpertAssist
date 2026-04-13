@@ -793,8 +793,14 @@ function App() {
   }, [diagrams]);
 
   const handleVlOpen = useCallback((vlName: string) => {
-    handleVlDoubleClick(activeTab === 'action' ? selectedActionId || '' : '', vlName);
-  }, [handleVlDoubleClick, activeTab, selectedActionId]);
+    // Always carry the currently-selected action id into the SLD
+    // overlay — NOT just when activeTab === 'action'. The SLD's
+    // internal sub-tab buttons let the user switch to the "action"
+    // sub-tab from any tab, and if we open the overlay with an
+    // empty actionId the backend rejects the switch with
+    // "Action '' not found in last analysis result".
+    handleVlDoubleClick(selectedActionId || '', vlName);
+  }, [handleVlDoubleClick, selectedActionId]);
 
   const handleCancelDialog = useCallback(() => {
     // Cancelling a "Change Network?" dialog must roll back the

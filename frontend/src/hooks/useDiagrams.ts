@@ -205,8 +205,12 @@ export function useDiagrams(
   const [uniqueVoltages, setUniqueVoltages] = useState<number[]>([]);
   const [voltageRange, setVoltageRange] = useState<[number, number]>([0, 400]);
 
-  // SLD overlay (extracted to useSldOverlay hook)
-  const sldOverlay = useSldOverlay(activeTab);
+  // SLD overlay (extracted to useSldOverlay hook). Passing
+  // `selectedActionId` lets the overlay fall back to the live
+  // value when the user switches to the 'action' sub-tab of an
+  // SLD that was opened from the N or N-1 tab (the stored
+  // vlOverlay.actionId is '' in that case).
+  const sldOverlay = useSldOverlay(activeTab, selectedActionId);
   const { vlOverlay, setVlOverlay, selectedBranchForSld, handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose } = sldOverlay;
 
   // Metadata

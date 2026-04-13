@@ -183,6 +183,151 @@ describe('VisualizationPanel', () => {
         expect(onViewModeChange).toHaveBeenCalledWith('delta');
     });
 
+    // Regression tests for the Tie button location (third
+    // iteration). The Tie button used to be grouped in the
+    // top-right cluster next to the Flow/Impacts toggle, which
+    // was misleading because Tie only synchronises pan/zoom and
+    // asset focus — the Flow/Impacts mode is deliberately NOT
+    // tied between main and detached windows. The button now
+    // lives in the bottom-left cluster, directly above the
+    // zoom/inspect controls it actually mirrors.
+    describe('Tie button placement and visibility', () => {
+        const nDiagram: DiagramData = { svg: '<svg>n</svg>', metadata: null };
+
+        // Helper: make a detached-tabs map whose mount node is
+        // attached to `document.body` so testing-library's `within`
+        // queries can reach it. Returns the mount node so tests can
+        // scope their assertions to the "popup" content.
+        const makeDetached = (tabId: 'n' | 'n-1' | 'action') => {
+            const mountNode = document.createElement('div');
+            document.body.appendChild(mountNode);
+            return {
+                mountNode,
+                detachedTabs: { [tabId]: { window: {} as Window, mountNode } },
+            };
+        };
+
+        it('does not render the Tie button when the tab is not detached', () => {
+            // No detachedTabs → no popup → no Tie button visible.
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n',
+                nDiagram,
+                hasBranches: true,
+                isTabTied: () => false,
+                onToggleTabTie: vi.fn(),
+            })} />);
+            // The Tie button carries a title starting with "Tie"
+            // — easy to query without confusion with similar words.
+            const tieButtons = document.body.querySelectorAll('button[title^="Tie"]');
+            expect(tieButtons).toHaveLength(0);
+        });
+
+        it('renders the Tie button in the bottom-left cluster when the tab is detached', () => {
+            const { mountNode } = makeDetached('n');
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n',
+                nDiagram,
+                hasBranches: true,
+                detachedTabs: { n: { window: {} as Window, mountNode } },
+                isTabTied: () => false,
+                onToggleTabTie: vi.fn(),
+            })} />);
+
+            // The Tie button lives inside the imperatively-moved
+            // orphan div, which is now a descendant of the fake
+            // popup's mountNode — NOT inside testing-library's
+            // container. Query the mountNode directly.
+            const tieButton = mountNode.querySelector('button[title^="Tie"]');
+            expect(tieButton).not.toBeNull();
+            document.body.removeChild(mountNode);
+        });
+
+        it('places the Tie button in the same cluster as the Zoom buttons, NOT in the top-right Flows/Impacts cluster', () => {
+            const { mountNode } = makeDetached('n');
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n',
+                nDiagram,
+                hasBranches: true,
+                detachedTabs: { n: { window: {} as Window, mountNode } },
+                isTabTied: () => false,
+                onToggleTabTie: vi.fn(),
+            })} />);
+
+            const tieButton = mountNode.querySelector('button[title^="Tie"]') as HTMLElement | null;
+            const zoomInButton = mountNode.querySelector('button[title="Zoom In"]') as HTMLElement | null;
+            const flowsButton = Array.from(
+                mountNode.querySelectorAll('button')
+            ).find(b => b.textContent === 'Flows') as HTMLElement | undefined;
+
+            expect(tieButton).not.toBeNull();
+            expect(zoomInButton).not.toBeNull();
+            expect(flowsButton).toBeDefined();
+
+            // Walk up from zoomIn collecting ancestors; the Tie
+            // button must live in that same ancestor chain.
+            const zoomAncestors = new Set<HTMLElement>();
+            let cursor: HTMLElement | null = zoomInButton;
+            while (cursor) {
+                zoomAncestors.add(cursor);
+                cursor = cursor.parentElement;
+            }
+            let tieCursor: HTMLElement | null = tieButton;
+            let sharedWithZoom = false;
+            while (tieCursor) {
+                if (zoomAncestors.has(tieCursor)) { sharedWithZoom = true; break; }
+                tieCursor = tieCursor.parentElement;
+            }
+            expect(sharedWithZoom).toBe(true);
+
+            // And the Flow/Impacts top-right cluster must NOT
+            // contain the Tie button. Walk up from Flows to the
+            // absolutely-positioned cluster div and check.
+            let flowsCluster: HTMLElement | null = flowsButton!.parentElement;
+            while (flowsCluster && flowsCluster.style.position !== 'absolute') {
+                flowsCluster = flowsCluster.parentElement;
+            }
+            expect(flowsCluster).not.toBeNull();
+            expect(flowsCluster!.contains(tieButton)).toBe(false);
+
+            document.body.removeChild(mountNode);
+        });
+
+        it('calls onToggleTabTie with the tab id when clicked', async () => {
+            const user = userEvent.setup();
+            const { mountNode } = makeDetached('n');
+            const onToggleTabTie = vi.fn();
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n',
+                nDiagram,
+                hasBranches: true,
+                detachedTabs: { n: { window: {} as Window, mountNode } },
+                isTabTied: () => false,
+                onToggleTabTie,
+            })} />);
+
+            const tieButton = mountNode.querySelector('button[title^="Tie"]') as HTMLElement;
+            await user.click(tieButton);
+            expect(onToggleTabTie).toHaveBeenCalledWith('n');
+            document.body.removeChild(mountNode);
+        });
+
+        it('renders the "Untie" (Tied) variant when the tab is already tied', () => {
+            const { mountNode } = makeDetached('n');
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'n',
+                nDiagram,
+                hasBranches: true,
+                detachedTabs: { n: { window: {} as Window, mountNode } },
+                isTabTied: (t: TabId) => t === 'n',
+                onToggleTabTie: vi.fn(),
+            })} />);
+            // When tied the button's title starts with "Untie".
+            const untieButton = mountNode.querySelector('button[title^="Untie"]');
+            expect(untieButton).not.toBeNull();
+            document.body.removeChild(mountNode);
+        });
+    });
+
     // Regression tests for the Flow/Impacts mode being PER-TAB in a
     // detached popup. Before the fix, the mode was a global state
     // shared between main and popup: flipping Impacts in one

@@ -378,7 +378,12 @@ window's active tab. It is implemented in
 
 **Scope**: tying only affects pan / zoom / asset-focus. The
 Flow/Impacts view-mode is deliberately **never** tied — see
-[Per-window view mode](#per-window-view-mode) below.
+[Per-window view mode](#per-window-view-mode) below. Because of
+this scope, the Tie button is rendered in the **bottom-left
+cluster**, directly above the zoom / unzoom / inspect row it
+actually mirrors — NOT in the top-right cluster next to
+Flow/Impacts, which would incorrectly suggest that the view
+mode is tied too.
 
 **How bidirectional sync works without ping-ponging:**
 
@@ -504,6 +509,41 @@ that was active inside the popup** — because the SVG element (and
 therefore its `viewBox`) is the same DOM node before, during, and
 after the move.
 
+## SLD overlay "Action '' not found" fix
+
+If the operator opens an SLD overlay from the Network (N) or
+Contingency (N-1) tab **while a remedial action is already
+selected**, and then clicks the ACTION sub-tab of the SLD
+dropdown, the backend used to reject the request with:
+
+```
+Action '' not found in last analysis result.
+```
+
+**Root cause**: `App.handleVlOpen` forwarded an empty string as
+the action id whenever the main-window active tab wasn't
+'action'. That empty id was stored on `vlOverlay.actionId` and
+later passed verbatim to `/api/action-variant-sld` when the
+operator switched the overlay's sub-tab to "action".
+
+**Fix** (two layers, belt-and-braces):
+
+1. `frontend/src/App.tsx` — `handleVlOpen` now ALWAYS forwards
+   `selectedActionId || ''` regardless of activeTab, so the
+   overlay starts with a real action id whenever one is
+   available.
+2. `frontend/src/hooks/useSldOverlay.ts` — accepts an optional
+   `liveSelectedActionId` argument and mirrors it into a
+   `selectedActionIdRef`. Inside `fetchSldVariant`, when the
+   sub-tab is 'action' and the stored `actionId` is falsy, the
+   fetcher falls back to `selectedActionIdRef.current`. If that
+   is also empty, it sets a friendly inline error ("No action
+   selected. Pick an action first and then re-open the SLD.")
+   rather than firing the request and letting the backend throw.
+   On success, the resolved action id is written back onto
+   `vlOverlay.actionId` so subsequent re-renders and highlight
+   passes can find it.
+
 ## Regression tests
 
 The four bug fixes and the new features are covered by dedicated
@@ -543,12 +583,36 @@ Vitest suites:
   "drag-pan doesn't work in the detached window / doesn't work
   after reattach" half of Bugs 1 and 4.
 
-- **`frontend/src/hooks/useTiedTabsSync.test.ts`** (8 tests) —
+- **`frontend/src/hooks/useTiedTabsSync.test.ts`** (10 tests) —
   covers the tied-detached-tabs feature: empty initial set;
   tie/untie/toggleTie update the set and log events; mirroring a
   tied+detached tab's viewBox into the main active PZ; no-op when
   the tab is tied but not detached, when activeTab === tied tab,
-  or when activeTab is the overflow tab.
+  or when activeTab is the overflow tab. Plus two
+  bidirectional-sync regressions: a main-window change mirrors
+  into the tied+detached popup, and the mirror is one-shot (no
+  bounce-back write into the source), proving the loop-protection
+  works.
+
+- **`frontend/src/hooks/useSldOverlay.test.ts`** (+3 tests) —
+  regressions for the "Action '' not found" bug: the hook falls
+  back to `liveSelectedActionId` when `vlOverlay.actionId` is
+  empty; shows a friendly error when no action is available at
+  all; and still prefers an explicit `actionId` when one is
+  stored on the overlay.
+
+- **`frontend/src/components/VisualizationPanel.test.tsx`**
+  (+5 tests) — regressions for the Tie button location: no Tie
+  button when the tab is not detached; renders the Tie button
+  inside the bottom-left cluster when detached; the Tie button
+  shares an ancestor with the Zoom In button AND is NOT a
+  descendant of the top-right Flow/Impacts cluster; clicking the
+  button invokes `onToggleTabTie(tabId)`; and the
+  "Untie" (`Tied`) variant is shown when the tab is already
+  tied. The tests query the detached popup's mount node
+  directly (`document.body` children), because the overlay's
+  DOM is imperatively relocated out of testing-library's
+  container when the tab is detached.
 
 ## Known limitations
 

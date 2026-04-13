@@ -217,54 +217,77 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
         return (
             <>
                 {/* Top-right cluster: Flow/Impacts + Tie button.
-                    Only rendered when the tab actually has a diagram
-                    so we don't clutter empty tabs. */}
-                {hasDiagramForTab && (supportsViewMode || isDetachedTab) && (
+                    Only rendered when the tab actually has a
+                    diagram so we don't clutter empty tabs. The Tie
+                    button lives DOWN in the bottom-left cluster next
+                    to the controls it actually synchronises
+                    (zoom / inspect), not here. */}
+                {hasDiagramForTab && supportsViewMode && (
                     <div style={{
                         position: 'absolute', top: '10px', right: '10px', zIndex: 100,
                         display: 'flex', alignItems: 'center', gap: '6px',
                     }}>
-                        {supportsViewMode && (
-                            <div style={{
-                                display: 'flex',
-                                borderRadius: '6px',
-                                overflow: 'hidden',
-                                border: '1px solid #ccc',
-                                boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
-                                fontSize: '12px',
-                                fontWeight: 600,
-                                backgroundColor: '#fff',
-                            }}>
-                                <button
-                                    onClick={() => viewModeChangeForTabCb(tabId, 'network')}
-                                    style={{
-                                        padding: '4px 12px', border: 'none', cursor: 'pointer',
-                                        backgroundColor: tabViewMode === 'network' ? '#007bff' : '#fff',
-                                        color: tabViewMode === 'network' ? '#fff' : '#555',
-                                        transition: 'all 0.15s ease'
-                                    }}
-                                >
-                                    Flows
-                                </button>
-                                <button
-                                    onClick={() => viewModeChangeForTabCb(tabId, 'delta')}
-                                    style={{
-                                        padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
-                                        backgroundColor: tabViewMode === 'delta' ? '#007bff' : '#fff',
-                                        color: tabViewMode === 'delta' ? '#fff' : '#555',
-                                        transition: 'all 0.15s ease'
-                                    }}
-                                >
-                                    Impacts
-                                </button>
-                            </div>
-                        )}
+                        <div style={{
+                            display: 'flex',
+                            borderRadius: '6px',
+                            overflow: 'hidden',
+                            border: '1px solid #ccc',
+                            boxShadow: '0 2px 5px rgba(0,0,0,0.15)',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            backgroundColor: '#fff',
+                        }}>
+                            <button
+                                onClick={() => viewModeChangeForTabCb(tabId, 'network')}
+                                style={{
+                                    padding: '4px 12px', border: 'none', cursor: 'pointer',
+                                    backgroundColor: tabViewMode === 'network' ? '#007bff' : '#fff',
+                                    color: tabViewMode === 'network' ? '#fff' : '#555',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                Flows
+                            </button>
+                            <button
+                                onClick={() => viewModeChangeForTabCb(tabId, 'delta')}
+                                style={{
+                                    padding: '4px 12px', border: 'none', borderLeft: '1px solid #ccc', cursor: 'pointer',
+                                    backgroundColor: tabViewMode === 'delta' ? '#007bff' : '#fff',
+                                    color: tabViewMode === 'delta' ? '#fff' : '#555',
+                                    transition: 'all 0.15s ease'
+                                }}
+                            >
+                                Impacts
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Bottom-left cluster: Tie (detached only) + zoom
+                    controls + inspect search. The Tie button sits
+                    directly above the zoom + inspect row so it's
+                    visually associated with the interactions it
+                    actually synchronises — pan/zoom and asset
+                    focus. It is deliberately NOT grouped with the
+                    Flow/Impacts toggle in the top-right because
+                    view mode is per-window and never tied. */}
+                {hasDiagramForTab && (
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '12px',
+                        left: '12px',
+                        zIndex: 100,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px',
+                        alignItems: 'flex-start',
+                    }}>
                         {isDetachedTab && (
                             <button
                                 onClick={() => toggleTabTieCb(tabId)}
                                 title={tied
-                                    ? 'Untie: the main window no longer mirrors this tab\'s pan/zoom'
-                                    : 'Tie: pan/zoom in this window is mirrored into the main window\'s active tab'}
+                                    ? 'Untie: pan/zoom and asset focus no longer mirror between this window and the main window'
+                                    : 'Tie: pan/zoom and asset focus will be mirrored between this window and the main window\'s active tab'}
                                 style={{
                                     padding: '4px 10px', border: `1px solid ${tied ? '#2c7be5' : '#ccc'}`,
                                     borderRadius: '6px', cursor: 'pointer',
@@ -277,21 +300,6 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 {tied ? '\u{1F517} Tied' : '\u{26D3} Tie'}
                             </button>
                         )}
-                    </div>
-                )}
-
-                {/* Bottom-left cluster: zoom controls + inspect search. */}
-                {hasDiagramForTab && (
-                    <div style={{
-                        position: 'absolute',
-                        bottom: '12px',
-                        left: '12px',
-                        zIndex: 100,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px',
-                        alignItems: 'flex-start',
-                    }}>
                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                             <button
                                 onClick={() => onZoomIn(tabId)}
