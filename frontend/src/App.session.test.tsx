@@ -414,6 +414,22 @@ describe('Full State Reset on Apply Settings', () => {
     });
   }
 
+  // Convenience: click Apply and confirm the resulting "Apply New
+  // Settings?" dialog. With a study already loaded, every Apply now
+  // routes through the confirmation pipeline (Bug "user warning when
+  // changing config path while a network is loaded").
+  async function applyAndConfirm() {
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+    await act(async () => {
+      await userEvent.click(screen.getByText('Confirm'));
+    });
+  }
+
   it('clears branch selection after Apply Settings', async () => {
     await renderAndLoadStudy();
     await selectBranch('BRANCH_A');
@@ -423,10 +439,7 @@ describe('Full State Reset on Apply Settings', () => {
     mockApi.updateConfig.mockClear();
 
     await openSettings();
-
-    await act(async () => {
-      await userEvent.click(screen.getByText('Apply'));
-    });
+    await applyAndConfirm();
 
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
@@ -446,19 +459,7 @@ describe('Full State Reset on Apply Settings', () => {
     mockApi.updateConfig.mockClear();
 
     await openSettings();
-
-    await act(async () => {
-      await userEvent.click(screen.getByText('Apply'));
-    });
-
-    // With analysis state present Apply now routes through the
-    // confirmation dialog (mirrors the Load Study button).
-    await waitFor(() => {
-      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
-    });
-    await act(async () => {
-      await userEvent.click(screen.getByText('Confirm'));
-    });
+    await applyAndConfirm();
 
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
@@ -474,9 +475,7 @@ describe('Full State Reset on Apply Settings', () => {
 
     expect(screen.getByText('Apply')).toBeInTheDocument();
 
-    await act(async () => {
-      await userEvent.click(screen.getByText('Apply'));
-    });
+    await applyAndConfirm();
 
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
@@ -491,10 +490,7 @@ describe('Full State Reset on Apply Settings', () => {
     mockApi.updateConfig.mockClear();
 
     await openSettings();
-
-    await act(async () => {
-      await userEvent.click(screen.getByText('Apply'));
-    });
+    await applyAndConfirm();
 
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
@@ -513,10 +509,7 @@ describe('Full State Reset on Apply Settings', () => {
     mockApi.updateConfig.mockClear();
 
     await openSettings();
-
-    await act(async () => {
-      await userEvent.click(screen.getByText('Apply'));
-    });
+    await applyAndConfirm();
 
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
@@ -544,12 +537,20 @@ describe('Apply Settings Confirmation', () => {
     });
   }
 
-  it('applies settings directly when no analysis state exists', async () => {
-    await renderAndLoadStudy();
+  it('applies settings directly when no study has been loaded yet', async () => {
+    // Brand-new app, no Load Study clicked. There's nothing to
+    // discard, so Apply must not show the dialog.
+    render(<App />);
+
+    const settingsBtn = screen.getByTitle('Settings');
+    await act(async () => {
+      await userEvent.click(settingsBtn);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply')).toBeInTheDocument();
+    });
 
     mockApi.updateConfig.mockClear();
-    await openSettings();
-
     await act(async () => {
       await userEvent.click(screen.getByText('Apply'));
     });
@@ -559,6 +560,37 @@ describe('Apply Settings Confirmation', () => {
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
     });
+  });
+
+  // Regression: changing a config-relevant setting (e.g. the config
+  // file path) and clicking Apply while a network is loaded BUT no
+  // analysis has been run must still warn the user, because Apply
+  // unconditionally reloads the network and would silently drop the
+  // currently-loaded grid.
+  it('shows confirmation dialog when applying settings with a loaded network but no analysis', async () => {
+    await renderAndLoadStudy();
+    // Deliberately no selectBranch / no runAnalysis — only the base
+    // network is loaded.
+
+    mockApi.updateConfig.mockClear();
+    await openSettings();
+
+    // Type a new config file path (the typical user action this
+    // request is about) before clicking Apply.
+    const configPathInput = screen.getByLabelText(/Config File Path/i);
+    await userEvent.clear(configPathInput);
+    await userEvent.type(configPathInput, '/new/config.json');
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+    // Backend must NOT have been called yet — the user has to
+    // confirm first.
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
   });
 
   it('shows confirmation dialog when applying settings after running analysis', async () => {

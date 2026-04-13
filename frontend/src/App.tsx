@@ -369,15 +369,15 @@ function App() {
     }
   }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setError, setSettingsBackup, setIsSettingsOpen, diagrams, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
 
-  // Apply Settings entry point used by the Settings modal. If a study is
-  // already in progress we route through the same confirmation dialog as
-  // the "Load Study" button so the user is warned that all results,
-  // manual simulations, action selections and diagrams will be cleared
-  // — applying a different config file (or any settings change that
-  // requires reloading the network) silently dropping that work was
-  // surprising.
+  // Apply Settings entry point used by the Settings modal. If a study
+  // is already loaded — whether or not analysis has been run yet — we
+  // route through the same confirmation dialog as the "Load Study"
+  // button. Applying any settings (in particular changing the config
+  // file path) silently reloads the network and drops the in-flight
+  // study, so the user must be warned even when only a base network
+  // is loaded with no analysis state.
   const handleApplySettingsClick = useCallback(() => {
-    if (hasAnalysisState()) {
+    if (hasAnalysisState() || committedNetworkPathRef.current) {
       setConfirmDialog({ type: 'applySettings' });
       return;
     }
