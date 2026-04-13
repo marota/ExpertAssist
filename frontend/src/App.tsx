@@ -315,7 +315,7 @@ function App() {
   }, [result, pendingAnalysisResult, selectedActionId, actionDiagram, manuallyAddedIds, selectedActionIds, rejectedActionIds]);
 
 
-  const handleApplySettings = useCallback(async () => {
+  const applySettingsImmediate = useCallback(async () => {
     interactionLogger.record('settings_applied');
     try {
       resetAllState();
@@ -359,6 +359,21 @@ function App() {
       setError('Failed to apply settings: ' + (e.response?.data?.detail || e.message));
     }
   }, [networkPath, actionPath, buildConfigRequest, applyConfigResponse, createCurrentBackup, setError, setSettingsBackup, setIsSettingsOpen, diagrams, configFilePath, lastActiveConfigFilePath, changeConfigFilePath, resetAllState]);
+
+  // Apply Settings entry point used by the Settings modal. If a study is
+  // already in progress we route through the same confirmation dialog as
+  // the "Load Study" button so the user is warned that all results,
+  // manual simulations, action selections and diagrams will be cleared
+  // — applying a different config file (or any settings change that
+  // requires reloading the network) silently dropping that work was
+  // surprising.
+  const handleApplySettingsClick = useCallback(() => {
+    if (hasAnalysisState()) {
+      setConfirmDialog({ type: 'applySettings' });
+      return;
+    }
+    applySettingsImmediate();
+  }, [hasAnalysisState, applySettingsImmediate]);
 
 
 
@@ -414,11 +429,13 @@ function App() {
     if (confirmDialog.type === 'contingency') {
       clearContingencyState();
       setSelectedBranch(confirmDialog.pendingBranch || '');
+    } else if (confirmDialog.type === 'applySettings') {
+      applySettingsImmediate();
     } else {
       handleLoadConfig();
     }
     setConfirmDialog(null);
-  }, [confirmDialog, clearContingencyState, handleLoadConfig]);
+  }, [confirmDialog, clearContingencyState, handleLoadConfig, applySettingsImmediate]);
 
 
   // ===== App-Level Effects =====
@@ -649,7 +666,7 @@ function App() {
       />
 
       {/* Settings Modal */}
-      <SettingsModal settings={settings} onApply={handleApplySettings} />
+      <SettingsModal settings={settings} onApply={handleApplySettingsClick} />
 
 
       <ReloadSessionModal

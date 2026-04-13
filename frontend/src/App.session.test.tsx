@@ -451,6 +451,15 @@ describe('Full State Reset on Apply Settings', () => {
       await userEvent.click(screen.getByText('Apply'));
     });
 
+    // With analysis state present Apply now routes through the
+    // confirmation dialog (mirrors the Load Study button).
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+    await act(async () => {
+      await userEvent.click(screen.getByText('Confirm'));
+    });
+
     await waitFor(() => {
       expect(mockApi.updateConfig).toHaveBeenCalled();
     });
@@ -515,5 +524,120 @@ describe('Full State Reset on Apply Settings', () => {
 
     // Apply Settings DOES now re-fetch branches (matching Load Study behavior)
     expect(mockApi.getBranches).toHaveBeenCalled();
+  });
+});
+
+describe('Apply Settings Confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  async function openSettings() {
+    const settingsBtn = screen.getByTitle('Settings');
+    await act(async () => {
+      await userEvent.click(settingsBtn);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply')).toBeInTheDocument();
+    });
+  }
+
+  it('applies settings directly when no analysis state exists', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.updateConfig.mockClear();
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    // No confirmation dialog, settings apply immediately.
+    expect(screen.queryByText('Apply New Settings?')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+  });
+
+  it('shows confirmation dialog when applying settings after running analysis', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    mockApi.updateConfig.mockClear();
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+
+    // Dialog appears, with the apply-settings-specific copy.
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/The network will be reloaded with the new configuration/),
+    ).toBeInTheDocument();
+
+    // Backend must NOT have been called yet — applying is gated on
+    // the user's confirmation.
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it('proceeds with apply settings after confirmation', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    mockApi.updateConfig.mockClear();
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Confirm'));
+    });
+
+    // Dialog dismissed, settings applied, modal closed.
+    expect(screen.queryByText('Apply New Settings?')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('Apply')).not.toBeInTheDocument();
+  });
+
+  it('keeps state and modal open when user cancels apply settings dialog', async () => {
+    await renderAndLoadStudy();
+    await selectBranch('BRANCH_A');
+    await runAnalysis();
+
+    mockApi.updateConfig.mockClear();
+    await openSettings();
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Apply'));
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Apply New Settings?')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Cancel'));
+    });
+
+    // Dialog dismissed, no backend call, settings modal still open
+    // (so the user can adjust their inputs without losing them).
+    expect(screen.queryByText('Apply New Settings?')).not.toBeInTheDocument();
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
+    expect(screen.getByText('Apply')).toBeInTheDocument();
+    // The contingency selection must also still be intact.
+    expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
   });
 });
