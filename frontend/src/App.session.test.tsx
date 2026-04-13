@@ -641,3 +641,126 @@ describe('Apply Settings Confirmation', () => {
     expect(screen.getByPlaceholderText('Search line/bus...')).toHaveValue('BRANCH_A');
   });
 });
+
+describe('Change Network Path Confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it('does not prompt when no study has been loaded yet', async () => {
+    // Fresh app, no Load Study click. Typing a new network path and
+    // blurring must NOT show the dialog — there's nothing to discard.
+    render(<App />);
+
+    const input = await screen.findByTestId('header-network-path-input');
+    await act(async () => {
+      await userEvent.clear(input);
+      await userEvent.type(input, '/tmp/freshly-chosen.xiidm');
+      input.blur();
+    });
+
+    expect(screen.queryByText('Change Network?')).not.toBeInTheDocument();
+  });
+
+  it('shows confirmation dialog when typing a different path after a study is loaded', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.updateConfig.mockClear();
+
+    const input = screen.getByTestId('header-network-path-input');
+    await act(async () => {
+      await userEvent.clear(input);
+      await userEvent.type(input, '/tmp/new-network.xiidm');
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Change Network?')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/The current study will be reloaded from the new network file/),
+    ).toBeInTheDocument();
+    // The backend must NOT have been called yet — confirmation is
+    // what triggers the reload.
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
+  });
+
+  it('reloads the study with the new path on Confirm', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.updateConfig.mockClear();
+    mockApi.getBranches.mockClear();
+
+    const input = screen.getByTestId('header-network-path-input');
+    await act(async () => {
+      await userEvent.clear(input);
+      await userEvent.type(input, '/tmp/new-network.xiidm');
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Change Network?')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Confirm'));
+    });
+
+    // Dialog dismissed and a fresh load kicks in with the new path.
+    expect(screen.queryByText('Change Network?')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockApi.updateConfig).toHaveBeenCalled();
+    });
+    const lastCall = mockApi.updateConfig.mock.calls.at(-1)![0];
+    expect(lastCall.network_path).toBe('/tmp/new-network.xiidm');
+    expect(mockApi.getBranches).toHaveBeenCalled();
+  });
+
+  it('reverts the network path input on Cancel and keeps the current study', async () => {
+    await renderAndLoadStudy();
+    const initialPath = (screen.getByTestId('header-network-path-input') as HTMLInputElement).value;
+
+    mockApi.updateConfig.mockClear();
+
+    const input = screen.getByTestId('header-network-path-input');
+    await act(async () => {
+      await userEvent.clear(input);
+      await userEvent.type(input, '/tmp/rejected.xiidm');
+      input.blur();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Change Network?')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('Cancel'));
+    });
+
+    // Dialog gone, no reload, and the Header field is back to the
+    // path the currently-loaded study was loaded from.
+    expect(screen.queryByText('Change Network?')).not.toBeInTheDocument();
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
+    expect(
+      (screen.getByTestId('header-network-path-input') as HTMLInputElement).value,
+    ).toBe(initialPath);
+  });
+
+  it('does not prompt when blurring the input without actually changing the path', async () => {
+    await renderAndLoadStudy();
+
+    mockApi.updateConfig.mockClear();
+
+    const input = screen.getByTestId('header-network-path-input');
+    // Just focus and blur — same value committed.
+    await act(async () => {
+      input.focus();
+      input.blur();
+    });
+
+    expect(screen.queryByText('Change Network?')).not.toBeInTheDocument();
+    expect(mockApi.updateConfig).not.toHaveBeenCalled();
+  });
+});

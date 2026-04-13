@@ -62,8 +62,16 @@ function App() {
   const [configLoading, setConfigLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Confirmation dialog state for contingency change / load study
+  // Confirmation dialog state for contingency change / load study /
+  // apply settings / change network path.
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
+
+  // Path of the network file the currently-loaded study was loaded from.
+  // Updated after every successful handleLoadConfig / applySettings, used
+  // by requestNetworkPathChange to detect "user is switching to a
+  // different network while a study is already loaded" and prompt for
+  // confirmation before silently dropping the in-flight work.
+  const committedNetworkPathRef = useRef('');
 
   // ===== Hook integrations =====
   const actionsHook = useActions();
@@ -351,6 +359,7 @@ function App() {
 
       diagrams.fetchBaseDiagram(vlRes.length);
 
+      committedNetworkPathRef.current = networkPath;
       interactionLogger.record('config_loaded', { network_path: networkPath, action_path: actionPath });
       setSettingsBackup(createCurrentBackup());
       setIsSettingsOpen(false);
@@ -405,6 +414,7 @@ function App() {
       }
 
       diagrams.fetchBaseDiagram(vlRes.length);
+      committedNetworkPathRef.current = networkPath;
       interactionLogger.record('config_loaded', { network_path: networkPath, action_path: actionPath });
     } catch (err: unknown) {
       const e = err as { response?: { data?: { detail?: string } }; message?: string };
@@ -423,6 +433,24 @@ function App() {
     }
   }, [hasAnalysisState, handleLoadConfig]);
 
+  // Network path commit pipeline used by the Header (file picker AND
+  // input blur). When a study is already loaded and the path is being
+  // changed to a different value, prompt for confirmation before
+  // silently dropping the in-flight study. The setNetworkPath call is
+  // optimistic — it makes the input immediately reflect the new path
+  // even while the dialog is open — and is reverted by
+  // handleCancelDialog if the user backs out.
+  const requestNetworkPathChange = useCallback((newPath: string) => {
+    setNetworkPath(newPath);
+    const trimmed = newPath.trim();
+    if (!trimmed) return;
+    if (trimmed === committedNetworkPathRef.current) return;
+    // Only warn once a study has actually been loaded — initial path
+    // entry on an empty session must not trigger the dialog.
+    if (!committedNetworkPathRef.current) return;
+    setConfirmDialog({ type: 'changeNetwork', pendingNetworkPath: trimmed });
+  }, [setNetworkPath]);
+
   const handleConfirmDialog = useCallback(() => {
     if (!confirmDialog) return;
     interactionLogger.record('contingency_confirmed', { type: confirmDialog.type, pending_branch: confirmDialog.pendingBranch });
@@ -431,6 +459,11 @@ function App() {
       setSelectedBranch(confirmDialog.pendingBranch || '');
     } else if (confirmDialog.type === 'applySettings') {
       applySettingsImmediate();
+    } else if (confirmDialog.type === 'changeNetwork') {
+      // pendingNetworkPath was already setNetworkPath'd by
+      // requestNetworkPathChange. Reload the config so the backend
+      // picks up the new file.
+      handleLoadConfig();
     } else {
       handleLoadConfig();
     }
@@ -646,14 +679,22 @@ function App() {
   }, [handleVlDoubleClick, activeTab, selectedActionId]);
 
   const handleCancelDialog = useCallback(() => {
+    // Cancelling a "Change Network?" dialog must roll back the
+    // optimistic networkPath update done by requestNetworkPathChange,
+    // otherwise the Header field would silently diverge from the
+    // currently-loaded study's path.
+    if (confirmDialog?.type === 'changeNetwork') {
+      setNetworkPath(committedNetworkPathRef.current);
+    }
     setConfirmDialog(null);
-  }, []);
+  }, [confirmDialog, setNetworkPath]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <Header
         networkPath={networkPath}
         setNetworkPath={setNetworkPath}
+        onCommitNetworkPath={requestNetworkPathChange}
         configLoading={configLoading}
         result={result}
         selectedBranch={selectedBranch}

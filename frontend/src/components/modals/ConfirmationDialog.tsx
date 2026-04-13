@@ -6,8 +6,9 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 export type ConfirmDialogState = {
-  type: 'contingency' | 'loadStudy' | 'applySettings';
+  type: 'contingency' | 'loadStudy' | 'applySettings' | 'changeNetwork';
   pendingBranch?: string;
+  pendingNetworkPath?: string;
 } | null;
 
 interface ConfirmationDialogProps {
@@ -26,14 +27,17 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   const title =
     confirmDialog.type === 'contingency' ? 'Change Contingency?'
       : confirmDialog.type === 'applySettings' ? 'Apply New Settings?'
-        : 'Reload Study?';
+        : confirmDialog.type === 'changeNetwork' ? 'Change Network?'
+          : 'Reload Study?';
 
   const trailingMessage =
     confirmDialog.type === 'contingency'
       ? ' The network state will be preserved.'
       : confirmDialog.type === 'applySettings'
         ? ' The network will be reloaded with the new configuration.'
-        : ' The network will be reloaded from scratch.';
+        : confirmDialog.type === 'changeNetwork'
+          ? ' The current study will be reloaded from the new network file.'
+          : ' The network will be reloaded from scratch.';
 
   return (
     <div style={{
