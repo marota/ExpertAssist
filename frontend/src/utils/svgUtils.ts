@@ -435,10 +435,25 @@ export const applyActionTargetHighlights = (
     actionId: string | null,
 ) => {
     if (!container) return;
+    // IMPORTANT: remove OUR action-target clones BEFORE stripping the
+    // `.nad-action-target` class from originals — otherwise the class
+    // gets stripped from the clones too (they also carry it) and the
+    // follow-up cleanup selector would no longer match them, leaving
+    // stale clones in the background layer. Use a compound selector
+    // (`.nad-highlight-clone.nad-action-target`) so we only wipe our
+    // own clones and leave `.nad-overloaded` halos planted by
+    // applyOverloadedHighlights untouched — the Action tab calls us
+    // straight after applyOverloadedHighlights, so a blanket
+    // `.nad-highlight-clone` removal silently deleted every
+    // persistent / newly-created overload highlight on the Remedial
+    // Action NAD (the SLD was unaffected because it uses a different
+    // highlight pipeline).
+    container
+        .querySelectorAll('.nad-highlight-clone.nad-action-target')
+        .forEach(el => el.remove());
     container.querySelectorAll('.nad-action-target, .nad-action-target-original').forEach(el => {
         el.classList.remove('nad-action-target', 'nad-action-target-original');
     });
-    container.querySelectorAll('.nad-highlight-clone').forEach(el => el.remove());
     if (!metaIndex || !actionDetail) return;
 
     const { edgesByEquipmentId, nodesByEquipmentId } = metaIndex;

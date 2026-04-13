@@ -958,5 +958,87 @@ describe('Highlight Layering', () => {
             expect(container.querySelectorAll('.nad-highlight-clone').length).toBe(0);
             expect(container.querySelector('#svg-L1')?.classList.contains('nad-action-target-original')).toBe(false);
         });
+
+        // REGRESSION (Remedial Action tab): applyHighlightsForTab calls
+        // applyOverloadedHighlights FIRST (planting .nad-overloaded clones
+        // in the background layer) and then applyActionTargetHighlights
+        // right after. The latter used to blanket-remove every
+        // `.nad-highlight-clone`, which wiped the freshly planted
+        // overload clones and left the main Network Action tab with no
+        // orange halos for persistent / new overloads. It must now only
+        // remove its own `.nad-action-target` clones.
+        it('preserves existing .nad-overloaded clones when re-applying action target highlights', () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <svg>
+                    <g id="nad-background-layer">
+                        <path class="nad-overloaded nad-highlight-clone" data-test="overload-A"></path>
+                        <path class="nad-action-target nad-highlight-clone" data-test="action-stale"></path>
+                    </g>
+                    <path id="svg-L1" class="line"></path>
+                </svg>
+            `;
+            const metaIndex = {
+                edgesByEquipmentId: new Map([['L1', { equipmentId: 'L1', svgId: 'svg-L1' } as EdgeMeta]]),
+                nodesByEquipmentId: new Map(),
+                nodesBySvgId: new Map(),
+                edgesByNode: new Map(),
+            } as MetadataIndex;
+            const actionDetail = {
+                description_unitaire: "Ouvrir 'L1'",
+                action_topology: { lines_ex_bus: { L1: -1 } },
+            } as unknown as ActionDetail;
+
+            applyActionTargetHighlights(container, metaIndex, actionDetail, 'act-L1');
+
+            // Overload clone must STILL be in the DOM (this is the
+            // regression guard — before the fix it was removed).
+            expect(
+                container.querySelector('[data-test="overload-A"]'),
+            ).toBeTruthy();
+            expect(
+                container.querySelectorAll('.nad-highlight-clone.nad-overloaded').length,
+            ).toBe(1);
+            // Stale action-target clone was removed, and a new one was
+            // planted for L1.
+            expect(
+                container.querySelector('[data-test="action-stale"]'),
+            ).toBeNull();
+            const newActionClones = container.querySelectorAll(
+                '.nad-highlight-clone.nad-action-target',
+            );
+            expect(newActionClones.length).toBe(1);
+        });
+
+        // When called with a null actionDetail (i.e. "deselect the
+        // action") we still want to scrub out any stale action-target
+        // clones, but the overload clones must remain untouched.
+        it('preserves overload clones when called with null actionDetail', () => {
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <svg>
+                    <g id="nad-background-layer">
+                        <path class="nad-overloaded nad-highlight-clone"></path>
+                        <path class="nad-action-target nad-highlight-clone"></path>
+                    </g>
+                </svg>
+            `;
+            const metaIndex = {
+                edgesByEquipmentId: new Map(),
+                nodesByEquipmentId: new Map(),
+                nodesBySvgId: new Map(),
+                edgesByNode: new Map(),
+            } as MetadataIndex;
+
+            applyActionTargetHighlights(container, metaIndex, null, null);
+
+            // Action-target clone gone, overload clone preserved.
+            expect(
+                container.querySelectorAll('.nad-highlight-clone.nad-action-target').length,
+            ).toBe(0);
+            expect(
+                container.querySelectorAll('.nad-highlight-clone.nad-overloaded').length,
+            ).toBe(1);
+        });
     });
 });
