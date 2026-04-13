@@ -229,6 +229,13 @@ export const applyOverloadedHighlights = (
                     const clone = el.cloneNode(true) as SVGGraphicsElement;
                     clone.classList.add('nad-overloaded');
                     clone.classList.add('nad-highlight-clone');
+                    // Strip any nad-delta-* class the original may
+                    // already be tagged with — those rules are declared
+                    // later in App.css and would otherwise win the
+                    // cascade and turn the orange halo into a 3px
+                    // delta-colored stroke (effectively making the
+                    // overload highlight disappear in Impacts mode).
+                    clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
                     clone.removeAttribute('id');
                     clone.style.display = 'block';
                     clone.style.visibility = 'visible';
@@ -472,6 +479,10 @@ export const applyActionTargetHighlights = (
             clone.removeAttribute('id');
             clone.classList.add('nad-action-target');
             clone.classList.add('nad-highlight-clone');
+            // See comment in applyOverloadedHighlights: strip any
+            // nad-delta-* class the original carries so the late
+            // delta CSS rules don't override the action-target halo.
+            clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
 
             try {
                 const elCTM = (el as SVGGraphicsElement).getScreenCTM();
@@ -546,6 +557,10 @@ export const applyContingencyHighlight = (
         const clone = el.cloneNode(true) as SVGGraphicsElement;
         clone.classList.add('nad-contingency-highlight');
         clone.classList.add('nad-highlight-clone');
+        // See comment in applyOverloadedHighlights: strip any
+        // nad-delta-* class the original may carry so the late delta
+        // CSS rules don't override the yellow contingency halo.
+        clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
         clone.removeAttribute('id');
 
         // Ensure highlight is visible even if the original is hidden

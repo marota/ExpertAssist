@@ -494,44 +494,60 @@ function App() {
 
     if (tab === 'n-1') {
       if (diagrams.n1SvgContainerRef.current) {
-        if (actionViewMode !== 'delta' && diagrams.n1MetaIndex && overloadedLines.length > 0) {
+        // IMPORTANT: run highlight CLONES before applyDeltaVisuals.
+        // The clone-based highlights (`applyOverloadedHighlights`,
+        // `applyContingencyHighlight`) use cloneNode(true) on the
+        // original SVG element. If applyDeltaVisuals has already
+        // tagged the original with `nad-delta-positive/negative/grey`,
+        // the clone inherits that class — and because the `.nad-delta-*`
+        // CSS is declared LATER in App.css than `.nad-contingency-highlight`
+        // / `.nad-overloaded`, the delta rule wins the cascade and the
+        // halo becomes a thin orange/blue stroke, effectively making the
+        // highlight disappear in Impacts mode. Cloning first guarantees
+        // the halos stay on a pristine copy of the element.
+        //
+        // Overloaded lines must also be highlighted in BOTH Flows and
+        // Impacts modes — the user looks at the Impacts view to see how
+        // the action redistributes flows AND which lines are still
+        // (or newly) overloaded; suppressing the halos in delta mode
+        // hides exactly that information.
+        if (diagrams.n1MetaIndex && overloadedLines.length > 0) {
           applyOverloadedHighlights(diagrams.n1SvgContainerRef.current, diagrams.n1MetaIndex, overloadedLines);
         }
-        applyDeltaVisuals(diagrams.n1SvgContainerRef.current, n1Diagram, diagrams.n1MetaIndex, actionViewMode === 'delta');
         applyContingencyHighlight(diagrams.n1SvgContainerRef.current, diagrams.n1MetaIndex, selectedBranch);
+        applyDeltaVisuals(diagrams.n1SvgContainerRef.current, n1Diagram, diagrams.n1MetaIndex, actionViewMode === 'delta');
       }
     }
     if (tab === 'action') {
-      applyDeltaVisuals(diagrams.actionSvgContainerRef.current, actionDiagram, diagrams.actionMetaIndex, actionViewMode === 'delta');
-
       const actionDetail = result?.actions?.[selectedActionId || ''];
 
       if (actionDetail) {
-        if (actionViewMode !== 'delta') {
-          let overloadsToHighlight: string[] = [];
+        // Same ordering rule as the N-1 tab: clone-based highlights
+        // first (so they capture pristine elements), delta visuals
+        // last. Overload halos render in both Flows and Impacts modes.
+        let overloadsToHighlight: string[] = [];
 
-          if (actionDetail.lines_overloaded_after && actionDetail.lines_overloaded_after.length > 0) {
-            overloadsToHighlight = actionDetail.lines_overloaded_after;
-          } else {
-            // Fallback for legacy results or actions without full enrichment
-            if (overloadedLines.length > 0 && actionDetail.rho_after) {
-              overloadedLines.forEach((name, i) => {
-                const rho = actionDetail.rho_after![i];
-                if (rho != null && rho > monitoringFactor) {
-                  overloadsToHighlight.push(name);
-                }
-              });
-            }
-            if (actionDetail.max_rho != null && actionDetail.max_rho > monitoringFactor && actionDetail.max_rho_line) {
-              if (!overloadsToHighlight.includes(actionDetail.max_rho_line)) {
-                overloadsToHighlight.push(actionDetail.max_rho_line);
+        if (actionDetail.lines_overloaded_after && actionDetail.lines_overloaded_after.length > 0) {
+          overloadsToHighlight = actionDetail.lines_overloaded_after;
+        } else {
+          // Fallback for legacy results or actions without full enrichment
+          if (overloadedLines.length > 0 && actionDetail.rho_after) {
+            overloadedLines.forEach((name, i) => {
+              const rho = actionDetail.rho_after![i];
+              if (rho != null && rho > monitoringFactor) {
+                overloadsToHighlight.push(name);
               }
+            });
+          }
+          if (actionDetail.max_rho != null && actionDetail.max_rho > monitoringFactor && actionDetail.max_rho_line) {
+            if (!overloadsToHighlight.includes(actionDetail.max_rho_line)) {
+              overloadsToHighlight.push(actionDetail.max_rho_line);
             }
           }
+        }
 
-          if (diagrams.actionSvgContainerRef.current && diagrams.actionMetaIndex) {
-            applyOverloadedHighlights(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, overloadsToHighlight);
-          }
+        if (diagrams.actionSvgContainerRef.current && diagrams.actionMetaIndex) {
+          applyOverloadedHighlights(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, overloadsToHighlight);
         }
 
         if (diagrams.actionSvgContainerRef.current) {
@@ -544,6 +560,11 @@ function App() {
           applyActionTargetHighlights(diagrams.actionSvgContainerRef.current, null, null, null);
         }
       }
+
+      // Delta visuals run LAST so they decorate the originals without
+      // contaminating the highlight clones already in the background
+      // layer.
+      applyDeltaVisuals(diagrams.actionSvgContainerRef.current, actionDiagram, diagrams.actionMetaIndex, actionViewMode === 'delta');
     }
   }, [n1Diagram, actionDiagram, result, selectedActionId, actionViewMode, selectedBranch, diagrams, monitoringFactor]);
 
