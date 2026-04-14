@@ -220,6 +220,17 @@ export function useDiagrams(
     activeTab === 'action' || !!detachedTabs?.['action'],
   );
 
+  // Ref mirror of the `detachedTabs` map so stable callbacks (notably
+  // `handleActionSelect`) can read the latest detached state without
+  // having to be re-bound on every map change. This is the same pattern
+  // used for `activeTabRef` above. When the action tab is detached, the
+  // selecting-an-action flow must NOT switch the main window's active
+  // tab to 'action' — the main window should keep showing whatever tab
+  // the user had open (typically N or N-1), and only the popup gets the
+  // updated diagram.
+  const detachedTabsRef = useRef<Partial<Record<TabId, unknown>> | undefined>(detachedTabs);
+  useLayoutEffect(() => { detachedTabsRef.current = detachedTabs; }, [detachedTabs]);
+
   // Zoom state
   const lastZoomState = useRef({ query: '', branch: '' });
   const actionSyncSourceRef = useRef<ViewBox | null>(null);
@@ -290,11 +301,20 @@ export function useDiagrams(
     setError: (v: string) => void,
     force: boolean = false,
   ) => {
+    const isActionDetached = !!detachedTabsRef.current?.['action'];
+
     if (!force && actionId === selectedActionId) {
       interactionLogger.record('action_deselected', { action_id: actionId });
       setSelectedActionId(null);
       setActionDiagram(null);
-      setActiveTab('n-1');
+      // Only fall back to the N-1 tab in the main window when the
+      // action tab is currently inline (i.e. the user was actually
+      // looking at the action tab in the main window). When the
+      // action tab is detached into a popup, the main window is
+      // already showing N or N-1 and must not be force-switched.
+      if (!isActionDetached) {
+        setActiveTab('n-1');
+      }
       return;
     }
 
@@ -310,7 +330,14 @@ export function useDiagrams(
     if (actionId === null) return;
 
     setActionDiagramLoading(true);
-    setActiveTab('action');
+    // Switching the main window's activeTab to 'action' would blank the
+    // current N or N-1 view and replace it with the "Detached" placeholder.
+    // When the action tab lives in a popup, keep the main window where the
+    // user left it and let the popup pick up the new diagram via its
+    // existing render path.
+    if (!isActionDetached) {
+      setActiveTab('action');
+    }
     try {
       const res = await api.getActionVariantDiagram(actionId);
       const { svg, viewBox } = processSvg(res.svg, voltageLevelsLength);
