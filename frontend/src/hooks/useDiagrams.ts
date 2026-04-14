@@ -525,17 +525,38 @@ export function useDiagrams(
     handleActionSelectFn: (actionId: string | null) => void,
   ) => {
     interactionLogger.record('asset_clicked', { action_id: actionId, asset_name: assetName, tab });
-    setInspectQuery(assetName);
+    // Route the auto-zoom to the clicked tab explicitly — the
+    // auto-zoom effect reads `inspectFocusTabRef` and falls back to
+    // `activeTab` only when no explicit target is set. Routing here
+    // is what lets the zoom happen on the correct (detached) tab
+    // even when we DO NOT switch the main window's `activeTab`.
+    setInspectQueryForTab(tab, assetName);
+
+    // A tab that lives in a detached popup must NOT force the main
+    // window's `activeTab` — doing so blanks whatever tab the user
+    // had open and replaces it with the "Detached" placeholder. The
+    // detached popup is already re-rendering the correct diagram via
+    // the shared React subtree, so we just update inspect state and
+    // leave `activeTab` alone.
+    const isTabDetached = !!detachedTabsRef.current?.[tab];
+
     if (tab === 'n') {
-      setActiveTab('n');
+      if (!isTabDetached) setActiveTab('n');
     } else if (tab === 'n-1') {
-      setActiveTab('n-1');
+      if (!isTabDetached) setActiveTab('n-1');
     } else if (actionId !== currentSelectedActionId) {
+      // Selecting a different action card. `handleActionSelect`
+      // already has its own detached-tab guard (it refrains from
+      // switching activeTab to 'action' when the tab is detached),
+      // so we just forward the call.
       handleActionSelectFn(actionId);
     } else {
-      setActiveTab('action');
+      // Same action, user is re-focusing an asset within it. Only
+      // force `activeTab` to 'action' when the tab is inline — for
+      // the detached case we keep the main window where it is.
+      if (!isTabDetached) setActiveTab('action');
     }
-  }, []);
+  }, [setInspectQueryForTab]);
 
   // ===== Zoom to Element =====
   // Accepts an optional `targetTab` so an in-tab inspect overlay can
