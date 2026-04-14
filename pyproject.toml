@@ -21,6 +21,7 @@ dependencies = [
     "ExpertOp4Grid>=0.2.8",
     "pypowsybl>=1.13.0",
     "pypowsybl_jupyter",
+    "pydantic-settings",
     "uv",
     "fastapi",
     "uvicorn",

@@ -30,14 +30,13 @@ if expert_op4_path.exists():
 import pypowsybl as _pp  # noqa: E402
 import expert_op4grid_recommender as _eor  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    isinstance(_pp, MagicMock) or isinstance(_eor, MagicMock),
-    reason=(
+if isinstance(_pp, MagicMock) or isinstance(_eor, MagicMock):
+    pytest.skip(
         "Real pypowsybl / expert_op4grid_recommender packages are required "
         "for this integration test; skipping because conftest.py is using "
-        "MagicMock stubs."
-    ),
-)
+        "MagicMock stubs.",
+        allow_module_level=True,
+    )
 
 from expert_backend.services.recommender_service import recommender_service
 from expert_op4grid_recommender import config
