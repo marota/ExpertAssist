@@ -318,8 +318,20 @@ export function useDiagrams(
       return;
     }
 
+    // Preserve the current viewBox across action switches. When the
+    // action tab is inline in the main window, `activeTab === 'action'`
+    // tells us the user is currently looking at the action diagram and
+    // `actionPZ.viewBox` is the right source. When the action tab is
+    // DETACHED into a popup, `activeTab` is 'n' or 'n-1' (the main
+    // window's current tab) but the popup is still showing the action
+    // diagram — so `actionPZ.viewBox` is STILL the correct source and
+    // we must use it even though `activeTab` is not 'action'. Without
+    // this branch, clicking a different action card in a detached
+    // popup would snap the popup back to the N / N-1 viewBox instead
+    // of preserving the zoom the user had on the previous action.
+    const actionTabShowsActionDiagram = activeTabRef.current === 'action' || isActionDetached;
     actionSyncSourceRef.current =
-      (activeTabRef.current === 'action' ? actionPZ.viewBox : null)
+      (actionTabShowsActionDiagram ? actionPZ.viewBox : null)
       || n1PZ.viewBox || nPZ.viewBox;
 
     if (actionId !== null) {
@@ -488,13 +500,21 @@ export function useDiagrams(
     else if (activeTab === 'action') actionPZ.setViewBox(sourceVB);
   }, [activeTab, nPZ, n1PZ, actionPZ]);
 
-  // Re-sync after action diagram loads
+  // Re-sync after action diagram loads. Fires when the action tab is
+  // currently inline in the main window OR detached into a popup —
+  // both cases need the captured viewBox to be re-applied over the
+  // native one usePanZoom resets to on every new diagram load.
+  // Without the detached branch, switching actions inside a detached
+  // popup would lose the user's zoom every time (see
+  // handleActionSelect for the capture side of the same pattern).
   useEffect(() => {
-    if (actionDiagram && activeTab === 'action' && actionSyncSourceRef.current) {
-      actionPZ.setViewBox(actionSyncSourceRef.current);
+    const isActionDetached = !!detachedTabsRef.current?.['action'];
+    const captured = actionSyncSourceRef.current;
+    if (actionDiagram && captured && (activeTab === 'action' || isActionDetached)) {
+      actionPZ.setViewBox(captured);
       actionSyncSourceRef.current = null;
     }
-  }, [actionDiagram, activeTab, actionPZ]);
+  }, [actionDiagram, activeTab, actionPZ, detachedTabs]);
 
   // ===== Asset Click =====
   const handleAssetClick = useCallback((

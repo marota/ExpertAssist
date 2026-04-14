@@ -404,6 +404,133 @@ describe('useDiagrams — interaction logging', () => {
             });
         });
 
+        // When the action tab is detached into a popup, clicking another
+        // action card must preserve the pan/zoom the user had on the
+        // previous action — same behaviour as the inline (attached) case.
+        // The capture + restore pattern in handleActionSelect / the re-sync
+        // effect were previously gated on `activeTab === 'action'`, which
+        // is FALSE for the detached case (the main window is on N or N-1),
+        // so the viewBox fell through to the N-1 / N viewBox fallback and
+        // the popup snapped to a completely different zoom every time the
+        // user clicked a different action card.
+        describe('handleActionSelect preserves action-tab zoom when detached', () => {
+            const zoomedVb = { x: 10, y: 20, w: 50, h: 40 };
+
+            it('keeps the previous action-tab viewBox after switching actions (detached case)', async () => {
+                const { api } = await import('../api');
+                // Return a new SVG with a native viewBox so usePanZoom's
+                // sync effect actively tries to reset to it — this
+                // mirrors real diagram loads and makes the test
+                // observably exercise the capture+restore path (if the
+                // restore were missing, viewBox would end up as the
+                // native one, not `zoomedVb`).
+                vi.mocked(api.getActionVariantDiagram).mockResolvedValueOnce({
+                    svg: '<svg viewBox="0 0 1000 800"></svg>',
+                    metadata: null,
+                });
+
+                const { result, rerender } = renderHook(
+                    ({ dt }: { dt: Record<string, unknown> }) => useDiagrams([], [], '', dt),
+                    {
+                        initialProps: {
+                            dt: { action: { window: {}, mountNode: document.createElement('div') } } as Record<string, unknown>,
+                        },
+                    },
+                );
+
+                // User parked the main window on N-1; the action tab
+                // lives in a popup and currently shows 'act_prev' at a
+                // zoomed-in viewBox.
+                act(() => { result.current.setActiveTab('n-1'); });
+                act(() => { result.current.setSelectedActionId('act_prev'); });
+                act(() => { result.current.actionPZ.setViewBox(zoomedVb); });
+                rerender({ dt: { action: { window: {}, mountNode: document.createElement('div') } } });
+                expect(result.current.actionPZ.viewBox).toEqual(zoomedVb);
+
+                // User clicks a different action card in the popup.
+                // handleActionSelect must capture the current action
+                // viewBox (zoomedVb) into actionSyncSourceRef and
+                // re-apply it after the new diagram loads — so the
+                // popup stays exactly where it was.
+                await act(async () => {
+                    await result.current.handleActionSelect('act_next', null, '', 0, vi.fn(), vi.fn());
+                });
+
+                expect(result.current.selectedActionId).toBe('act_next');
+                // Main window stayed on N-1 (covered by a previous test,
+                // but double-checked here as the precondition for the
+                // zoom-preserve branch).
+                expect(result.current.activeTab).toBe('n-1');
+                // The captured viewBox was re-applied — NOT the native
+                // one from the freshly loaded SVG.
+                expect(result.current.actionPZ.viewBox).toEqual(zoomedVb);
+            });
+
+            it('still preserves the action-tab viewBox across action switches when the action tab is inline (attached case)', async () => {
+                const { api } = await import('../api');
+                vi.mocked(api.getActionVariantDiagram).mockResolvedValueOnce({
+                    svg: '<svg viewBox="0 0 1000 800"></svg>',
+                    metadata: null,
+                });
+
+                const { result } = renderHook(() => useDiagrams([], [], '', {}));
+
+                // User is on the action tab inline, zoomed into
+                // 'act_prev'.
+                act(() => { result.current.setActiveTab('action'); });
+                act(() => { result.current.setSelectedActionId('act_prev'); });
+                act(() => { result.current.actionPZ.setViewBox(zoomedVb); });
+                expect(result.current.actionPZ.viewBox).toEqual(zoomedVb);
+
+                // Click a different action card.
+                await act(async () => {
+                    await result.current.handleActionSelect('act_next', null, '', 0, vi.fn(), vi.fn());
+                });
+
+                // Sanity: this is the long-standing attached-case
+                // behaviour. Regression guard for it.
+                expect(result.current.selectedActionId).toBe('act_next');
+                expect(result.current.activeTab).toBe('action');
+                expect(result.current.actionPZ.viewBox).toEqual(zoomedVb);
+            });
+
+            it('falls back to the N-1 viewBox when selecting an action with no prior action-tab viewBox (detached case)', async () => {
+                const { api } = await import('../api');
+                vi.mocked(api.getActionVariantDiagram).mockResolvedValueOnce({
+                    svg: '<svg viewBox="0 0 1000 800"></svg>',
+                    metadata: null,
+                });
+
+                const n1Vb = { x: 100, y: 200, w: 300, h: 400 };
+
+                const { result, rerender } = renderHook(
+                    ({ dt }: { dt: Record<string, unknown> }) => useDiagrams([], [], '', dt),
+                    {
+                        initialProps: {
+                            dt: { action: { window: {}, mountNode: document.createElement('div') } } as Record<string, unknown>,
+                        },
+                    },
+                );
+
+                // Main window on N-1 with a viewBox, action tab
+                // detached but the user has NOT yet selected an
+                // action — so actionPZ.viewBox is still null.
+                act(() => { result.current.setActiveTab('n-1'); });
+                act(() => { result.current.n1PZ.setViewBox(n1Vb); });
+                rerender({ dt: { action: { window: {}, mountNode: document.createElement('div') } } });
+                expect(result.current.actionPZ.viewBox).toBeNull();
+
+                // Picking the first action in the detached popup
+                // should fall back to the N-1 viewBox (the standard
+                // "sync across tabs" behaviour, unchanged by this fix).
+                await act(async () => {
+                    await result.current.handleActionSelect('act_first', null, '', 0, vi.fn(), vi.fn());
+                });
+
+                expect(result.current.actionPZ.viewBox).toEqual(n1Vb);
+            });
+        });
+
         it('re-renders with a new detachedTabs map without losing state', () => {
             // Start with no detached tabs.
             const { result, rerender } = renderHook(
