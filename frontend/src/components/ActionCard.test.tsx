@@ -157,6 +157,43 @@ describe('ActionCard', () => {
         expect(screen.getAllByTitle('Zoom to LINE_A').length).toBeGreaterThan(0);
     });
 
+    it('clicks on the max-loading line name zoom the new worst line, not the pre-action overload', () => {
+        // Regression: the action re-distributes flows and the new worst
+        // line (LINE_B) is NOT in linesOverloaded (which reflects the
+        // pre-action N-1 overloads — only LINE_A here). Clicking
+        // "LINE_B" in the "Max loading: X% on LINE_B" row must zoom on
+        // LINE_B, not on any of the pre-action lines.
+        const onAssetClick = vi.fn();
+        const details: ActionDetail = {
+            ...baseDetails,
+            rho_before: [1.05],
+            rho_after: [0.72],     // LINE_A is now below the limit
+            max_rho: 0.967,        // but LINE_B (newly overloaded) peaks at 96.7%
+            max_rho_line: 'LINE_B',
+            is_rho_reduction: true,
+        };
+        render(
+            <ActionCard
+                {...defaultProps}
+                details={details}
+                linesOverloaded={['LINE_A']}
+                onAssetClick={onAssetClick}
+            />
+        );
+
+        // The displayed text must mention the new worst line
+        expect(screen.getByText('96.7%')).toBeInTheDocument();
+
+        // Click specifically the "on LINE_B" button inside the Max
+        // loading row — not the rho_after button (which would be on
+        // LINE_A) and not any sticky-panel button (not in this test).
+        const maxRhoButton = screen.getByTitle('Zoom to LINE_B');
+        fireEvent.click(maxRhoButton);
+
+        expect(onAssetClick).toHaveBeenCalledTimes(1);
+        expect(onAssetClick).toHaveBeenCalledWith('act_1', 'LINE_B', 'action');
+    });
+
     it('renders loading after rho section (loading before is shown in the sticky Overloads panel)', () => {
         render(<ActionCard {...defaultProps} />);
         expect(screen.queryByText(/Loading before/)).not.toBeInTheDocument();
