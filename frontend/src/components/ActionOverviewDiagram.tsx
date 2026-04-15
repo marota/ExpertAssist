@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ActionDetail, DiagramData, MetadataIndex, ViewBox } from '../types';
 import {
+    applyActionOverviewHighlights,
     applyActionOverviewPins,
     buildActionOverviewPins,
     computeActionOverviewFitRect,
@@ -229,6 +230,20 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         onActionSelect(actionId);
     }, [onActionSelect]);
 
+    // (Re)apply contingency + overload highlights whenever the
+    // contingency or the N-1 overload set changes.  Mirrors what
+    // the N-1 tab shows so the operator keeps the same situational
+    // awareness on the overview.  The helper inserts a dedicated
+    // `.nad-overview-highlight-layer` as a sibling of the dim layer
+    // so the halos render at full opacity above the faded
+    // background but below the pin layer.
+    useEffect(() => {
+        if (!svgReady) return;
+        const container = containerRef.current;
+        if (!container) return;
+        applyActionOverviewHighlights(container, n1MetaIndex ?? null, contingency, overloadedLines);
+    }, [svgReady, svgString, n1MetaIndex, contingency, overloadedLines]);
+
     // (Re)apply pins whenever the source SVG or pin list changes.
     // Pins are appended to the SVG itself (not to the container
     // div) so the existing viewBox-based pan/zoom naturally
@@ -255,6 +270,14 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // every update: the wheel-zoom path in usePanZoom writes the
     // DOM directly (bypassing React state for perf), so a plain
     // `pz.viewBox` useEffect dep would lag behind the live drag.
+    //
+    // The rescale call is rAF-throttled because the wheel-zoom and
+    // drag-pan paths in usePanZoom mutate the viewBox on every
+    // animation frame (and sometimes more than once per frame on
+    // wheel bursts). Without throttling, large grids would call
+    // `getScreenCTM()` — a forced layout — many times per frame
+    // and freeze the page (the "Page ne répondant pas" we saw in
+    // the field). One scheduled rescale per frame is enough.
     useEffect(() => {
         if (!svgReady || !visible) return;
         const container = containerRef.current;
@@ -267,11 +290,20 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         // come up at the right size on the first paint.
         rescaleActionOverviewPins(container);
 
-        const observer = new MutationObserver(() => {
-            rescaleActionOverviewPins(container);
-        });
+        let rafId: number | null = null;
+        const scheduleRescale = () => {
+            if (rafId !== null) return;
+            rafId = requestAnimationFrame(() => {
+                rafId = null;
+                rescaleActionOverviewPins(container);
+            });
+        };
+        const observer = new MutationObserver(scheduleRescale);
         observer.observe(svg, { attributes: true, attributeFilter: ['viewBox'] });
-        return () => observer.disconnect();
+        return () => {
+            observer.disconnect();
+            if (rafId !== null) cancelAnimationFrame(rafId);
+        };
     }, [svgReady, visible, svgString, pins]);
 
     // When the view becomes visible for the first time (or again

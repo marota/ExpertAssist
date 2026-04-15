@@ -53,13 +53,23 @@ const makeAction = (overrides: Partial<ActionDetail> = {}): ActionDetail => ({
 
 // A minimal NAD-like SVG background — the test component
 // parses this via innerHTML and queries for the injected pin
-// layer. Includes a `.nad-vl-nodes circle[r="40"]` so the pin
-// sizing logic (which reads the VL circle radius) has something
-// realistic to latch on.
+// layer. Includes:
+//  - `.nad-vl-nodes circle[r="40"]` so the pin sizing logic
+//    (which reads the VL circle radius) has something realistic
+//    to latch on
+//  - `<g id="svg-line-X">` stubs for every line referenced by
+//    the metadata index so `applyActionOverviewHighlights` can
+//    locate and clone the contingency / overload edges.
 const makeN1Diagram = (): DiagramData => ({
     svg:
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -50 700 700">' +
         '  <g class="nad-vl-nodes"><circle r="40"/></g>' +
+        '  <g class="nad-edges">' +
+        '    <g id="svg-line-a"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+        '    <g id="svg-line-b"><line x1="100" y1="0" x2="100" y2="100"/></g>' +
+        '    <g id="svg-line-c"><line x1="0" y1="0" x2="0" y2="100"/></g>' +
+        '    <g id="svg-line-d"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+        '  </g>' +
         '</svg>',
     metadata: null,
     lines_overloaded: ['LINE_B'],
@@ -389,21 +399,25 @@ describe('ActionOverviewDiagram', () => {
             // upscales the body well above scale(1).
             svg.getScreenCTM = (() => ({ a: 0.1, b: 0, c: 0, d: 0.1, e: 0, f: 0 })) as unknown as SVGGraphicsElement['getScreenCTM'];
 
-            // Mutate the viewBox — MutationObserver fires on the
-            // next microtask, so flush with a manual wait.
+            // Mutate the viewBox — the MutationObserver schedules
+            // a rAF, so we wait one animation frame to read the
+            // committed scale.
             (svg as unknown as SVGSVGElement).setAttribute('viewBox', '0 0 99999 99999');
 
             return new Promise<void>(resolve => {
-                // MutationObserver callbacks are scheduled as microtasks
+                // First a microtask flush to let MO deliver its records,
+                // then a rAF to let the throttled rescaler run.
                 queueMicrotask(() => {
-                    const body = container.querySelector('g.nad-action-overview-pin-body')!;
-                    const match = body.getAttribute('transform')!.match(/^scale\(([0-9.]+)\)$/);
-                    expect(match).not.toBeNull();
-                    const scale = parseFloat(match![1]);
-                    // pxPerSvgUnit=0.1, MIN_SCREEN_RADIUS_PX=22,
-                    // baseR=40 → effectiveR=max(40, 220)=220 → scale=5.5
-                    expect(scale).toBeCloseTo(220 / 40, 2);
-                    resolve();
+                    requestAnimationFrame(() => {
+                        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+                        const match = body.getAttribute('transform')!.match(/^scale\(([0-9.]+)\)$/);
+                        expect(match).not.toBeNull();
+                        const scale = parseFloat(match![1]);
+                        // pxPerSvgUnit=0.1, MIN_SCREEN_RADIUS_PX=22,
+                        // baseR=40 → effectiveR=max(40, 220)=220 → scale=5.5
+                        expect(scale).toBeCloseTo(220 / 40, 2);
+                        resolve();
+                    });
                 });
             });
         });
@@ -418,11 +432,101 @@ describe('ActionOverviewDiagram', () => {
 
             return new Promise<void>(resolve => {
                 queueMicrotask(() => {
-                    const body = container.querySelector('g.nad-action-overview-pin-body')!;
-                    expect(body.getAttribute('transform')).toBe('scale(1)');
-                    resolve();
+                    requestAnimationFrame(() => {
+                        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+                        expect(body.getAttribute('transform')).toBe('scale(1)');
+                        resolve();
+                    });
                 });
             });
+        });
+
+        it('rAF-throttles rescale: many viewBox mutations in a row trigger AT MOST one rescale per animation frame', () => {
+            // Regression guard for the "Page ne répondant pas" lag:
+            // the wheel-zoom path in usePanZoom mutates the viewBox
+            // many times per frame; without rAF batching that would
+            // call getScreenCTM (a forced layout) on every mutation
+            // and freeze the page on large grids.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg') as unknown as SVGGraphicsElement;
+            let ctmCalls = 0;
+            svg.getScreenCTM = (() => {
+                ctmCalls += 1;
+                return { a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0 };
+            }) as unknown as SVGGraphicsElement['getScreenCTM'];
+
+            // Reset the counter — initial pin mount + dim wrap may
+            // have invoked getScreenCTM already; we only care about
+            // the burst that follows the rapid viewBox writes.
+            ctmCalls = 0;
+
+            // Simulate a wheel-zoom burst: 20 viewBox writes in a row.
+            for (let i = 1; i <= 20; i++) {
+                (svg as unknown as SVGSVGElement).setAttribute('viewBox', `0 0 ${1000 + i} ${1000 + i}`);
+            }
+
+            return new Promise<void>(resolve => {
+                queueMicrotask(() => {
+                    requestAnimationFrame(() => {
+                        // Even though we wrote viewBox 20 times, the
+                        // throttled rescaler should have run AT MOST
+                        // once for that frame (and called getScreenCTM
+                        // exactly once inside that single rescale).
+                        expect(ctmCalls).toBeLessThanOrEqual(1);
+                        resolve();
+                    });
+                });
+            });
+        });
+    });
+
+    describe('contingency + overload highlights', () => {
+        it('renders contingency + overload highlight clones via applyActionOverviewHighlights', () => {
+            // The fixture sets contingency='LINE_C' and overloadedLines=['LINE_B'].
+            // Both must produce a clone inside the .nad-overview-highlight-layer.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const layer = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer).not.toBeNull();
+            expect(layer!.querySelector('.nad-contingency-highlight')).not.toBeNull();
+            expect(layer!.querySelector('.nad-overloaded')).not.toBeNull();
+        });
+
+        it('places the highlight layer ABOVE the dim layer (not inside it)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const dim = svg.querySelector(':scope > g.nad-overview-dim-layer');
+            const highlightLayer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
+            expect(dim).not.toBeNull();
+            expect(highlightLayer).not.toBeNull();
+            // Highlight layer must NOT be a descendant of the dim
+            // group — otherwise its halos would inherit the 0.35
+            // opacity and become invisible.
+            expect(dim!.contains(highlightLayer!)).toBe(false);
+        });
+
+        it('places the highlight layer BELOW the pin layer in document order', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const directGs = Array.from(svg.children) as Element[];
+            const highlightIdx = directGs.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+            const pinIdx = directGs.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+            expect(highlightIdx).toBeGreaterThan(-1);
+            expect(pinIdx).toBeGreaterThan(-1);
+            expect(highlightIdx).toBeLessThan(pinIdx);
+        });
+
+        it('refreshes highlights when contingency changes', () => {
+            const { container, rerender } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const layer1 = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer1).not.toBeNull();
+            // Change contingency to a non-resolvable id — the
+            // highlight layer should be wiped (1 contingency lost),
+            // leaving only the overload clone.
+            rerender(<ActionOverviewDiagram {...defaultProps()} contingency={null} />);
+            const layer2 = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer2).not.toBeNull();
+            expect(layer2!.querySelector('.nad-contingency-highlight')).toBeNull();
+            expect(layer2!.querySelector('.nad-overloaded')).not.toBeNull();
         });
     });
 

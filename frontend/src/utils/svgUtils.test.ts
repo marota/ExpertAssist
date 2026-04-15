@@ -20,6 +20,7 @@ import {
     applyContingencyHighlight,
     buildActionOverviewPins,
     applyActionOverviewPins,
+    applyActionOverviewHighlights,
     rescaleActionOverviewPins,
     computeActionOverviewFitRect,
     computeEquipmentFitRect,
@@ -1459,6 +1460,124 @@ describe('applyActionOverviewPins', () => {
         expect(() => applyActionOverviewPins(container, [
             { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
         ], () => {})).not.toThrow();
+    });
+
+    it('stops mousedown propagation so usePanZoom drag does not eat the click', () => {
+        // Regression: if mousedown bubbles up to the svg-container,
+        // usePanZoom calls setInteracting(true) which sets
+        // pointer-events: none on every svg child via App.css. The
+        // pin's click never lands. We assert here that mousedown
+        // is stopped at the pin (propagation chain truncated).
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const pin = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+        let bubbled = false;
+        // Listen on the svg ancestor — if propagation is properly
+        // stopped at the pin, this listener will NOT fire.
+        const svg = container.querySelector('svg')!;
+        svg.addEventListener('mousedown', () => { bubbled = true; });
+        pin.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(bubbled).toBe(false);
+    });
+});
+
+describe('applyActionOverviewHighlights', () => {
+    const buildContainer = (): { container: HTMLElement; meta: MetadataIndex } => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-edges">' +
+            '    <g id="svg-cont"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+            '    <g id="svg-ovl-1"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+            '    <g id="svg-ovl-2"><line x1="0" y1="200" x2="100" y2="200"/></g>' +
+            '  </g>' +
+            '</svg>';
+        const meta: MetadataIndex = {
+            nodesByEquipmentId: new Map(),
+            nodesBySvgId: new Map(),
+            edgesByEquipmentId: new Map<string, EdgeMeta>([
+                ['CONT_LINE', { equipmentId: 'CONT_LINE', svgId: 'svg-cont', node1: '', node2: '' }],
+                ['OVL_1', { equipmentId: 'OVL_1', svgId: 'svg-ovl-1', node1: '', node2: '' }],
+                ['OVL_2', { equipmentId: 'OVL_2', svgId: 'svg-ovl-2', node1: '', node2: '' }],
+            ]),
+            edgesByNode: new Map(),
+        };
+        return { container, meta };
+    };
+
+    it('creates a .nad-overview-highlight-layer with one clone per highlighted edge', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+        const layer = container.querySelector('g.nad-overview-highlight-layer');
+        expect(layer).not.toBeNull();
+        // 1 contingency + 2 overloads = 3 clones
+        expect(layer!.children.length).toBe(3);
+    });
+
+    it('uses the existing nad-contingency-highlight class on the contingency clone', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-contingency-highlight');
+        expect(clone).not.toBeNull();
+        expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
+    });
+
+    it('uses the existing nad-overloaded class on overload clones', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, null, ['OVL_1']);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-overloaded');
+        expect(clone).not.toBeNull();
+        expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
+    });
+
+    it('inserts the highlight layer BEFORE the action-overview pin layer', () => {
+        const { container, meta } = buildContainer();
+        // First create a pin layer to lock the desired ordering
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 50, y: 50, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
+        const svg = container.querySelector('svg')!;
+        const directChildren = Array.from(svg.children).filter(c => c.tagName === 'g' || c.tagName === 'G');
+        const highlightIdx = directChildren.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+        const pinIdx = directChildren.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+        expect(highlightIdx).toBeGreaterThan(-1);
+        expect(pinIdx).toBeGreaterThan(-1);
+        expect(highlightIdx).toBeLessThan(pinIdx);
+    });
+
+    it('is idempotent — repeated calls wipe the previous highlight layer', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        const layers = container.querySelectorAll('g.nad-overview-highlight-layer');
+        expect(layers.length).toBe(1);
+        expect(layers[0].children.length).toBe(2); // 1 contingency + 1 overload
+    });
+
+    it('clears the highlight layer when called with neither contingency nor overloads', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        applyActionOverviewHighlights(container, meta, null, []);
+        expect(container.querySelector('g.nad-overview-highlight-layer')).toBeNull();
+    });
+
+    it('skips equipment ids that are not in the metadata', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'GHOST', ['OVL_1', 'GHOST2']);
+        const layer = container.querySelector('g.nad-overview-highlight-layer')!;
+        // Only OVL_1 resolved → 1 clone
+        expect(layer.children.length).toBe(1);
+    });
+
+    it('no-ops gracefully on null container / metaIndex / svg', () => {
+        expect(() => applyActionOverviewHighlights(null, null, null, [])).not.toThrow();
+        expect(() => applyActionOverviewHighlights(document.createElement('div'), null, 'X', ['Y'])).not.toThrow();
+        const empty = document.createElement('div');
+        expect(() => applyActionOverviewHighlights(empty, { nodesByEquipmentId: new Map(), nodesBySvgId: new Map(), edgesByEquipmentId: new Map(), edgesByNode: new Map() }, 'X', [])).not.toThrow();
     });
 
     it('wraps pin glyph inside a .nad-action-overview-pin-body subgroup for rescaling', () => {

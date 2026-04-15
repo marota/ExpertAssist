@@ -862,6 +862,113 @@ export const buildActionOverviewPins = (
 };
 
 /**
+ * Apply contingency + overload halo highlights to the
+ * action-overview diagram, mirroring what the N-1 tab shows.
+ *
+ * The overview wraps every imported NAD child in a
+ * `.nad-overview-dim-layer <g opacity="0.35">` so the pin overlay
+ * reads at high contrast. That dimming, however, would also fade
+ * the contingency / overload halos to invisibility if we styled
+ * the originals in place — SVG group opacity multiplies through
+ * to descendants and is not overridable per-element.
+ *
+ * The fix is to clone each highlighted edge into a dedicated
+ * `.nad-overview-highlight-layer` that lives as a SIBLING of the
+ * dim layer (and ABOVE it in document order), so the halos
+ * inherit no opacity and render at full saturation. Pins are
+ * appended as the SVG's last child later, so the visual stack is:
+ *
+ *   1. dim layer (faded NAD background)
+ *   2. overview highlight layer (contingency + overload halos)
+ *   3. action overview pin layer (Google-Maps pins)
+ *
+ * The clones reuse the existing `.nad-contingency-highlight` and
+ * `.nad-overloaded` CSS rules from App.css so the visual encoding
+ * stays identical to the N-1 tab.
+ *
+ * Idempotent: the existing highlight layer is removed before
+ * being re-created, so calling this on every `selectedBranch`
+ * change is safe.
+ */
+export const applyActionOverviewHighlights = (
+    container: HTMLElement | null,
+    metaIndex: MetadataIndex | null,
+    contingency: string | null,
+    overloadedLines: readonly string[],
+) => {
+    if (!container) return;
+    const svg = container.querySelector('svg') as SVGSVGElement | null;
+    if (!svg) return;
+
+    // Wipe any existing overview highlight layer — keeps repeated
+    // calls idempotent.
+    svg.querySelectorAll('.nad-overview-highlight-layer').forEach(el => el.remove());
+
+    if (!metaIndex) return;
+    const haveContingency = !!contingency;
+    const haveOverloads = overloadedLines.length > 0;
+    if (!haveContingency && !haveOverloads) return;
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const layer = document.createElementNS(SVG_NS, 'g') as SVGGElement;
+    layer.setAttribute('class', 'nad-overview-highlight-layer');
+    // Insert BEFORE the pin layer if it exists, otherwise append
+    // at the end. Either way the highlights render above the
+    // dim layer (which is appended first by the component) and
+    // below the pins.
+    const pinLayer = svg.querySelector('.nad-action-overview-pins');
+    if (pinLayer) {
+        svg.insertBefore(layer, pinLayer);
+    } else {
+        svg.appendChild(layer);
+    }
+
+    const idMap = getIdMap(container);
+    let cachedLayerCTM: DOMMatrix | null = null;
+
+    const cloneEdge = (svgId: string, klass: string) => {
+        const original = idMap.get(svgId);
+        if (!original) return;
+        const clone = original.cloneNode(true) as SVGGraphicsElement;
+        clone.removeAttribute('id');
+        clone.classList.add(klass);
+        clone.classList.add('nad-highlight-clone');
+        // Strip any delta-* class the original carries so the
+        // delta CSS does not override the halo on the clone (same
+        // hardening as applyOverloadedHighlights).
+        clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
+
+        try {
+            const origCTM = (original as SVGGraphicsElement).getScreenCTM?.();
+            if (!cachedLayerCTM) {
+                cachedLayerCTM = (layer as unknown as SVGGraphicsElement).getScreenCTM?.() ?? null;
+            }
+            if (origCTM && cachedLayerCTM) {
+                const m = cachedLayerCTM.inverse().multiply(origCTM);
+                clone.setAttribute(
+                    'transform',
+                    `matrix(${m.a}, ${m.b}, ${m.c}, ${m.d}, ${m.e}, ${m.f})`,
+                );
+            }
+        } catch {
+            // jsdom / disconnected element — skip the matrix
+            // transform; the clone still renders, just at the
+            // original's local coordinates.
+        }
+        layer.appendChild(clone);
+    };
+
+    if (contingency) {
+        const edge = metaIndex.edgesByEquipmentId.get(contingency);
+        if (edge?.svgId) cloneEdge(edge.svgId, 'nad-contingency-highlight');
+    }
+    overloadedLines.forEach(name => {
+        const edge = metaIndex.edgesByEquipmentId.get(name);
+        if (edge?.svgId) cloneEdge(edge.svgId, 'nad-overloaded');
+    });
+};
+
+/**
  * Read a sensible base radius for the pin glyph from the SVG.
  *
  * We want pins to be "similar in size to voltage-level circles when
@@ -1063,6 +1170,21 @@ export const applyActionOverviewPins = (
         // the `dblclick` event; that still works because the
         // dblclick handler no-ops when the timer is null.
         let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
+        // CRITICAL: stop mousedown propagation so the container's
+        // pan/zoom drag handler (registered by `usePanZoom`) does
+        // not start a drag and call `setInteracting(true)` — that
+        // adds `.svg-interacting` to the container which, via the
+        // App.css rule `.svg-container.svg-interacting svg *
+        // { pointer-events: none !important }`, would disable
+        // pointer events on ALL svg children before the click
+        // event can land on the pin. The hover tooltip would
+        // still work (pointer-events is briefly disabled and
+        // re-enabled), but click would silently never fire.
+        g.addEventListener('mousedown', (evt) => {
+            evt.stopPropagation();
+        });
+
         g.addEventListener('click', (evt) => {
             evt.stopPropagation();
             if (clickTimer !== null) return;
