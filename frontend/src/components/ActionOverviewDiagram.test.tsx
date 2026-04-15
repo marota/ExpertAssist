@@ -491,7 +491,7 @@ describe('ActionOverviewDiagram', () => {
             expect(layer!.querySelector('.nad-overloaded')).not.toBeNull();
         });
 
-        it('places the highlight layer ABOVE the dim layer (not inside it)', () => {
+        it('places the highlight layer NEXT TO (not inside) the dim layer', () => {
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
             const dim = svg.querySelector(':scope > g.nad-overview-dim-layer');
@@ -504,15 +504,23 @@ describe('ActionOverviewDiagram', () => {
             expect(dim!.contains(highlightLayer!)).toBe(false);
         });
 
-        it('places the highlight layer BELOW the pin layer in document order', () => {
+        it('places the highlight layer BEFORE the dim layer in document order (background like N-1 tab)', () => {
+            // Regression guard: the highlight clones must render
+            // BEHIND the dimmed network so the halo peeks out
+            // around the line strokes, mirroring the
+            // `#nad-background-layer` placement on the N-1 tab.
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
             const directGs = Array.from(svg.children) as Element[];
             const highlightIdx = directGs.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+            const dimIdx = directGs.findIndex(c => c.classList.contains('nad-overview-dim-layer'));
             const pinIdx = directGs.findIndex(c => c.classList.contains('nad-action-overview-pins'));
             expect(highlightIdx).toBeGreaterThan(-1);
+            expect(dimIdx).toBeGreaterThan(-1);
             expect(pinIdx).toBeGreaterThan(-1);
-            expect(highlightIdx).toBeLessThan(pinIdx);
+            // Order: highlights → dim → pins
+            expect(highlightIdx).toBeLessThan(dimIdx);
+            expect(dimIdx).toBeLessThan(pinIdx);
         });
 
         it('refreshes highlights when contingency changes', () => {
@@ -670,6 +678,54 @@ describe('ActionOverviewDiagram', () => {
 
             rerender(<ActionOverviewDiagram {...defaultProps()} visible={false} />);
             expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('records data-place-above and data-horizontal-align attributes from the placement helper', async () => {
+            // Stub getBoundingClientRect on the pin so the click
+            // handler captures a known screen position.  We pin
+            // it to the bottom-right corner of the viewport
+            // (1024x768 in jsdom by default) so the placement
+            // helper picks above + end.
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]') as SVGGElement;
+            pin.getBoundingClientRect = (() => ({
+                left: 900, right: 920,
+                top: 700, bottom: 720,
+                width: 20, height: 20,
+                x: 900, y: 700,
+                toJSON: () => ({}),
+            })) as unknown as SVGGElement['getBoundingClientRect'];
+
+            fireEvent.click(pin);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            expect(popover.getAttribute('data-place-above')).toBe('true');
+            expect(popover.getAttribute('data-horizontal-align')).toBe('end');
+            // Above placement → uses CSS `bottom`, not `top`.
+            expect(popover.style.bottom).not.toBe('');
+            expect(popover.style.top).toBe('');
+        });
+
+        it('renders the popover BELOW the pin when the pin is in the top of the viewport', async () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]') as SVGGElement;
+            pin.getBoundingClientRect = (() => ({
+                left: 100, right: 120,
+                top: 50, bottom: 70,
+                width: 20, height: 20,
+                x: 100, y: 50,
+                toJSON: () => ({}),
+            })) as unknown as SVGGElement['getBoundingClientRect'];
+
+            fireEvent.click(pin);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            expect(popover.getAttribute('data-place-above')).toBe('false');
+            expect(popover.getAttribute('data-horizontal-align')).toBe('start');
+            expect(popover.style.top).not.toBe('');
+            expect(popover.style.bottom).toBe('');
         });
     });
 });

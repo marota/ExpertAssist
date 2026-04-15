@@ -2416,4 +2416,84 @@ describe('ActionFeed', () => {
             });
         });
     });
+
+    describe('auto-scroll on selectedActionId change', () => {
+        // The action feed mounts a useEffect that scrolls the
+        // currently-viewed card into view whenever
+        // `selectedActionId` flips. This is what lets a
+        // double-click on a pin in the action overview center
+        // the matching card in the sidebar without the operator
+        // having to scroll.
+
+        const makeProps = (overrides: Partial<typeof defaultProps> = {}) => ({
+            ...defaultProps,
+            actions: {
+                'act_a': {
+                    description_unitaire: 'A',
+                    rho_before: null,
+                    rho_after: null,
+                    max_rho: 0.5,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    action_topology: emptyTopo,
+                },
+                'act_b': {
+                    description_unitaire: 'B',
+                    rho_before: null,
+                    rho_after: null,
+                    max_rho: 0.6,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    action_topology: emptyTopo,
+                },
+                'act_c': {
+                    description_unitaire: 'C',
+                    rho_before: null,
+                    rho_after: null,
+                    max_rho: 0.7,
+                    max_rho_line: 'LINE_1',
+                    is_rho_reduction: true,
+                    action_topology: emptyTopo,
+                },
+            },
+            ...overrides,
+        });
+
+        beforeEach(() => {
+            // jsdom doesn't implement scrollIntoView; stub it
+            // so the effect can call it without throwing.
+            Element.prototype.scrollIntoView = vi.fn() as unknown as Element['scrollIntoView'];
+        });
+
+        it('calls scrollIntoView on the matching card when selectedActionId changes', async () => {
+            const { rerender } = render(<ActionFeed {...makeProps()} />);
+            // Switch to selecting act_b
+            rerender(<ActionFeed {...makeProps({ selectedActionId: 'act_b' })} />);
+            // Wait one rAF for the deferred scroll to fire
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const card = screen.getByTestId('action-card-act_b');
+            expect(card.scrollIntoView).toHaveBeenCalledWith(
+                expect.objectContaining({ block: 'center' })
+            );
+        });
+
+        it('does NOT scroll when selectedActionId is null', async () => {
+            const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView');
+            render(<ActionFeed {...makeProps()} />);
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            expect(scrollSpy).not.toHaveBeenCalled();
+        });
+
+        it('re-scrolls on each selectedActionId change', async () => {
+            const { rerender } = render(<ActionFeed {...makeProps({ selectedActionId: 'act_a' })} />);
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const cardA = screen.getByTestId('action-card-act_a');
+            expect(cardA.scrollIntoView).toHaveBeenCalled();
+
+            rerender(<ActionFeed {...makeProps({ selectedActionId: 'act_c' })} />);
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const cardC = screen.getByTestId('action-card-act_c');
+            expect(cardC.scrollIntoView).toHaveBeenCalled();
+        });
+    });
 });

@@ -1533,20 +1533,39 @@ describe('applyActionOverviewHighlights', () => {
         expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
     });
 
-    it('inserts the highlight layer BEFORE the action-overview pin layer', () => {
+    it('inserts the highlight layer BEFORE the dim layer (background-style placement)', () => {
+        // Regression guard: highlights must render BEHIND the
+        // dimmed network so halos peek out around line strokes,
+        // matching the `#nad-background-layer` placement on the
+        // N-1 tab.
         const { container, meta } = buildContainer();
-        // First create a pin layer to lock the desired ordering
-        applyActionOverviewPins(container, [
-            { id: 'a', x: 50, y: 50, severity: 'green', label: '50%', title: '' },
-        ], () => {});
+        // Wrap existing children in a dim-layer stub the way
+        // ActionOverviewDiagram does at injection time.
+        const svg = container.querySelector('svg')!;
+        const dimGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        dimGroup.setAttribute('class', 'nad-overview-dim-layer');
+        Array.from(svg.childNodes).forEach(c => dimGroup.appendChild(c));
+        svg.appendChild(dimGroup);
+
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
+
+        const directChildren = Array.from(svg.children) as Element[];
+        const highlightIdx = directChildren.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+        const dimIdx = directChildren.findIndex(c => c.classList.contains('nad-overview-dim-layer'));
+        expect(highlightIdx).toBeGreaterThan(-1);
+        expect(dimIdx).toBeGreaterThan(-1);
+        // Highlight layer must come BEFORE dim layer in document
+        // order so it renders behind the dimmed network.
+        expect(highlightIdx).toBeLessThan(dimIdx);
+    });
+
+    it('falls back to inserting at the start of the SVG when no dim layer is present', () => {
+        const { container, meta } = buildContainer();
         applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
         const svg = container.querySelector('svg')!;
-        const directChildren = Array.from(svg.children).filter(c => c.tagName === 'g' || c.tagName === 'G');
-        const highlightIdx = directChildren.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
-        const pinIdx = directChildren.findIndex(c => c.classList.contains('nad-action-overview-pins'));
-        expect(highlightIdx).toBeGreaterThan(-1);
-        expect(pinIdx).toBeGreaterThan(-1);
-        expect(highlightIdx).toBeLessThan(pinIdx);
+        // The first <g> child of the SVG should be our highlight layer.
+        const firstG = svg.querySelector(':scope > g');
+        expect(firstG?.classList.contains('nad-overview-highlight-layer')).toBe(true);
     });
 
     it('is idempotent — repeated calls wipe the previous highlight layer', () => {

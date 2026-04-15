@@ -578,14 +578,68 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             <div style={{ display: 'flex', borderBottom: '1px solid #ccc', flexShrink: 0 }}>
                 {(
                     [
-                        { id: 'n' as TabId, label: 'Network (N)', available: !!nDiagram?.svg, accentColor: '#3498db', dimColor: '#7f8c8d', placeholder: 'Configure a network path in Settings to load the base-case diagram.' },
-                        { id: 'n-1' as TabId, label: 'Contingency (N-1)', available: !!n1Diagram?.svg, accentColor: '#e74c3c', dimColor: '#aab', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
+                        { id: 'n' as TabId, label: 'Network (N)' as React.ReactNode, available: !!nDiagram?.svg, accentColor: '#3498db', dimColor: '#7f8c8d', placeholder: 'Configure a network path in Settings to load the base-case diagram.' },
+                        { id: 'n-1' as TabId, label: 'Contingency (N-1)' as React.ReactNode, available: !!n1Diagram?.svg, accentColor: '#e74c3c', dimColor: '#aab', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
                         // When no card is selected, the Remedial Action tab hosts the
                         // action-overview view (pins over the N-1 network). It is considered
                         // "available" as soon as the N-1 diagram has loaded, so the tab is no
                         // longer italicised while the user is still browsing the overview.
-                        { id: 'action' as TabId, label: selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', available: !!actionDiagram?.svg || !!n1Diagram?.svg, accentColor: '#ff4081', dimColor: '#aab', placeholder: 'Select a contingency and run the analysis to see remedial actions.' },
-                        { id: 'overflow' as TabId, label: 'Overflow Analysis', available: !!result?.pdf_url, accentColor: '#27ae60', dimColor: '#aab', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
+                        //
+                        // When a card IS selected, the action id is rendered as a
+                        // clickable chip that deselects the action on click — taking
+                        // the user back to the overview view in the same tab. The chip
+                        // lives INSIDE the tab text instead of as a separate close
+                        // button so it does not collide with the Flow/Impacts toggle
+                        // and other top-right controls.
+                        {
+                            id: 'action' as TabId,
+                            label: selectedActionId ? (
+                                <>
+                                    Remedial Action:{' '}
+                                    <span
+                                        data-testid="action-tab-deselect-chip"
+                                        role="button"
+                                        tabIndex={0}
+                                        title="Click the action id to return to the overview"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onActionSelect?.(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                onActionSelect?.(null);
+                                            }
+                                        }}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 4,
+                                            padding: '1px 8px',
+                                            borderRadius: 10,
+                                            background: '#fce4ec',
+                                            color: '#ad1457',
+                                            border: '1px solid #f48fb1',
+                                            cursor: 'pointer',
+                                            textDecoration: 'underline dotted',
+                                            fontWeight: 600,
+                                            maxWidth: '100%',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                        }}
+                                    >
+                                        {selectedActionId}
+                                        <span aria-hidden style={{ fontSize: 10, opacity: 0.8 }}>{'\u2715'}</span>
+                                    </span>
+                                </>
+                            ) : 'Remedial action: overview',
+                            available: !!actionDiagram?.svg || !!n1Diagram?.svg,
+                            accentColor: '#ff4081',
+                            dimColor: '#aab',
+                            placeholder: 'Select a contingency and run the analysis to see remedial actions.',
+                        },
+                        { id: 'overflow' as TabId, label: 'Overflow Analysis' as React.ReactNode, available: !!result?.pdf_url, accentColor: '#27ae60', dimColor: '#aab', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
                     ] as const
                 ).map(tab => {
                     const isActive = activeTab === tab.id;
@@ -878,40 +932,13 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             visible={!selectedActionId && !actionDiagramLoading}
                         />
                         {/*
-                          Close ✕ — appears at the top-right of the
-                          action tab when a card is selected (i.e.
-                          the drill-down action-variant diagram is
-                          being shown). Clicking it deselects the
-                          action, which folds the overview back in.
+                          The "back to overview" affordance now lives
+                          inside the tab label as a clickable chip
+                          around the action id (see the action tab
+                          definition above). The previous top-right ✕
+                          button was removed because it overlapped
+                          with the Flow/Impacts toggle.
                         */}
-                        {selectedActionId && actionDiagram?.svg && (
-                            <button
-                                data-testid="action-tab-back-to-overview"
-                                onClick={() => onActionSelect?.(null)}
-                                title="Back to actions overview"
-                                style={{
-                                    position: 'absolute',
-                                    top: 10,
-                                    right: 10,
-                                    zIndex: 110,
-                                    background: 'white',
-                                    border: '1px solid #cbd5e1',
-                                    borderRadius: 16,
-                                    padding: '4px 12px',
-                                    cursor: 'pointer',
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    color: '#334155',
-                                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: 6,
-                                }}
-                            >
-                                <span style={{ fontSize: 14 }}>{'\u2715'}</span>
-                                Overview
-                            </button>
-                        )}
                         {actionDiagramLoading && (
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                                 Generating Action Variant Diagram...

@@ -867,20 +867,19 @@ export const buildActionOverviewPins = (
  *
  * The overview wraps every imported NAD child in a
  * `.nad-overview-dim-layer <g opacity="0.35">` so the pin overlay
- * reads at high contrast. That dimming, however, would also fade
- * the contingency / overload halos to invisibility if we styled
- * the originals in place — SVG group opacity multiplies through
- * to descendants and is not overridable per-element.
+ * reads at high contrast.
  *
- * The fix is to clone each highlighted edge into a dedicated
- * `.nad-overview-highlight-layer` that lives as a SIBLING of the
- * dim layer (and ABOVE it in document order), so the halos
- * inherit no opacity and render at full saturation. Pins are
- * appended as the SVG's last child later, so the visual stack is:
+ * To match the N-1 tab visually, the highlight clones live in a
+ * dedicated `.nad-overview-highlight-layer` that is inserted
+ * BEFORE the dim layer in document order. That puts the halos
+ * BEHIND the dimmed network — the same compositing relationship
+ * as the N-1 tab, where halos peek out from behind the original
+ * line strokes (see App.css `#nad-background-layer`). Visual
+ * stack:
  *
- *   1. dim layer (faded NAD background)
- *   2. overview highlight layer (contingency + overload halos)
- *   3. action overview pin layer (Google-Maps pins)
+ *   1. overview highlight layer (contingency + overload halos)
+ *   2. dim layer (faded NAD background, painted on top)
+ *   3. action overview pin layer (Google-Maps pins on top)
  *
  * The clones reuse the existing `.nad-contingency-highlight` and
  * `.nad-overloaded` CSS rules from App.css so the visual encoding
@@ -912,13 +911,16 @@ export const applyActionOverviewHighlights = (
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const layer = document.createElementNS(SVG_NS, 'g') as SVGGElement;
     layer.setAttribute('class', 'nad-overview-highlight-layer');
-    // Insert BEFORE the pin layer if it exists, otherwise append
-    // at the end. Either way the highlights render above the
-    // dim layer (which is appended first by the component) and
-    // below the pins.
-    const pinLayer = svg.querySelector('.nad-action-overview-pins');
-    if (pinLayer) {
-        svg.insertBefore(layer, pinLayer);
+    // Insert BEFORE the dim layer (which itself is inserted by the
+    // ActionOverviewDiagram wrap-on-injection step). That puts the
+    // highlight clones BEHIND the dimmed NAD just like the N-1 tab
+    // background-layer pattern. Fall back to inserting at the
+    // start of the SVG if the dim layer is not yet present.
+    const dimLayer = svg.querySelector('.nad-overview-dim-layer');
+    if (dimLayer) {
+        svg.insertBefore(layer, dimLayer);
+    } else if (svg.firstChild) {
+        svg.insertBefore(layer, svg.firstChild);
     } else {
         svg.appendChild(layer);
     }

@@ -17,6 +17,12 @@ import {
 } from '../utils/svgUtils';
 import { usePanZoom } from '../hooks/usePanZoom';
 import ActionCard from './ActionCard';
+import {
+    POPOVER_WIDTH,
+    POPOVER_MAX_HEIGHT,
+    decidePopoverPlacement,
+    computePopoverStyle,
+} from '../utils/popoverPlacement';
 
 /**
  * Action-overview diagram.
@@ -213,14 +219,29 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // anchored next to the pin in screen coordinates; double-click
     // activates the full action drill-down view (see
     // `handlePinDoubleClick`) and closes the popover.
+    //
+    // Placement is computed at click time from the pin's screen
+    // position relative to the viewport. The popover may sit
+    // ABOVE or BELOW the pin (whichever side has more room) and
+    // is horizontally aligned LEFT-of, CENTERED-on, or RIGHT-of
+    // the pin to avoid clipping at the visualisation panel
+    // edges. See `decidePopoverPlacement` for the rules.
     const [popoverPin, setPopoverPin] = useState<{
         id: string;
         screenX: number;
         screenY: number;
+        placeAbove: boolean;
+        horizontalAlign: 'start' | 'center' | 'end';
     } | null>(null);
 
     const handlePinClick = useCallback((actionId: string, screenPos: { x: number; y: number }) => {
-        setPopoverPin({ id: actionId, screenX: screenPos.x, screenY: screenPos.y });
+        const placement = decidePopoverPlacement(screenPos.x, screenPos.y);
+        setPopoverPin({
+            id: actionId,
+            screenX: screenPos.x,
+            screenY: screenPos.y,
+            ...placement,
+        });
     }, []);
 
     const handlePinDoubleClick = useCallback((actionId: string) => {
@@ -668,12 +689,12 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                     ref={popoverRef}
                     data-testid="action-overview-popover"
                     data-action-id={popoverPin.id}
+                    data-place-above={popoverPin.placeAbove ? 'true' : 'false'}
+                    data-horizontal-align={popoverPin.horizontalAlign}
                     style={{
-                        position: 'fixed',
-                        left: popoverPin.screenX - 170,
-                        top: popoverPin.screenY + 24,
-                        width: 340,
-                        maxHeight: '70vh',
+                        ...computePopoverStyle(popoverPin),
+                        width: POPOVER_WIDTH,
+                        maxHeight: POPOVER_MAX_HEIGHT,
                         overflowY: 'auto',
                         background: 'white',
                         border: '1px solid #cbd5e1',
