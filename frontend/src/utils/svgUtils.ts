@@ -714,3 +714,248 @@ export const applyDeltaVisuals = (
         }
     }
 };
+
+// ============================================================
+// Action-overview pins
+//
+// Renders Google-Maps style pins on top of the N-1 network SVG,
+// one per prioritised action. Each pin anchors on the asset
+// (line mid-point or voltage-level node) that the corresponding
+// action card highlights in its badges — the same resolution
+// logic (getActionTargetLines / getActionTargetVoltageLevels) is
+// reused so card↔diagram stay in sync.
+//
+// The pin colour follows the severity palette used by the cards
+// (green/orange/red) and the label shows the max loading (%).
+// Pins are clickable: the click callback maps through to the
+// action-select handler, giving the operator direct manipulation
+// from the overview to the drill-down view.
+//
+// Like the other NAD highlights, this helper is idempotent: it
+// purges any previously-injected pin layer before re-rendering.
+// ============================================================
+
+export interface ActionPinInfo {
+    id: string;
+    x: number;
+    y: number;
+    severity: 'green' | 'orange' | 'red' | 'grey';
+    label: string;
+    title: string;
+}
+
+const severityFill: Record<ActionPinInfo['severity'], string> = {
+    green: '#28a745',
+    orange: '#f0ad4e',
+    red: '#dc3545',
+    grey: '#9ca3af',
+};
+
+const computeActionSeverity = (
+    details: ActionDetail,
+    monitoringFactor: number,
+): ActionPinInfo['severity'] => {
+    if (details.non_convergence || details.is_islanded) return 'grey';
+    if (details.max_rho == null) {
+        return details.is_rho_reduction ? 'green' : 'red';
+    }
+    if (details.max_rho > monitoringFactor) return 'red';
+    if (details.max_rho > monitoringFactor - 0.05) return 'orange';
+    return 'green';
+};
+
+/**
+ * Resolve an action to a point on the NAD background.
+ *
+ * For line / PST actions we take the midpoint of the edge; for
+ * nodal actions we take the voltage-level node position. Returns
+ * null when no impacted asset can be located — the pin is then
+ * silently skipped.
+ */
+const resolveActionAnchor = (
+    actionId: string,
+    details: ActionDetail,
+    metaIndex: MetadataIndex,
+): { x: number; y: number } | null => {
+    const { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId } = metaIndex;
+
+    const lookupNode = (nodeRef: unknown): NodeMeta | undefined => {
+        if (typeof nodeRef !== 'string') return undefined;
+        return nodesBySvgId.get(nodeRef) ?? nodesByEquipmentId.get(nodeRef);
+    };
+
+    // Try line targets first
+    const lineTargets = getActionTargetLines(details, actionId, edgesByEquipmentId);
+    for (const lineName of lineTargets) {
+        const edge = edgesByEquipmentId.get(lineName);
+        if (!edge) continue;
+        const n1 = lookupNode(edge.node1);
+        const n2 = lookupNode(edge.node2);
+        if (n1 && n2 && Number.isFinite(n1.x) && Number.isFinite(n2.x)) {
+            return { x: (n1.x + n2.x) / 2, y: (n1.y + n2.y) / 2 };
+        }
+        if (n1 && Number.isFinite(n1.x)) return { x: n1.x, y: n1.y };
+        if (n2 && Number.isFinite(n2.x)) return { x: n2.x, y: n2.y };
+    }
+
+    // Fallback on voltage-level targets
+    const vlTargets = getActionTargetVoltageLevels(details, actionId, nodesByEquipmentId);
+    for (const vlName of vlTargets) {
+        const node = nodesByEquipmentId.get(vlName);
+        if (node && Number.isFinite(node.x)) {
+            return { x: node.x, y: node.y };
+        }
+    }
+
+    // Last resort: max_rho_line (a line the action redistributes onto)
+    if (details.max_rho_line) {
+        const edge = edgesByEquipmentId.get(details.max_rho_line);
+        if (edge) {
+            const n1 = lookupNode(edge.node1);
+            const n2 = lookupNode(edge.node2);
+            if (n1 && n2 && Number.isFinite(n1.x) && Number.isFinite(n2.x)) {
+                return { x: (n1.x + n2.x) / 2, y: (n1.y + n2.y) / 2 };
+            }
+        }
+    }
+    return null;
+};
+
+/**
+ * Build the list of pin descriptors for the action-overview view.
+ * Pure function — no DOM access — so it can be unit-tested.
+ */
+export const buildActionOverviewPins = (
+    actions: Record<string, ActionDetail>,
+    metaIndex: MetadataIndex,
+    monitoringFactor: number,
+    filterIds?: Iterable<string>,
+): ActionPinInfo[] => {
+    const allowed = filterIds ? new Set(filterIds) : null;
+    const pins: ActionPinInfo[] = [];
+    for (const [actionId, details] of Object.entries(actions)) {
+        if (allowed && !allowed.has(actionId)) continue;
+        const anchor = resolveActionAnchor(actionId, details, metaIndex);
+        if (!anchor) continue;
+        const severity = computeActionSeverity(details, monitoringFactor);
+        const label = details.max_rho != null
+            ? `${(details.max_rho * 100).toFixed(0)}%`
+            : details.non_convergence
+                ? 'DIV'
+                : details.is_islanded
+                    ? 'ISL'
+                    : '\u2014';
+        const title = [
+            actionId,
+            details.description_unitaire,
+            details.max_rho != null
+                ? `max loading ${(details.max_rho * 100).toFixed(1)}%${details.max_rho_line ? ` on ${details.max_rho_line}` : ''}`
+                : details.non_convergence
+                    ? 'load-flow divergent'
+                    : details.is_islanded
+                        ? 'islanding'
+                        : '',
+        ].filter(Boolean).join(' \u2014 ');
+        pins.push({ id: actionId, x: anchor.x, y: anchor.y, severity, label, title });
+    }
+    return pins;
+};
+
+/**
+ * Inject (or refresh) the action-overview pin layer inside the
+ * given container's SVG. Clicking a pin invokes `onPinClick` with
+ * the action id, which should trigger the existing action-select
+ * flow. Calling this with an empty `pins` array wipes the layer.
+ */
+export const applyActionOverviewPins = (
+    container: HTMLElement | null,
+    pins: ActionPinInfo[],
+    onPinClick: (actionId: string) => void,
+) => {
+    if (!container) return;
+    const svg = container.querySelector('svg');
+    if (!svg) return;
+
+    // Purge any existing layer so repeated calls stay idempotent.
+    svg.querySelectorAll('.nad-action-overview-pins').forEach(el => el.remove());
+
+    if (pins.length === 0) return;
+
+    // Pins are sized relative to the viewBox so they remain
+    // visually stable across large and small grids.
+    const vbAttr = svg.getAttribute('viewBox');
+    let diagramSize = 1000;
+    if (vbAttr) {
+        const parts = vbAttr.split(/\s+|,/).map(parseFloat);
+        if (parts.length === 4) {
+            diagramSize = Math.max(parts[2], parts[3]);
+        }
+    }
+    // Pin body radius ~ 2% of the diagram span, clamped so the
+    // pin is always legible without swamping small grids.
+    const r = Math.max(12, Math.min(60, diagramSize * 0.018));
+    const labelFont = Math.max(9, r * 0.8);
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const layer = document.createElementNS(SVG_NS, 'g');
+    layer.setAttribute('class', 'nad-action-overview-pins');
+    // Render on top of everything else in the SVG.
+    svg.appendChild(layer);
+
+    pins.forEach(pin => {
+        const g = document.createElementNS(SVG_NS, 'g');
+        g.setAttribute('class', 'nad-action-overview-pin');
+        g.setAttribute('transform', `translate(${pin.x} ${pin.y})`);
+        g.setAttribute('data-action-id', pin.id);
+        (g as unknown as SVGGElement).style.cursor = 'pointer';
+
+        const title = document.createElementNS(SVG_NS, 'title');
+        title.textContent = pin.title;
+        g.appendChild(title);
+
+        // Google-Maps style teardrop: a circle bubble with a
+        // triangular tail ending at the anchor point (0,0). The
+        // glyph is drawn in a local coord system where (0,0) is
+        // the pointer tip and the bubble sits above it.
+        const R = r;
+        const tail = R * 0.9;
+        const path = document.createElementNS(SVG_NS, 'path');
+        const d = `M ${-R} ${-R - tail} A ${R} ${R} 0 1 1 ${R} ${-R - tail} L 0 0 Z`;
+        path.setAttribute('d', d);
+        path.setAttribute('fill', severityFill[pin.severity]);
+        path.setAttribute('stroke', '#1f2937');
+        path.setAttribute('stroke-width', String(Math.max(1.5, r * 0.08)));
+        path.setAttribute('stroke-linejoin', 'round');
+        g.appendChild(path);
+
+        // Inner white disc to host the label.
+        const inner = document.createElementNS(SVG_NS, 'circle');
+        inner.setAttribute('cx', '0');
+        inner.setAttribute('cy', String(-R - tail));
+        inner.setAttribute('r', String(R * 0.72));
+        inner.setAttribute('fill', '#ffffff');
+        inner.setAttribute('fill-opacity', '0.92');
+        inner.setAttribute('pointer-events', 'none');
+        g.appendChild(inner);
+
+        const text = document.createElementNS(SVG_NS, 'text');
+        text.setAttribute('x', '0');
+        text.setAttribute('y', String(-R - tail));
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.setAttribute('font-size', String(labelFont));
+        text.setAttribute('font-weight', '700');
+        text.setAttribute('font-family', 'system-ui, -apple-system, Arial, sans-serif');
+        text.setAttribute('fill', severityFill[pin.severity]);
+        text.setAttribute('pointer-events', 'none');
+        text.textContent = pin.label;
+        g.appendChild(text);
+
+        g.addEventListener('click', (evt) => {
+            evt.stopPropagation();
+            onPinClick(pin.id);
+        });
+
+        layer.appendChild(g);
+    });
+};

@@ -75,7 +75,7 @@ describe('VisualizationPanel', () => {
 
     it('renders action tab with default label when no action selected', () => {
         render(<VisualizationPanel {...createDefaultProps()} />);
-        expect(screen.getByText('Remedial Action')).toBeInTheDocument();
+        expect(screen.getByText('Remedial action: overview')).toBeInTheDocument();
     });
 
     it('always renders overflow tab (even without pdf_url)', () => {

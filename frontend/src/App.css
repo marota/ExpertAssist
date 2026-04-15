@@ -489,3 +489,20 @@ circle.nad-highlight {
     background: rgba(220, 220, 220, 0.95);
     color: #333;
 }
+/* ============================================================
+   Action-overview pins (Remedial Action tab, no card selected)
+   ============================================================ */
+.nad-action-overview-pin {
+    transition: transform 0.15s ease;
+    transform-box: fill-box;
+    transform-origin: center bottom;
+}
+.nad-action-overview-pin:hover {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+.nad-action-overview-pin:hover > path {
+    stroke-width: 2.5;
+}
+.nad-action-overview-container svg {
+    display: block;
+}

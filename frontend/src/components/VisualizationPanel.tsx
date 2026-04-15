@@ -6,10 +6,11 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
 import React, { useState, useMemo, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, MetadataIndex } from '../types';
 import MemoizedSvgContainer from './MemoizedSvgContainer';
 import SldOverlay from './SldOverlay';
 import DetachableTabHost from './DetachableTabHost';
+import ActionOverviewDiagram from './ActionOverviewDiagram';
 import type { DetachedTabsMap } from '../hooks/useDetachedTabs';
 
 /**
@@ -200,6 +201,24 @@ interface VisualizationPanelProps {
     isTabTied?: (tab: TabId) => boolean;
     /** Toggle the "tied" flag for the given tab. */
     onToggleTabTie?: (tab: TabId) => void;
+    /**
+     * Metadata index for the N-1 diagram. Used by the
+     * action-overview view (shown in the Remedial Action tab
+     * when no card is selected) to resolve each action to an
+     * (x, y) anchor on the network.
+     */
+    n1MetaIndex?: MetadataIndex | null;
+    /**
+     * Invoked when the user clicks a pin on the action-overview
+     * view — should trigger the same action-select flow as
+     * clicking a card in the sidebar.
+     */
+    onActionSelect?: (actionId: string) => void;
+    /**
+     * Monitoring factor used to derive each action's severity
+     * colour, kept in sync with the card palette.
+     */
+    monitoringFactor?: number;
 }
 
 
@@ -248,6 +267,9 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onViewModeChangeForTab,
     isTabTied,
     onToggleTabTie,
+    n1MetaIndex,
+    onActionSelect,
+    monitoringFactor,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
     const detachTabCb = onDetachTab ?? (() => {});
@@ -545,7 +567,11 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                     [
                         { id: 'n' as TabId, label: 'Network (N)', available: !!nDiagram?.svg, accentColor: '#3498db', dimColor: '#7f8c8d', placeholder: 'Configure a network path in Settings to load the base-case diagram.' },
                         { id: 'n-1' as TabId, label: 'Contingency (N-1)', available: !!n1Diagram?.svg, accentColor: '#e74c3c', dimColor: '#aab', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
-                        { id: 'action' as TabId, label: selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', available: !!actionDiagram?.svg, accentColor: '#ff4081', dimColor: '#aab', placeholder: 'Select an action card from the suggestions panel to view its effect on the network.' },
+                        // When no card is selected, the Remedial Action tab hosts the
+                        // action-overview view (pins over the N-1 network). It is considered
+                        // "available" as soon as the N-1 diagram has loaded, so the tab is no
+                        // longer italicised while the user is still browsing the overview.
+                        { id: 'action' as TabId, label: selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', available: !!actionDiagram?.svg || !!n1Diagram?.svg, accentColor: '#ff4081', dimColor: '#aab', placeholder: 'Select a contingency and run the analysis to see remedial actions.' },
                         { id: 'overflow' as TabId, label: 'Overflow Analysis', available: !!result?.pdf_url, accentColor: '#27ae60', dimColor: '#aab', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
                     ] as const
                 ).map(tab => {
@@ -801,7 +827,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         width: '100%', height: '100%',
                         position: 'absolute', top: 0, left: 0,
                     }}>
-                        {detachedTabs['action'] && renderDetachedHeader('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
+                        {detachedTabs['action'] && renderDetachedHeader('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', '#ff4081')}
                         {/* Convergence warning banner */}
                         {actionDiagram && actionDiagram.lf_converged === false && (
                             <div style={{
@@ -815,6 +841,22 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         )}
                         {/* Always mounted — see comment on N-1 container. */}
                         <MemoizedSvgContainer svg={actionDiagram?.svg || ''} containerRef={actionSvgContainerRef} display="block" tabId="action" />
+                        {/*
+                          Action-overview layer: rendered on top of the
+                          (hidden) action-diagram container when no card
+                          is selected. When a card IS selected it folds
+                          away (visible=false) and the existing action
+                          variant diagram + highlights take over, so the
+                          selection-driven interactions persist intact.
+                        */}
+                        <ActionOverviewDiagram
+                            n1Diagram={n1Diagram}
+                            n1MetaIndex={n1MetaIndex ?? null}
+                            actions={result?.actions}
+                            monitoringFactor={monitoringFactor ?? 1}
+                            onActionSelect={onActionSelect ?? (() => {})}
+                            visible={!selectedActionId && !actionDiagramLoading}
+                        />
                         {actionDiagramLoading && (
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                                 Generating Action Variant Diagram...
@@ -825,15 +867,16 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 Failed to load diagram for action {selectedActionId}
                             </div>
                         )}
-                        {!actionDiagramLoading && !actionDiagram?.svg && !selectedActionId && (
-                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
-                                Select an action card from the suggestions panel to view its effect on the network.
-                            </div>
-                        )}
+                        {/*
+                          The "select a card..." placeholder is now
+                          replaced by the ActionOverviewDiagram above
+                          (which itself shows its own empty-state copy
+                          when the N-1 background is missing).
+                        */}
                         {renderTabOverlay('action', true)}
                     </div>
                 </DetachableTabHost>
-                {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
+                {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', '#ff4081')}
 
                 {/* Voltage Range Sidebar — collapsed by default, toggle to expand */}
                 {uniqueVoltages.length > 1 && (() => {
