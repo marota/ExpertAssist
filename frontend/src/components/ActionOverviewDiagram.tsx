@@ -25,6 +25,12 @@ import {
     computePopoverStyle,
 } from '../utils/popoverPlacement';
 
+/** Measure a named code section and log it to the console + Performance timeline. */
+const perfMeasure = (name: string, startMark: string, endMark: string) => {
+    const entry = performance.measure(name, startMark, endMark);
+    console.log(`[PERF] ${name}: ${entry.duration.toFixed(2)}ms`);
+};
+
 /**
  * Action-overview diagram.
  *
@@ -165,7 +171,11 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
     const pins = useMemo(() => {
         if (!n1MetaIndex || !actions) return [];
-        return buildActionOverviewPins(actions, n1MetaIndex, monitoringFactor);
+        performance.mark('aod:buildPins:start');
+        const result = buildActionOverviewPins(actions, n1MetaIndex, monitoringFactor);
+        performance.mark('aod:buildPins:end');
+        perfMeasure('aod:buildPins', 'aod:buildPins:start', 'aod:buildPins:end');
+        return result;
     }, [n1MetaIndex, actions, monitoringFactor]);
 
     // Deterministic auto-fit rectangle derived from the bounding
@@ -254,12 +264,18 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     } | null>(null);
 
     const handlePinClick = useCallback((actionId: string, screenPos: { x: number; y: number }) => {
+        performance.mark('aod:pinClick:start');
         const placement = decidePopoverPlacement(screenPos.x, screenPos.y);
         setPopoverPin({
             id: actionId,
             screenX: screenPos.x,
             screenY: screenPos.y,
             ...placement,
+        });
+        // Measure will complete after React commits the state update.
+        requestAnimationFrame(() => {
+            performance.mark('aod:pinClick:end');
+            perfMeasure('aod:pinClick', 'aod:pinClick:start', 'aod:pinClick:end');
         });
     }, []);
 
@@ -281,7 +297,10 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         if (!svgReady) return;
         const container = containerRef.current;
         if (!container) return;
+        performance.mark('aod:highlights:start');
         applyActionOverviewHighlights(container, n1MetaIndex ?? null, contingency, overloadedLines);
+        performance.mark('aod:highlights:end');
+        perfMeasure('aod:highlights', 'aod:highlights:start', 'aod:highlights:end');
     }, [svgReady, preparedSvg, n1MetaIndex, contingency, overloadedLines]);
 
     // (Re)apply pins whenever the source SVG or pin list changes.
@@ -292,7 +311,10 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         if (!svgReady) return;
         const container = containerRef.current;
         if (!container) return;
+        performance.mark('aod:applyPins:start');
         applyActionOverviewPins(container, pins, handlePinClick, handlePinDoubleClick);
+        performance.mark('aod:applyPins:end');
+        perfMeasure('aod:applyPins', 'aod:applyPins:start', 'aod:applyPins:end');
     }, [pins, handlePinClick, handlePinDoubleClick, svgReady, preparedSvg]);
 
     // Screen-constant pin compensation.
@@ -482,13 +504,20 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             style={{
                 position: 'absolute',
                 inset: 0,
-                display: visible ? 'flex' : 'none',
+                display: 'flex',
                 flexDirection: 'column',
                 background: 'white',
+                // Use visibility instead of display:none so the SVG stays
+                // painted in a cached composite layer.  Switching from
+                // visibility:hidden→visible is a composite-only operation
+                // (~1ms) whereas display:none→flex forces a full re-layout
+                // and re-paint of all ~11k SVG elements (~11s on large grids).
+                visibility: visible ? 'visible' : 'hidden',
+                pointerEvents: visible ? 'auto' : 'none',
                 // Sit above the hidden MemoizedSvgContainer for
                 // actionDiagram (which stays mounted to preserve
                 // zoom state) so clicks land on the overview.
-                zIndex: 15,
+                zIndex: visible ? 15 : -1,
             }}
         >
             {/* Header strip — title + severity legend, mirrors the

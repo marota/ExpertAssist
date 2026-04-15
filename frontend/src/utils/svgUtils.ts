@@ -1034,6 +1034,8 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
     const layer = svg.querySelector('.nad-action-overview-pins');
     if (!layer) return;
 
+    performance.mark('aod:rescalePins:start');
+
     // Derive pxPerSvgUnit from the viewBox width and the container's
     // client width — pure math, no forced layout.  The previous
     // implementation called `getScreenCTM()` which triggers a
@@ -1084,6 +1086,10 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
     layer.querySelectorAll('.nad-action-overview-pin-body').forEach(body => {
         body.setAttribute('transform', `scale(${scale})`);
     });
+
+    performance.mark('aod:rescalePins:end');
+    const entry = performance.measure('aod:rescalePins', 'aod:rescalePins:start', 'aod:rescalePins:end');
+    if (entry.duration > 5) console.log(`[PERF] aod:rescalePins: ${entry.duration.toFixed(2)}ms`);
 };
 
 /**

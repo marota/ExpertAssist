@@ -241,7 +241,10 @@ describe('ActionOverviewDiagram', () => {
             <ActionOverviewDiagram {...defaultProps()} visible={false} />,
         );
         const root = container.querySelector('[data-testid="action-overview-diagram"]') as HTMLElement;
-        expect(root.style.display).toBe('none');
+        // Uses visibility:hidden (not display:none) so the SVG stays
+        // in its composite layer and tab-switching is instant.
+        expect(root.style.visibility).toBe('hidden');
+        expect(root.style.pointerEvents).toBe('none');
     });
 
     it('shows the "no analysis yet" empty state when there are no actions', () => {
