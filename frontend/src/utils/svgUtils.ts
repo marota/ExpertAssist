@@ -923,9 +923,10 @@ export const applyActionOverviewPins = (
         const d = `M ${-R} ${-R - tail} A ${R} ${R} 0 1 1 ${R} ${-R - tail} L 0 0 Z`;
         path.setAttribute('d', d);
         path.setAttribute('fill', severityFill[pin.severity]);
-        path.setAttribute('stroke', '#1f2937');
-        path.setAttribute('stroke-width', String(Math.max(1.5, r * 0.08)));
-        path.setAttribute('stroke-linejoin', 'round');
+        // No outline — the fill-only pin blends cleanly with the
+        // network SVG and matches the action card's left-border
+        // accent instead of competing with the NAD line strokes.
+        path.setAttribute('stroke', 'none');
         g.appendChild(path);
 
         // Inner white disc to host the label.
@@ -1004,7 +1005,7 @@ export const computeActionOverviewFitRect = (
     contingency: string | null,
     overloads: readonly string[],
     pins: readonly { x: number; y: number }[],
-    padRatio: number = 0.15,
+    padRatio: number = 0.05,
 ): ViewBox | null => {
     if (!metaIndex) return null;
     const xs: number[] = [];

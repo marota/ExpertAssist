@@ -18,6 +18,10 @@ import {
     applyDeltaVisuals,
     applyActionTargetHighlights,
     applyContingencyHighlight,
+    buildActionOverviewPins,
+    applyActionOverviewPins,
+    computeActionOverviewFitRect,
+    computeEquipmentFitRect,
 } from './svgUtils';
 import type { ActionDetail, NodeMeta, EdgeMeta, MetadataIndex } from '../types';
 
@@ -1160,5 +1164,352 @@ describe('Highlight Layering', () => {
             expect(actionTargetIdx).toBeGreaterThan(-1);
             expect(deltaIdx).toBeGreaterThan(Math.max(overloadIdx, contingencyIdx, actionTargetIdx));
         });
+    });
+});
+
+// ============================================================
+// Action-overview pins + fit-rect helpers
+// ============================================================
+
+const makeOverviewMetaIndex = (): MetadataIndex => {
+    // Simple 4-node grid laid out as:
+    //   N1 (0,0) ──LINE_A── N2 (100,0)
+    //   │                    │
+    //  LINE_C               LINE_B
+    //   │                    │
+    //   N3 (0,100) ─LINE_D─ N4 (100,100)
+    //
+    // Plus an isolated voltage-level "VL_FAR" at (500, 500).
+    const nodes: NodeMeta[] = [
+        { equipmentId: 'VL_N1', svgId: 'svg-n1', x: 0, y: 0 },
+        { equipmentId: 'VL_N2', svgId: 'svg-n2', x: 100, y: 0 },
+        { equipmentId: 'VL_N3', svgId: 'svg-n3', x: 0, y: 100 },
+        { equipmentId: 'VL_N4', svgId: 'svg-n4', x: 100, y: 100 },
+        { equipmentId: 'VL_FAR', svgId: 'svg-far', x: 500, y: 500 },
+    ];
+    const edges: EdgeMeta[] = [
+        { equipmentId: 'LINE_A', svgId: 'svg-line-a', node1: 'svg-n1', node2: 'svg-n2' },
+        { equipmentId: 'LINE_B', svgId: 'svg-line-b', node1: 'svg-n2', node2: 'svg-n4' },
+        { equipmentId: 'LINE_C', svgId: 'svg-line-c', node1: 'svg-n1', node2: 'svg-n3' },
+        { equipmentId: 'LINE_D', svgId: 'svg-line-d', node1: 'svg-n3', node2: 'svg-n4' },
+    ];
+    const nodesByEquipmentId = new Map(nodes.map(n => [n.equipmentId, n] as const));
+    const nodesBySvgId = new Map(nodes.map(n => [n.svgId, n] as const));
+    const edgesByEquipmentId = new Map(edges.map(e => [e.equipmentId, e] as const));
+    const edgesByNode = new Map<string, EdgeMeta[]>();
+    edges.forEach(e => {
+        if (!edgesByNode.has(e.node1 as string)) edgesByNode.set(e.node1 as string, []);
+        edgesByNode.get(e.node1 as string)!.push(e);
+        if (!edgesByNode.has(e.node2 as string)) edgesByNode.set(e.node2 as string, []);
+        edgesByNode.get(e.node2 as string)!.push(e);
+    });
+    return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
+};
+
+const makeAction = (overrides: Partial<ActionDetail> = {}): ActionDetail => ({
+    description_unitaire: 'test action',
+    rho_before: null,
+    rho_after: null,
+    max_rho: null,
+    max_rho_line: '',
+    is_rho_reduction: false,
+    ...overrides,
+});
+
+describe('buildActionOverviewPins', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('resolves a line action to the edge midpoint', () => {
+        const actions: Record<string, ActionDetail> = {
+            'disco_LINE_A': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.88,
+                max_rho_line: 'LINE_B',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        // LINE_A midpoint = midpoint of (0,0) and (100,0) = (50, 0)
+        expect(pins[0]).toMatchObject({ id: 'disco_LINE_A', x: 50, y: 0 });
+    });
+
+    it('falls back to the voltage-level node for nodal actions', () => {
+        const actions: Record<string, ActionDetail> = {
+            'coupling_VL_FAR': makeAction({
+                description_unitaire: "Ouverture du poste 'VL_FAR'",
+                max_rho: 1.1,
+                max_rho_line: 'LINE_D',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        expect(pins[0]).toMatchObject({ id: 'coupling_VL_FAR', x: 500, y: 500 });
+    });
+
+    it('falls back to max_rho_line when no topology target resolves', () => {
+        const actions: Record<string, ActionDetail> = {
+            'mystery_action': makeAction({
+                description_unitaire: 'mystery',
+                max_rho: 0.9,
+                max_rho_line: 'LINE_D',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        // LINE_D midpoint = ((0+100)/2, (100+100)/2) = (50, 100)
+        expect(pins[0]).toMatchObject({ x: 50, y: 100 });
+    });
+
+    it('skips actions whose asset cannot be located', () => {
+        const actions: Record<string, ActionDetail> = {
+            'unknown': makeAction({ description_unitaire: 'floating', max_rho: 0.5, max_rho_line: 'GHOST_LINE' }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(0);
+    });
+
+    it('assigns severity based on monitoringFactor', () => {
+        const actions: Record<string, ActionDetail> = {
+            'solved': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+            'low_margin': makeAction({
+                action_topology: { lines_ex_bus: { LINE_B: -1 }, lines_or_bus: { LINE_B: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.92,
+            }),
+            'still_overloaded': makeAction({
+                action_topology: { lines_ex_bus: { LINE_C: -1 }, lines_or_bus: { LINE_C: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 1.1,
+            }),
+            'divergent': makeAction({
+                action_topology: { lines_ex_bus: { LINE_D: -1 }, lines_or_bus: { LINE_D: -1 }, gens_bus: {}, loads_bus: {} },
+                non_convergence: 'did not converge',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        const byId = Object.fromEntries(pins.map(p => [p.id, p] as const));
+        expect(byId['solved'].severity).toBe('green');
+        expect(byId['low_margin'].severity).toBe('orange');
+        expect(byId['still_overloaded'].severity).toBe('red');
+        expect(byId['divergent'].severity).toBe('grey');
+    });
+
+    it('labels pins with the rounded max loading percentage', () => {
+        const actions: Record<string, ActionDetail> = {
+            'a': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.873,
+                max_rho_line: 'LINE_A',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins[0].label).toBe('87%');
+    });
+
+    it('honours the filterIds allowlist', () => {
+        const actions: Record<string, ActionDetail> = {
+            'a': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+            'b': makeAction({
+                action_topology: { lines_ex_bus: { LINE_B: -1 }, lines_or_bus: { LINE_B: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95, ['a']);
+        expect(pins.map(p => p.id)).toEqual(['a']);
+    });
+});
+
+describe('applyActionOverviewPins', () => {
+    it('appends one <g.nad-action-overview-pin> per pin inside the svg', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 20, severity: 'green', label: '50%', title: 'A' },
+            { id: 'b', x: 30, y: 40, severity: 'red', label: '120%', title: 'B' },
+        ], () => {});
+        const pinGroups = container.querySelectorAll('g.nad-action-overview-pin');
+        expect(pinGroups.length).toBe(2);
+        const layer = container.querySelector('g.nad-action-overview-pins');
+        expect(layer).not.toBeNull();
+    });
+
+    it('uses the severity palette (green/orange/red/grey)', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'g', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'o', x: 0, y: 0, severity: 'orange', label: '90%', title: '' },
+            { id: 'r', x: 0, y: 0, severity: 'red', label: '110%', title: '' },
+            { id: 'x', x: 0, y: 0, severity: 'grey', label: 'DIV', title: '' },
+        ], () => {});
+        const fills = Array.from(container.querySelectorAll('g.nad-action-overview-pin > path'))
+            .map(el => el.getAttribute('fill'));
+        expect(fills).toEqual(['#28a745', '#f0ad4e', '#dc3545', '#9ca3af']);
+    });
+
+    it('draws pins WITHOUT an outline (stroke=none, no stroke-width)', () => {
+        // Regression guard for the "no black outline around pins"
+        // requirement — earlier versions drew a dark stroke and it
+        // competed visually with the NAD line strokes.
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const path = container.querySelector('g.nad-action-overview-pin > path');
+        expect(path).not.toBeNull();
+        expect(path!.getAttribute('stroke')).toBe('none');
+        expect(path!.hasAttribute('stroke-width')).toBe(false);
+    });
+
+    it('is idempotent — re-applying wipes the previous layer', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'b', x: 10, y: 10, severity: 'red', label: '110%', title: '' },
+        ], () => {});
+        applyActionOverviewPins(container, [
+            { id: 'c', x: 20, y: 20, severity: 'orange', label: '92%', title: '' },
+        ], () => {});
+        const layers = container.querySelectorAll('g.nad-action-overview-pins');
+        expect(layers.length).toBe(1);
+        const pinGroups = container.querySelectorAll('g.nad-action-overview-pin');
+        expect(pinGroups.length).toBe(1);
+        expect(pinGroups[0].getAttribute('data-action-id')).toBe('c');
+    });
+
+    it('empty pin list clears the layer entirely', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        applyActionOverviewPins(container, [], () => {});
+        expect(container.querySelectorAll('g.nad-action-overview-pin').length).toBe(0);
+    });
+
+    it('clicking a pin invokes the onPinClick callback with the action id', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        const clicks: string[] = [];
+        applyActionOverviewPins(container, [
+            { id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+        ], id => clicks.push(id));
+        const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+        pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(clicks).toEqual(['action_42']);
+    });
+
+    it('does nothing when the container has no <svg>', () => {
+        const container = document.createElement('div');
+        // Should NOT throw
+        expect(() => applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {})).not.toThrow();
+    });
+});
+
+describe('computeActionOverviewFitRect', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('returns null when nothing can be located', () => {
+        expect(computeActionOverviewFitRect(metaIndex, null, [], [])).toBeNull();
+    });
+
+    it('includes the contingency edge endpoints in the rectangle', () => {
+        // LINE_A spans (0,0)→(100,0). Both spans are below
+        // MIN_SPAN=200 so they're expanded around their centers:
+        //   x: span 100 → 200 centered on 50 → [-50, 150]
+        //   y: span 0   → 200 centered on 0  → [-100, 100]
+        const rect = computeActionOverviewFitRect(metaIndex, 'LINE_A', [], [], 0);
+        expect(rect!.x).toBeCloseTo(-50);
+        expect(rect!.w).toBeCloseTo(200);
+        expect(rect!.y).toBeCloseTo(-100);
+        expect(rect!.h).toBeCloseTo(200);
+    });
+
+    it('unions contingency + overloads + pins', () => {
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            'LINE_A', // (0,0)..(100,0)
+            ['LINE_D'], // (0,100)..(100,100)
+            [{ x: 500, y: 500 }],
+            0,
+        );
+        expect(rect!.x).toBeCloseTo(0);
+        expect(rect!.y).toBeCloseTo(0);
+        expect(rect!.w).toBeCloseTo(500);
+        expect(rect!.h).toBeCloseTo(500);
+    });
+
+    it('applies a 5% margin by default', () => {
+        // Regression guard for the "5% margin" requirement.
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            null,
+            [],
+            [{ x: 0, y: 0 }, { x: 1000, y: 1000 }],
+        );
+        // Raw bbox is 1000x1000. With 5% padding on each side we
+        // expect: x = -50, y = -50, w = 1100, h = 1100.
+        expect(rect!.x).toBeCloseTo(-50);
+        expect(rect!.y).toBeCloseTo(-50);
+        expect(rect!.w).toBeCloseTo(1100);
+        expect(rect!.h).toBeCloseTo(1100);
+    });
+
+    it('expands degenerate spans (single point) to a minimum size', () => {
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            null,
+            [],
+            [{ x: 10, y: 20 }],
+            0,
+        );
+        // Single point: w=h<MIN_SPAN=200 → expanded to 200 around center
+        expect(rect!.w).toBeCloseTo(200);
+        expect(rect!.h).toBeCloseTo(200);
+        expect(rect!.x).toBeCloseTo(10 - 100);
+        expect(rect!.y).toBeCloseTo(20 - 100);
+    });
+
+    it('returns null when metaIndex is null', () => {
+        expect(computeActionOverviewFitRect(null, 'LINE_A', [], [])).toBeNull();
+    });
+});
+
+describe('computeEquipmentFitRect', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('focuses on an edge using both endpoints', () => {
+        const rect = computeEquipmentFitRect(metaIndex, 'LINE_A', 0);
+        // LINE_A spans (0,0)→(100,0); both spans below MIN_SPAN=150
+        // → expanded around center (50, 0): x ∈ [-25, 125], y ∈ [-75, 75].
+        expect(rect!.x).toBeCloseTo(-25);
+        expect(rect!.w).toBeCloseTo(150);
+        expect(rect!.y).toBeCloseTo(-75);
+        expect(rect!.h).toBeCloseTo(150);
+    });
+
+    it('focuses on a voltage-level node', () => {
+        const rect = computeEquipmentFitRect(metaIndex, 'VL_FAR', 0);
+        // Single point at (500,500) → expanded to 150x150 around center
+        expect(rect!.x).toBeCloseTo(500 - 75);
+        expect(rect!.y).toBeCloseTo(500 - 75);
+        expect(rect!.w).toBeCloseTo(150);
+        expect(rect!.h).toBeCloseTo(150);
+    });
+
+    it('returns null for an unknown equipment id', () => {
+        expect(computeEquipmentFitRect(metaIndex, 'UNKNOWN', 0)).toBeNull();
+    });
+
+    it('returns null when metaIndex is null', () => {
+        expect(computeEquipmentFitRect(null, 'LINE_A', 0)).toBeNull();
     });
 });

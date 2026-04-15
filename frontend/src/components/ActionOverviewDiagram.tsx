@@ -149,6 +149,19 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // doesn't steal wheel events from other tabs.
     const pz = usePanZoom(containerRef, initialViewBox, visible && svgReady);
 
+    // Asset-focus "consume once" tracking — declared up here so
+    // `handleReset` (defined just below) can clear it.
+    //
+    // Mirrors the pattern used by `useDiagrams` for the main
+    // inspect field (see `lastZoomState` and the auto-zoom
+    // effect around useDiagrams.ts:787): only apply the zoom
+    // when the resolved query TRANSITIONS to a new value. If we
+    // re-ran the zoom on every dependency change (e.g. every
+    // time `pz.viewBox` updates on wheel-zoom), the user would
+    // get yanked back onto the asset the moment they try to
+    // zoom out — the "sticking" bug.
+    const lastFocusedRef = useRef<string | null>(null);
+
     // (Re)apply pins whenever the source SVG or pin list changes.
     // Pins are appended to the SVG itself (not to the container
     // div) so the existing viewBox-based pan/zoom naturally
@@ -186,6 +199,11 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
     const handleReset = useCallback(() => {
         if (initialViewBox) pz.setViewBox(initialViewBox);
+        // Clearing here ensures that re-typing the same asset id
+        // after a reset will focus it again — without this the
+        // consume-once guard would treat the effect re-run as
+        // "nothing changed" and silently skip the zoom.
+        lastFocusedRef.current = null;
     }, [initialViewBox, pz]);
 
     // ----- Inspect / asset-focus search -----
@@ -208,17 +226,37 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         return inspectableItems.find(item => item.toUpperCase() === q) ?? null;
     }, [inspectQuery, inspectableItems]);
 
+    useEffect(() => {
+        if (!svgReady || !visible || !n1MetaIndex) return;
+        // Nothing changed — bail out. This is the guard that
+        // suppresses re-zooming when the effect re-runs because
+        // `pz.viewBox` (and therefore the `pz` object) changed
+        // during a user-initiated pan/zoom.
+        if (exactInspectMatch === lastFocusedRef.current) return;
+
+        if (exactInspectMatch) {
+            // Consume the new query — zoom onto the asset.
+            const target = computeEquipmentFitRect(n1MetaIndex, exactInspectMatch);
+            if (target) pz.setViewBox(target);
+        } else if (lastFocusedRef.current && initialViewBox) {
+            // Query cleared (or no longer an exact match): go
+            // back to the auto-fit rectangle so the user sees
+            // the whole network-plus-pins again.
+            pz.setViewBox(initialViewBox);
+        }
+        lastFocusedRef.current = exactInspectMatch;
+    }, [exactInspectMatch, svgReady, visible, n1MetaIndex, pz, initialViewBox]);
+
+    // Imperative zoom helper used by the suggestions dropdown —
+    // committing the query through state triggers the effect
+    // above, but the dropdown also commits the text value so
+    // the click feels instantaneous without waiting for the
+    // next effect tick.
     const focusEquipment = useCallback((equipmentId: string) => {
         const target = computeEquipmentFitRect(n1MetaIndex, equipmentId);
-        if (target) {
-            pz.setViewBox(target);
-        }
+        if (target) pz.setViewBox(target);
+        lastFocusedRef.current = equipmentId;
     }, [n1MetaIndex, pz]);
-
-    useEffect(() => {
-        if (!exactInspectMatch) return;
-        focusEquipment(exactInspectMatch);
-    }, [exactInspectMatch, focusEquipment]);
 
     const hasAnyAction = !!actions && Object.keys(actions).length > 0;
     const noBackground = !n1Diagram?.svg;
@@ -465,7 +503,6 @@ const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) =>
                 height: 10,
                 borderRadius: '50%',
                 background: color,
-                border: '1px solid #1f2937',
             }}
         />
         <span style={{ color: '#475569' }}>{label}</span>
