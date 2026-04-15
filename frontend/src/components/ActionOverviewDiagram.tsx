@@ -13,6 +13,7 @@ import {
     buildActionOverviewPins,
     computeActionOverviewFitRect,
     computeEquipmentFitRect,
+    invalidateIdMapCache,
     rescaleActionOverviewPins,
 } from '../utils/svgUtils';
 import { usePanZoom } from '../hooks/usePanZoom';
@@ -119,6 +120,49 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // svgElRef). Once the string is in hand the svg IS in the DOM.
     const svgReady = svgString != null;
 
+    // Pre-parse the SVG string into an SVGSVGElement so the layout
+    // effect below can inject it with `replaceChildren()` — zero
+    // extra parse, matching the MemoizedSvgContainer optimisation
+    // used by the N and N-1 tabs.  The dim-layer wrapping is done
+    // here as well (moving children into a `<g>` with reduced
+    // opacity) so the DOM mutation happens on the detached element
+    // before it enters the live document — no forced layout.
+    const preparedSvg = useMemo<SVGSVGElement | null>(() => {
+        if (!svgString) return null;
+        const start = performance.now();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(svgString, 'image/svg+xml');
+        const svg = doc.documentElement as unknown as SVGSVGElement;
+        if (!svg || svg.nodeName !== 'svg') return null;
+
+        // Style the root so it fills the container; viewBox is the
+        // only thing usePanZoom manipulates.
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('height', '100%');
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        // Guard: jsdom's DOMParser returns XML documents whose
+        // elements lack a `.style` property; real browsers always
+        // have it.
+        if (svg.style) {
+            svg.style.width = '100%';
+            svg.style.height = '100%';
+        }
+
+        // Wrap existing children in a dim layer (done off-DOM — no
+        // forced layout).
+        const existingChildren = Array.from(svg.childNodes);
+        if (existingChildren.length > 0) {
+            const SVG_NS = 'http://www.w3.org/2000/svg';
+            const dimGroup = document.createElementNS(SVG_NS, 'g');
+            dimGroup.setAttribute('class', 'nad-overview-dim-layer');
+            dimGroup.setAttribute('opacity', DIM_BACKGROUND_OPACITY);
+            existingChildren.forEach(c => dimGroup.appendChild(c));
+            svg.appendChild(dimGroup);
+        }
+        console.log(`[SVG] Action overview pre-parse took ${(performance.now() - start).toFixed(2)}ms`);
+        return svg;
+    }, [svgString]);
+
     const pins = useMemo(() => {
         if (!n1MetaIndex || !actions) return [];
         return buildActionOverviewPins(actions, n1MetaIndex, monitoringFactor);
@@ -147,54 +191,29 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         return { x: parts[0], y: parts[1], w: parts[2], h: parts[3] };
     }, [fitRect, svgString]);
 
-    // Inject (or re-inject) the N-1 SVG into our own container.
-    // Using innerHTML is intentional: we want a standalone DOM
-    // subtree so nothing clashes with the main-window pan/zoom
-    // infra that drives the N-1 and action-variant tabs.
+    // Inject the pre-parsed SVGSVGElement into the container using
+    // `replaceChildren()` — zero extra parse, matching the
+    // MemoizedSvgContainer optimisation used by the N/N-1 tabs.
     //
     // DECLARED BEFORE `usePanZoom` so React runs this layout
     // effect first and the hook can cache its svgElRef against the
     // freshly-injected element.
     //
-    // As part of the injection we WRAP every existing top-level
-    // child of the SVG in a dedicated `.nad-overview-dim-layer`
-    // `<g>` with opacity set to DIM_BACKGROUND_OPACITY. The pin
-    // layer, added later by `applyActionOverviewPins`, is
-    // appended as a SIBLING of that group so it renders at full
-    // opacity on top of the faded network — maximising pin
-    // visibility without hiding the grid topology entirely.
+    // The dim-layer wrapping has already been done in `preparedSvg`
+    // (off-DOM), so this effect only moves the ready element in.
     useLayoutEffect(() => {
         const container = containerRef.current;
         if (!container) return;
-        if (!svgString) {
-            container.innerHTML = '';
+        if (!preparedSvg) {
+            container.replaceChildren();
             return;
         }
-        container.innerHTML = svgString;
-        const svg = container.querySelector('svg');
-        if (svg) {
-            // Let the SVG fill the container. The viewBox is the
-            // only thing usePanZoom manipulates, so width/height
-            // 100% gives a stable mapping from SVG coords to
-            // screen coords.
-            svg.setAttribute('width', '100%');
-            svg.setAttribute('height', '100%');
-            svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-            (svg as SVGSVGElement).style.width = '100%';
-            (svg as SVGSVGElement).style.height = '100%';
-
-            // Wrap existing children in a dim layer.
-            const existingChildren = Array.from(svg.childNodes);
-            if (existingChildren.length > 0) {
-                const SVG_NS = 'http://www.w3.org/2000/svg';
-                const dimGroup = document.createElementNS(SVG_NS, 'g');
-                dimGroup.setAttribute('class', 'nad-overview-dim-layer');
-                dimGroup.setAttribute('opacity', DIM_BACKGROUND_OPACITY);
-                existingChildren.forEach(c => dimGroup.appendChild(c));
-                svg.appendChild(dimGroup);
-            }
-        }
-    }, [svgString]);
+        const start = performance.now();
+        container.replaceChildren(preparedSvg);
+        // The id-map cache from a previous SVG is now stale.
+        invalidateIdMapCache(container);
+        console.log(`[SVG] Action overview replaceChildren took ${(performance.now() - start).toFixed(2)}ms`);
+    }, [preparedSvg]);
 
     // The hook handles wheel-zoom and drag-pan on the container.
     // `active` gates the event listeners so an invisible overview
@@ -263,7 +282,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         const container = containerRef.current;
         if (!container) return;
         applyActionOverviewHighlights(container, n1MetaIndex ?? null, contingency, overloadedLines);
-    }, [svgReady, svgString, n1MetaIndex, contingency, overloadedLines]);
+    }, [svgReady, preparedSvg, n1MetaIndex, contingency, overloadedLines]);
 
     // (Re)apply pins whenever the source SVG or pin list changes.
     // Pins are appended to the SVG itself (not to the container
@@ -274,7 +293,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         const container = containerRef.current;
         if (!container) return;
         applyActionOverviewPins(container, pins, handlePinClick, handlePinDoubleClick);
-    }, [pins, handlePinClick, handlePinDoubleClick, svgReady, svgString]);
+    }, [pins, handlePinClick, handlePinDoubleClick, svgReady, preparedSvg]);
 
     // Screen-constant pin compensation.
     //
@@ -325,7 +344,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             observer.disconnect();
             if (rafId !== null) cancelAnimationFrame(rafId);
         };
-    }, [svgReady, visible, svgString, pins]);
+    }, [svgReady, visible, preparedSvg, pins]);
 
     // When the view becomes visible for the first time (or again
     // after a round-trip through an action drill-down), re-assert

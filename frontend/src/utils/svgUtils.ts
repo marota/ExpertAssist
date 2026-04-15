@@ -926,48 +926,56 @@ export const applyActionOverviewHighlights = (
     }
 
     const idMap = getIdMap(container);
-    let cachedLayerCTM: DOMMatrix | null = null;
 
-    const cloneEdge = (svgId: string, klass: string) => {
-        const original = idMap.get(svgId);
-        if (!original) return;
-        const clone = original.cloneNode(true) as SVGGraphicsElement;
-        clone.removeAttribute('id');
-        clone.classList.add(klass);
-        clone.classList.add('nad-highlight-clone');
-        // Strip any delta-* class the original carries so the
-        // delta CSS does not override the halo on the clone (same
-        // hardening as applyOverloadedHighlights).
-        clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
-
-        try {
-            const origCTM = (original as SVGGraphicsElement).getScreenCTM?.();
-            if (!cachedLayerCTM) {
-                cachedLayerCTM = (layer as unknown as SVGGraphicsElement).getScreenCTM?.() ?? null;
-            }
-            if (origCTM && cachedLayerCTM) {
-                const m = cachedLayerCTM.inverse().multiply(origCTM);
-                clone.setAttribute(
-                    'transform',
-                    `matrix(${m.a}, ${m.b}, ${m.c}, ${m.d}, ${m.e}, ${m.f})`,
-                );
-            }
-        } catch {
-            // jsdom / disconnected element — skip the matrix
-            // transform; the clone still renders, just at the
-            // original's local coordinates.
-        }
-        layer.appendChild(clone);
-    };
-
+    // --- BATCHED READ/WRITE PATTERN ---
+    // Phase 1: collect all edge ids to highlight (pure data — no DOM reads).
+    const edgesToClone: { svgId: string; klass: string }[] = [];
     if (contingency) {
         const edge = metaIndex.edgesByEquipmentId.get(contingency);
-        if (edge?.svgId) cloneEdge(edge.svgId, 'nad-contingency-highlight');
+        if (edge?.svgId) edgesToClone.push({ svgId: edge.svgId, klass: 'nad-contingency-highlight' });
     }
     overloadedLines.forEach(name => {
         const edge = metaIndex.edgesByEquipmentId.get(name);
-        if (edge?.svgId) cloneEdge(edge.svgId, 'nad-overloaded');
+        if (edge?.svgId) edgesToClone.push({ svgId: edge.svgId, klass: 'nad-overloaded' });
     });
+    if (edgesToClone.length === 0) return;
+
+    // Phase 2: READ — clone nodes and read all CTMs in a single
+    // contiguous pass (no DOM writes in between, avoiding layout
+    // thrashing).
+    let layerCTM: DOMMatrix | null = null;
+    try {
+        layerCTM = (layer as unknown as SVGGraphicsElement).getScreenCTM?.() ?? null;
+    } catch { /* jsdom */ }
+
+    const prepared: { clone: SVGGraphicsElement; transform: string | null }[] = [];
+    for (const { svgId, klass } of edgesToClone) {
+        const original = idMap.get(svgId);
+        if (!original) continue;
+        const clone = original.cloneNode(true) as SVGGraphicsElement;
+        clone.removeAttribute('id');
+        clone.classList.add(klass, 'nad-highlight-clone');
+        clone.classList.remove('nad-delta-positive', 'nad-delta-negative', 'nad-delta-grey');
+
+        let transform: string | null = null;
+        try {
+            const origCTM = (original as SVGGraphicsElement).getScreenCTM?.();
+            if (origCTM && layerCTM) {
+                const m = layerCTM.inverse().multiply(origCTM);
+                transform = `matrix(${m.a}, ${m.b}, ${m.c}, ${m.d}, ${m.e}, ${m.f})`;
+            }
+        } catch { /* jsdom */ }
+        prepared.push({ clone, transform });
+    }
+
+    // Phase 3: WRITE — batch all DOM mutations via a DocumentFragment
+    // to trigger a single reflow instead of one per clone.
+    const frag = document.createDocumentFragment();
+    for (const { clone, transform } of prepared) {
+        if (transform) clone.setAttribute('transform', transform);
+        frag.appendChild(clone);
+    }
+    layer.appendChild(frag);
 };
 
 /**
@@ -1015,6 +1023,10 @@ const PIN_MIN_SCREEN_RADIUS_PX = 22;
  * (e.g. in jsdom or when the element is detached), falling back to
  * a 1:1 mapping which keeps the pins at their base radius.
  */
+// Cache the base radius per SVG element so `rescaleActionOverviewPins`
+// (called on every rAF during zoom) skips the querySelectorAll lookup.
+const pinBaseRadiusCache = new WeakMap<SVGSVGElement, number>();
+
 export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
     if (!container) return;
     const svg = container.querySelector('svg') as SVGSVGElement | null;
@@ -1033,7 +1045,13 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         // fine, we'll fall through with pxPerSvgUnit=1.
     }
 
-    const baseR = readPinBaseRadius(svg);
+    // Use cached base radius — avoids querySelectorAll('circle[r]')
+    // on every zoom frame.
+    let baseR = pinBaseRadiusCache.get(svg);
+    if (baseR === undefined) {
+        baseR = readPinBaseRadius(svg);
+        pinBaseRadiusCache.set(svg, baseR);
+    }
     const minSvgR = PIN_MIN_SCREEN_RADIUS_PX / pxPerSvgUnit;
     // Keep `baseR` as the floor — this is what makes pins match VL
     // circles at normal zoom. When the user zooms far out, minSvgR
@@ -1090,13 +1108,19 @@ export const applyActionOverviewPins = (
     // {@link rescaleActionOverviewPins} then enforces a screen-pixel
     // floor so pins stay visible when the operator unzooms.
     const r = readPinBaseRadius(svg);
+    // Populate the cache eagerly so rescaleActionOverviewPins (called
+    // on every zoom frame) skips the querySelectorAll lookup.
+    pinBaseRadiusCache.set(svg, r);
     const labelFont = Math.max(9, r * 0.8);
 
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const layer = document.createElementNS(SVG_NS, 'g');
     layer.setAttribute('class', 'nad-action-overview-pins');
-    // Render on top of everything else in the SVG.
-    svg.appendChild(layer);
+
+    // Build all pin elements into a DocumentFragment off-DOM first,
+    // then insert them in a single DOM mutation to avoid per-pin
+    // reflow.
+    const frag = document.createDocumentFragment();
 
     pins.forEach(pin => {
         // OUTER group: anchor translate + click handler. The click
@@ -1216,8 +1240,13 @@ export const applyActionOverviewPins = (
             if (onPinDoubleClick) onPinDoubleClick(pin.id);
         });
 
-        layer.appendChild(g);
+        frag.appendChild(g);
     });
+
+    // Batch-insert all pins, then mount the layer in the live SVG
+    // — a single DOM mutation for the entire pin set.
+    layer.appendChild(frag);
+    svg.appendChild(layer);
 
     // Apply the initial scale compensation so the pins come up at
     // the right size on the very first paint, before the user has

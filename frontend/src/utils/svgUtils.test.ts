@@ -1876,3 +1876,140 @@ describe('computeEquipmentFitRect', () => {
         expect(computeEquipmentFitRect(null, 'LINE_A', 0)).toBeNull();
     });
 });
+
+// ============================================================
+// Performance-critical batching & caching tests
+// ============================================================
+
+describe('applyActionOverviewHighlights — batched DOM writes', () => {
+    const buildContainer = (): { container: HTMLElement; meta: MetadataIndex } => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-edges">' +
+            '    <g id="svg-cont"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+            '    <g id="svg-ovl-1"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+            '    <g id="svg-ovl-2"><line x1="0" y1="200" x2="100" y2="200"/></g>' +
+            '  </g>' +
+            '</svg>';
+        const meta: MetadataIndex = {
+            nodesByEquipmentId: new Map(),
+            nodesBySvgId: new Map(),
+            edgesByEquipmentId: new Map<string, EdgeMeta>([
+                ['CONT_LINE', { equipmentId: 'CONT_LINE', svgId: 'svg-cont', node1: '', node2: '' }],
+                ['OVL_1', { equipmentId: 'OVL_1', svgId: 'svg-ovl-1', node1: '', node2: '' }],
+                ['OVL_2', { equipmentId: 'OVL_2', svgId: 'svg-ovl-2', node1: '', node2: '' }],
+            ]),
+            edgesByNode: new Map(),
+        };
+        return { container, meta };
+    };
+
+    it('inserts all clones in a single DOM mutation (no interleaved appendChild)', () => {
+        const { container, meta } = buildContainer();
+        const svg = container.querySelector('svg')!;
+
+        // Count how many times the highlight layer's children change.
+        // With the batched DocumentFragment approach, the layer gets
+        // a single appendChild(frag) at the end.
+        let insertCount = 0;
+        const realInsertBefore = svg.insertBefore.bind(svg);
+        svg.insertBefore = function <T extends Node>(node: T, ref: Node | null): T {
+            const result = realInsertBefore(node, ref);
+            // The highlight layer is the <g> being inserted
+            if (node instanceof Element && node.classList?.contains('nad-overview-highlight-layer')) {
+                // After the layer is in the DOM, spy on its appendChild
+                const origAppend = node.appendChild.bind(node);
+                node.appendChild = function <U extends Node>(child: U): U {
+                    insertCount++;
+                    return origAppend(child);
+                };
+            }
+            return result;
+        };
+
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+
+        // With DocumentFragment batching, there should be exactly 1
+        // appendChild call on the layer (the fragment), not 3 (one
+        // per clone).
+        expect(insertCount).toBe(1);
+        // But all 3 clones still appear in the DOM:
+        const layer = container.querySelector('g.nad-overview-highlight-layer')!;
+        expect(layer.children.length).toBe(3);
+    });
+
+    it('strips nad-delta-* classes from cloned highlights', () => {
+        const { container, meta } = buildContainer();
+        // Tag an original edge with delta classes that should be
+        // stripped on the clone.
+        const orig = container.querySelector('#svg-ovl-1')!;
+        orig.classList.add('nad-delta-positive');
+
+        applyActionOverviewHighlights(container, meta, null, ['OVL_1']);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-overloaded')!;
+        expect(clone.classList.contains('nad-delta-positive')).toBe(false);
+        expect(clone.classList.contains('nad-delta-negative')).toBe(false);
+        expect(clone.classList.contains('nad-delta-grey')).toBe(false);
+    });
+});
+
+describe('applyActionOverviewPins — batched DOM writes', () => {
+    it('builds all pins off-DOM before inserting the layer into the SVG', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        const svg = container.querySelector('svg')!;
+
+        // Track appendChild calls on the SVG itself.
+        let svgAppendCount = 0;
+        const origAppend = svg.appendChild.bind(svg);
+        svg.appendChild = function <T extends Node>(child: T): T {
+            svgAppendCount++;
+            return origAppend(child);
+        };
+
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 20, severity: 'green', label: '50%', title: 'A' },
+            { id: 'b', x: 30, y: 40, severity: 'red', label: '120%', title: 'B' },
+            { id: 'c', x: 50, y: 60, severity: 'orange', label: '90%', title: 'C' },
+        ], () => {});
+
+        // Only ONE appendChild on the SVG (the fully-populated layer),
+        // not one per pin.
+        expect(svgAppendCount).toBe(1);
+        // All 3 pins are present in the DOM:
+        expect(container.querySelectorAll('g.nad-action-overview-pin').length).toBe(3);
+    });
+});
+
+describe('rescaleActionOverviewPins — baseRadius caching', () => {
+    it('does not re-query circle[r] on subsequent rescale calls', () => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-vl-nodes"><circle r="30"/></g>' +
+            '</svg>';
+
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 50, y: 50, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+
+        const svg = container.querySelector('svg')!;
+        // After applyActionOverviewPins, the cache is populated.
+        // Spy on querySelector to verify it's not called for circle[r]
+        // during rescale.
+        const origQS = svg.querySelector.bind(svg);
+        let circleQueryCount = 0;
+        svg.querySelector = function (selector: string) {
+            if (selector.includes('circle[r]')) circleQueryCount++;
+            return origQS(selector);
+        } as typeof svg.querySelector;
+
+        rescaleActionOverviewPins(container);
+        rescaleActionOverviewPins(container);
+        rescaleActionOverviewPins(container);
+
+        // The cached path should skip the circle[r] lookup entirely.
+        expect(circleQueryCount).toBe(0);
+    });
+});

@@ -125,6 +125,31 @@ describe('ActionOverviewDiagram', () => {
         expect(svg!.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
     });
 
+    it('wraps existing SVG children in a .nad-overview-dim-layer via pre-parse (replaceChildren path)', () => {
+        // Regression: the preparedSvg useMemo wraps children in a
+        // dim-layer off-DOM before replaceChildren injects them —
+        // verify the dim layer exists and has the right opacity.
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        const host = container.querySelector('.nad-action-overview-container');
+        const dimLayer = host!.querySelector('svg > g.nad-overview-dim-layer');
+        expect(dimLayer).not.toBeNull();
+        expect(dimLayer!.getAttribute('opacity')).toBe('0.35');
+        // The original SVG content (edges, VL nodes) should be
+        // INSIDE the dim layer, not at the SVG root.
+        expect(dimLayer!.querySelector('.nad-edges')).not.toBeNull();
+        expect(dimLayer!.querySelector('.nad-vl-nodes')).not.toBeNull();
+    });
+
+    it('clears the container when n1Diagram becomes null', () => {
+        const props = defaultProps();
+        const { container, rerender } = render(<ActionOverviewDiagram {...props} />);
+        const host = container.querySelector('.nad-action-overview-container')!;
+        expect(host.querySelector('svg')).not.toBeNull();
+
+        rerender(<ActionOverviewDiagram {...props} n1Diagram={null as unknown as DiagramData} />);
+        expect(host.querySelector('svg')).toBeNull();
+    });
+
     it('renders one pin per simulated action using the severity palette', () => {
         const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
         const pins = container.querySelectorAll('g.nad-action-overview-pin');
