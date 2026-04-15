@@ -211,9 +211,18 @@ interface VisualizationPanelProps {
     /**
      * Invoked when the user clicks a pin on the action-overview
      * view — should trigger the same action-select flow as
-     * clicking a card in the sidebar.
+     * clicking a card in the sidebar. Accepts `null` so the
+     * top-right ✕ button on the action tab can deselect.
      */
-    onActionSelect?: (actionId: string) => void;
+    onActionSelect?: (actionId: string | null) => void;
+    /** Toggle an action's favourite (starred) status. */
+    onActionFavorite?: (actionId: string) => void;
+    /** Reject an action from the suggestions feed. */
+    onActionReject?: (actionId: string) => void;
+    /** Selected-action id set (for the overview popover styling). */
+    selectedActionIds?: Set<string>;
+    /** Rejected-action id set (for the overview popover styling). */
+    rejectedActionIds?: Set<string>;
     /**
      * Monitoring factor used to derive each action's severity
      * colour, kept in sync with the card palette.
@@ -269,6 +278,10 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onToggleTabTie,
     n1MetaIndex,
     onActionSelect,
+    onActionFavorite,
+    onActionReject,
+    selectedActionIds,
+    rejectedActionIds,
     monitoringFactor,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
@@ -855,11 +868,50 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             actions={result?.actions}
                             monitoringFactor={monitoringFactor ?? 1}
                             onActionSelect={onActionSelect ?? (() => {})}
+                            onActionFavorite={onActionFavorite}
+                            onActionReject={onActionReject}
+                            selectedActionIds={selectedActionIds}
+                            rejectedActionIds={rejectedActionIds}
                             contingency={selectedBranch || null}
                             overloadedLines={n1Diagram?.lines_overloaded ?? result?.lines_overloaded ?? []}
                             inspectableItems={inspectableItems}
                             visible={!selectedActionId && !actionDiagramLoading}
                         />
+                        {/*
+                          Close ✕ — appears at the top-right of the
+                          action tab when a card is selected (i.e.
+                          the drill-down action-variant diagram is
+                          being shown). Clicking it deselects the
+                          action, which folds the overview back in.
+                        */}
+                        {selectedActionId && actionDiagram?.svg && (
+                            <button
+                                data-testid="action-tab-back-to-overview"
+                                onClick={() => onActionSelect?.(null)}
+                                title="Back to actions overview"
+                                style={{
+                                    position: 'absolute',
+                                    top: 10,
+                                    right: 10,
+                                    zIndex: 110,
+                                    background: 'white',
+                                    border: '1px solid #cbd5e1',
+                                    borderRadius: 16,
+                                    padding: '4px 12px',
+                                    cursor: 'pointer',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    color: '#334155',
+                                    boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 6,
+                                }}
+                            >
+                                <span style={{ fontSize: 14 }}>{'\u2715'}</span>
+                                Overview
+                            </button>
+                        )}
                         {actionDiagramLoading && (
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                                 Generating Action Variant Diagram...

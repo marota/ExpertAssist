@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     processSvg,
     boostSvgForLargeGrid,
@@ -23,6 +23,7 @@ import {
     rescaleActionOverviewPins,
     computeActionOverviewFitRect,
     computeEquipmentFitRect,
+    PIN_SINGLE_CLICK_DELAY_MS,
 } from './svgUtils';
 import type { ActionDetail, NodeMeta, EdgeMeta, MetadataIndex } from '../types';
 
@@ -1397,16 +1398,59 @@ describe('applyActionOverviewPins', () => {
         expect(container.querySelectorAll('g.nad-action-overview-pin').length).toBe(0);
     });
 
-    it('clicking a pin invokes the onPinClick callback with the action id', () => {
-        const container = document.createElement('div');
-        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
-        const clicks: string[] = [];
-        applyActionOverviewPins(container, [
-            { id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
-        ], id => clicks.push(id));
-        const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
-        pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-        expect(clicks).toEqual(['action_42']);
+    it('clicking a pin invokes onPinClick (deferred) with the action id and screen position', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+            const clicks: Array<{ id: string; pos: { x: number; y: number } }> = [];
+            applyActionOverviewPins(container, [
+                { id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+            ], (id, pos) => clicks.push({ id, pos }));
+            const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            // Deferred: the callback has NOT fired yet because the
+            // 250 ms single-click delay is still pending.
+            expect(clicks).toEqual([]);
+            vi.advanceTimersByTime(PIN_SINGLE_CLICK_DELAY_MS + 10);
+            expect(clicks.length).toBe(1);
+            expect(clicks[0].id).toBe('action_42');
+            // Screen position is derived from getBoundingClientRect;
+            // jsdom returns zeros but the object shape is preserved.
+            expect(clicks[0].pos).toHaveProperty('x');
+            expect(clicks[0].pos).toHaveProperty('y');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('double-clicking a pin cancels the pending single-click and fires onPinDoubleClick', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+            const singleClicks: string[] = [];
+            const doubleClicks: string[] = [];
+            applyActionOverviewPins(
+                container,
+                [{ id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' }],
+                id => singleClicks.push(id),
+                id => doubleClicks.push(id),
+            );
+            const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+            // A real browser double-click sends two click events followed
+            // by dblclick. The first click schedules the timer, the
+            // second is ignored (timer already pending), then dblclick
+            // clears the timer and fires the double-click callback.
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            pinGroup.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+            vi.advanceTimersByTime(PIN_SINGLE_CLICK_DELAY_MS + 10);
+            expect(singleClicks).toEqual([]);
+            expect(doubleClicks).toEqual(['action_42']);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('does nothing when the container has no <svg>', () => {

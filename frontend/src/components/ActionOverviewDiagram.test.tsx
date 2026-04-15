@@ -157,14 +157,17 @@ describe('ActionOverviewDiagram', () => {
         expect(byId['coupling_VL_FAR']).toBe('translate(500 500)');
     });
 
-    it('clicking a pin invokes onActionSelect with its id', () => {
+    it('double-clicking a pin invokes onActionSelect with its id (drill-down path)', () => {
+        // Semantics changed in the click-vs-dblclick split:
+        //  - single-click → opens the popover (separate test below)
+        //  - double-click → selects the action (this test)
         const onActionSelect = vi.fn();
         const { container } = render(
             <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
         );
         const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
         expect(pin).not.toBeNull();
-        fireEvent.click(pin!);
+        fireEvent.doubleClick(pin!);
         expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
     });
 
@@ -420,6 +423,149 @@ describe('ActionOverviewDiagram', () => {
                     resolve();
                 });
             });
+        });
+    });
+
+    describe('dim background layer', () => {
+        it('wraps existing SVG children in a .nad-overview-dim-layer <g>', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const dim = container.querySelector('.nad-action-overview-container svg > g.nad-overview-dim-layer');
+            expect(dim).not.toBeNull();
+            // The VL nodes group from the test fixture should now be INSIDE the dim group
+            expect(dim!.querySelector('.nad-vl-nodes')).not.toBeNull();
+        });
+
+        it('applies an opacity attribute below 1 on the dim layer', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const dim = container.querySelector('g.nad-overview-dim-layer');
+            expect(dim).not.toBeNull();
+            const opacity = parseFloat(dim!.getAttribute('opacity') || '1');
+            expect(opacity).toBeGreaterThan(0);
+            expect(opacity).toBeLessThan(1);
+        });
+
+        it('pin layer is a SIBLING of the dim layer (full opacity on top)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const dim = svg.querySelector(':scope > g.nad-overview-dim-layer');
+            const pinLayer = svg.querySelector(':scope > g.nad-action-overview-pins');
+            expect(dim).not.toBeNull();
+            expect(pinLayer).not.toBeNull();
+            // Pin layer must NOT be inside the dim wrapper.
+            expect(dim!.contains(pinLayer!)).toBe(false);
+        });
+    });
+
+    describe('click popover (single-click on pin)', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('opens an ActionCard popover on single-click (after the single-click delay)', async () => {
+            const { container, queryByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            // Before clicking, no popover is mounted.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            // The click action is deferred — popover is NOT up yet.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+
+            // Advance the single-click delay + flush React batching.
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = queryByTestId('action-overview-popover');
+            expect(popover).not.toBeNull();
+            expect(popover!.getAttribute('data-action-id')).toBe('disco_LINE_A');
+            // The popover embeds the real ActionCard for this id.
+            expect(popover!.querySelector('[data-testid="action-card-disco_LINE_A"]')).not.toBeNull();
+        });
+
+        it('does NOT open the popover when the user double-clicks the same pin', async () => {
+            const onActionSelect = vi.fn();
+            const { container, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            // Simulate the real browser sequence: click, click, dblclick.
+            fireEvent.click(pin!);
+            fireEvent.click(pin!);
+            fireEvent.doubleClick(pin!);
+            act(() => { vi.advanceTimersByTime(500); });
+
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+            expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
+        });
+
+        it('closes the popover when the ✕ button is clicked', async () => {
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+            fireEvent.click(getByTestId('action-overview-popover-close'));
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('closes the popover when Escape is pressed', async () => {
+            const { container, queryByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+            act(() => {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            });
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('clicking inside the popover does NOT dismiss it (stopPropagation)', async () => {
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            fireEvent.mouseDown(popover);
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+        });
+
+        it('clicking the ActionCard body inside the popover activates the drill-down and closes the popover', async () => {
+            const onActionSelect = vi.fn();
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const card = getByTestId('action-card-disco_LINE_A');
+            fireEvent.click(card);
+            expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
+            // Popover should have been cleared as part of the activation flow.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('does not render the popover when the overview is hidden', async () => {
+            const { container, rerender, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+
+            rerender(<ActionOverviewDiagram {...defaultProps()} visible={false} />);
+            expect(queryByTestId('action-overview-popover')).toBeNull();
         });
     });
 });

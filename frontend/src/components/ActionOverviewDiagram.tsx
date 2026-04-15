@@ -15,6 +15,7 @@ import {
     rescaleActionOverviewPins,
 } from '../utils/svgUtils';
 import { usePanZoom } from '../hooks/usePanZoom';
+import ActionCard from './ActionCard';
 
 /**
  * Action-overview diagram.
@@ -42,8 +43,21 @@ interface ActionOverviewDiagramProps {
     n1MetaIndex: MetadataIndex | null;
     actions: Record<string, ActionDetail> | undefined;
     monitoringFactor: number;
-    /** Invoked when a pin is clicked — wired to the existing action-select flow. */
+    /**
+     * Called with a pin id on a DOUBLE click — this is the
+     * "activate the action drill-down view" path. The parent
+     * wires it to the existing action-select flow so the action
+     * network diagram replaces the overview in the tab.
+     */
     onActionSelect: (actionId: string) => void;
+    /** Toggle the favourite status of an action (popover action). */
+    onActionFavorite?: (actionId: string) => void;
+    /** Reject an action (popover action). */
+    onActionReject?: (actionId: string) => void;
+    /** Selected-action set, for the popover's `isSelected` styling. */
+    selectedActionIds?: Set<string>;
+    /** Rejected-action set, for the popover's `isRejected` styling. */
+    rejectedActionIds?: Set<string>;
     /** Current contingency (selected branch) — included in the auto-fit rectangle. */
     contingency: string | null;
     /** Overloaded lines in the N-1 state — included in the auto-fit rectangle. */
@@ -52,6 +66,13 @@ interface ActionOverviewDiagramProps {
     inspectableItems: readonly string[];
     visible: boolean;
 }
+
+/**
+ * Opacity applied to the wrapped NAD background so the pin layer
+ * on top reads with high visual contrast. Chosen low enough to
+ * make pins pop without completely hiding the network topology.
+ */
+const DIM_BACKGROUND_OPACITY = '0.35';
 
 const ZOOM_STEP_IN = 0.8;
 const ZOOM_STEP_OUT = 1.25;
@@ -69,6 +90,10 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     actions,
     monitoringFactor,
     onActionSelect,
+    onActionFavorite,
+    onActionReject,
+    selectedActionIds,
+    rejectedActionIds,
     contingency,
     overloadedLines,
     inspectableItems,
@@ -123,6 +148,14 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // DECLARED BEFORE `usePanZoom` so React runs this layout
     // effect first and the hook can cache its svgElRef against the
     // freshly-injected element.
+    //
+    // As part of the injection we WRAP every existing top-level
+    // child of the SVG in a dedicated `.nad-overview-dim-layer`
+    // `<g>` with opacity set to DIM_BACKGROUND_OPACITY. The pin
+    // layer, added later by `applyActionOverviewPins`, is
+    // appended as a SIBLING of that group so it renders at full
+    // opacity on top of the faded network — maximising pin
+    // visibility without hiding the grid topology entirely.
     useLayoutEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -142,6 +175,17 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
             (svg as SVGSVGElement).style.width = '100%';
             (svg as SVGSVGElement).style.height = '100%';
+
+            // Wrap existing children in a dim layer.
+            const existingChildren = Array.from(svg.childNodes);
+            if (existingChildren.length > 0) {
+                const SVG_NS = 'http://www.w3.org/2000/svg';
+                const dimGroup = document.createElementNS(SVG_NS, 'g');
+                dimGroup.setAttribute('class', 'nad-overview-dim-layer');
+                dimGroup.setAttribute('opacity', DIM_BACKGROUND_OPACITY);
+                existingChildren.forEach(c => dimGroup.appendChild(c));
+                svg.appendChild(dimGroup);
+            }
         }
     }, [svgString]);
 
@@ -163,6 +207,28 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // zoom out — the "sticking" bug.
     const lastFocusedRef = useRef<string | null>(null);
 
+    // ----- Click popover -----
+    // Single-click on a pin opens a floating ActionCard popover
+    // anchored next to the pin in screen coordinates; double-click
+    // activates the full action drill-down view (see
+    // `handlePinDoubleClick`) and closes the popover.
+    const [popoverPin, setPopoverPin] = useState<{
+        id: string;
+        screenX: number;
+        screenY: number;
+    } | null>(null);
+
+    const handlePinClick = useCallback((actionId: string, screenPos: { x: number; y: number }) => {
+        setPopoverPin({ id: actionId, screenX: screenPos.x, screenY: screenPos.y });
+    }, []);
+
+    const handlePinDoubleClick = useCallback((actionId: string) => {
+        // Make sure no stale popover is left behind on the way
+        // into the drill-down view.
+        setPopoverPin(null);
+        onActionSelect(actionId);
+    }, [onActionSelect]);
+
     // (Re)apply pins whenever the source SVG or pin list changes.
     // Pins are appended to the SVG itself (not to the container
     // div) so the existing viewBox-based pan/zoom naturally
@@ -171,8 +237,8 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         if (!svgReady) return;
         const container = containerRef.current;
         if (!container) return;
-        applyActionOverviewPins(container, pins, onActionSelect);
-    }, [pins, onActionSelect, svgReady, svgString]);
+        applyActionOverviewPins(container, pins, handlePinClick, handlePinDoubleClick);
+    }, [pins, handlePinClick, handlePinDoubleClick, svgReady, svgString]);
 
     // Screen-constant pin compensation.
     //
@@ -295,6 +361,45 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
     const hasAnyAction = !!actions && Object.keys(actions).length > 0;
     const noBackground = !n1Diagram?.svg;
+
+    // ----- Popover dismissal -----
+    // Close on Escape, on outside-click, or when visibility is
+    // toggled away (e.g. the user switched tabs).
+    const popoverRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (!popoverPin) return;
+        const onDocMouseDown = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+            if (popoverRef.current && target && popoverRef.current.contains(target)) return;
+            // Also ignore clicks on any pin — the pin's own click
+            // handler owns the popover-state update and would
+            // otherwise race with this listener.
+            if (target instanceof Element && target.closest('.nad-action-overview-pin')) return;
+            setPopoverPin(null);
+        };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setPopoverPin(null);
+        };
+        document.addEventListener('mousedown', onDocMouseDown);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDocMouseDown);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [popoverPin]);
+
+    // Pre-compute the props ActionCard needs for the popover render.
+    const popoverDetails = popoverPin && actions ? actions[popoverPin.id] : null;
+    const popoverIndex = useMemo(() => {
+        if (!popoverPin || !actions) return 0;
+        const keys = Object.keys(actions);
+        const idx = keys.indexOf(popoverPin.id);
+        return idx < 0 ? 0 : idx;
+    }, [popoverPin, actions]);
+    // Stubs for ActionCard callbacks we don't need in the popover
+    // (re-simulate inputs, asset-click-to-zoom, etc.). Kept stable
+    // via useCallback so ActionCard's React.memo can skip re-renders.
+    const noopActionCardCb = useCallback(() => { /* intentional no-op */ }, []);
     const showInspectDropdown = inspectFocused
         && inspectQuery.length > 0
         && filteredInspectables.length > 0
@@ -510,6 +615,101 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                     pointerEvents: 'none',
                 }}>
                     Run &ldquo;Analyze &amp; Suggest&rdquo; to see prioritised remedial actions as pins on the network.
+                </div>
+            )}
+
+            {/*
+              Click popover.
+              - Position is fixed (not absolute) because the
+                click handler captured screen-space coordinates
+                at click time, and we want the popover to land
+                exactly next to the pin the operator clicked.
+              - `portaled` via React means the popover sits in
+                the same React tree as the overview, so React
+                owns its lifecycle and we don't need a separate
+                reconciliation root.
+              - Outside clicks, Escape, and popover close button
+                all dismiss it via setPopoverPin(null).
+            */}
+            {visible && popoverPin && popoverDetails && (
+                <div
+                    ref={popoverRef}
+                    data-testid="action-overview-popover"
+                    data-action-id={popoverPin.id}
+                    style={{
+                        position: 'fixed',
+                        left: popoverPin.screenX - 170,
+                        top: popoverPin.screenY + 24,
+                        width: 340,
+                        maxHeight: '70vh',
+                        overflowY: 'auto',
+                        background: 'white',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 8,
+                        boxShadow: '0 10px 24px rgba(0, 0, 0, 0.25)',
+                        zIndex: 300,
+                    }}
+                    onMouseDown={e => e.stopPropagation()}
+                >
+                    {/* Close control — mirrors the ✕ shape used by
+                        other floating panels (SLD overlay, confirm
+                        dialogs). */}
+                    <button
+                        data-testid="action-overview-popover-close"
+                        onClick={() => setPopoverPin(null)}
+                        title="Close"
+                        style={{
+                            position: 'absolute',
+                            top: 6,
+                            right: 8,
+                            zIndex: 2,
+                            background: 'white',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '50%',
+                            width: 22,
+                            height: 22,
+                            cursor: 'pointer',
+                            fontSize: 12,
+                            color: '#475569',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                            lineHeight: 1,
+                        }}
+                    >
+                        {'\u2715'}
+                    </button>
+                    <ActionCard
+                        id={popoverPin.id}
+                        details={popoverDetails}
+                        index={popoverIndex}
+                        isViewing={false}
+                        isSelected={selectedActionIds?.has(popoverPin.id) ?? false}
+                        isRejected={rejectedActionIds?.has(popoverPin.id) ?? false}
+                        linesOverloaded={Array.from(overloadedLines)}
+                        monitoringFactor={monitoringFactor}
+                        nodesByEquipmentId={n1MetaIndex?.nodesByEquipmentId ?? null}
+                        edgesByEquipmentId={n1MetaIndex?.edgesByEquipmentId ?? null}
+                        cardEditMw={{}}
+                        cardEditTap={{}}
+                        resimulating={null}
+                        // Clicking the card body activates the
+                        // full action drill-down view — same
+                        // effect as a double-click on the pin.
+                        onActionSelect={(id) => {
+                            setPopoverPin(null);
+                            if (id) onActionSelect(id);
+                        }}
+                        onActionFavorite={onActionFavorite ?? noopActionCardCb}
+                        onActionReject={onActionReject ?? noopActionCardCb}
+                        // Asset-click from the popover badges does
+                        // not zoom the overview diagram — kept as
+                        // a no-op to avoid surprising the operator
+                        // while the popover is open.
+                        onAssetClick={noopActionCardCb}
+                        onCardEditMwChange={noopActionCardCb}
+                        onCardEditTapChange={noopActionCardCb}
+                        onResimulate={noopActionCardCb}
+                        onResimulateTap={noopActionCardCb}
+                    />
                 </div>
             )}
         </div>

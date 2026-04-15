@@ -705,4 +705,50 @@ describe('VisualizationPanel', () => {
             expect(screen.queryByText('Loading configuration...')).not.toBeInTheDocument();
         });
     });
+
+    describe('Action tab "back to overview" close button', () => {
+        const actionDiagram: DiagramData = {
+            svg: '<svg viewBox="0 0 100 100"><g/></svg>',
+            metadata: null,
+        };
+
+        it('renders the close ✕ when a card is selected and the action diagram is loaded', () => {
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram,
+            })} />);
+            expect(screen.getByTestId('action-tab-back-to-overview')).toBeInTheDocument();
+        });
+
+        it('does NOT render the close ✕ when no action is selected', () => {
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: null,
+                actionDiagram,
+            })} />);
+            expect(screen.queryByTestId('action-tab-back-to-overview')).not.toBeInTheDocument();
+        });
+
+        it('does NOT render the close ✕ when the action diagram has not loaded yet', () => {
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram: null,
+            })} />);
+            expect(screen.queryByTestId('action-tab-back-to-overview')).not.toBeInTheDocument();
+        });
+
+        it('calls onActionSelect(null) on click (returns to overview)', async () => {
+            const onActionSelect = vi.fn();
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram,
+                onActionSelect,
+            })} />);
+            await userEvent.click(screen.getByTestId('action-tab-back-to-overview'));
+            expect(onActionSelect).toHaveBeenCalledWith(null);
+        });
+    });
 });

@@ -938,15 +938,33 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
 };
 
 /**
+ * Delay (ms) used by {@link applyActionOverviewPins} to distinguish
+ * a pin single-click from the first click of a double-click. The
+ * single-click action is deferred for this window and cancelled if
+ * a `dblclick` event lands on the same pin. Exposed as a constant
+ * so tests can fast-forward it deterministically.
+ */
+export const PIN_SINGLE_CLICK_DELAY_MS = 250;
+
+/**
  * Inject (or refresh) the action-overview pin layer inside the
- * given container's SVG. Clicking a pin invokes `onPinClick` with
- * the action id, which should trigger the existing action-select
- * flow. Calling this with an empty `pins` array wipes the layer.
+ * given container's SVG.
+ *
+ * Click semantics:
+ *  - a single click on a pin invokes `onPinClick` after
+ *    {@link PIN_SINGLE_CLICK_DELAY_MS} ms, with the pin's screen
+ *    coordinates so the caller can anchor a popover next to it;
+ *  - a double click on a pin cancels the pending single-click and
+ *    invokes `onPinDoubleClick` instead — the caller typically
+ *    uses that to activate the action drill-down view.
+ *
+ * Calling this with an empty `pins` array wipes the layer.
  */
 export const applyActionOverviewPins = (
     container: HTMLElement | null,
     pins: ActionPinInfo[],
-    onPinClick: (actionId: string) => void,
+    onPinClick: (actionId: string, screenPos: { x: number; y: number }) => void,
+    onPinDoubleClick?: (actionId: string) => void,
 ) => {
     if (!container) return;
     const svg = container.querySelector('svg') as SVGSVGElement | null;
@@ -1034,9 +1052,39 @@ export const applyActionOverviewPins = (
         text.textContent = pin.label;
         body.appendChild(text);
 
+        // Click vs. double-click arbitration.
+        //
+        // A real browser double-click fires two `click` events in a
+        // row followed by `dblclick`. We defer the single-click
+        // action (the popover) so the dblclick has a chance to
+        // cancel it — matching Google Maps and similar UIs.
+        //
+        // Tests may use `fireEvent.doubleClick` which only fires
+        // the `dblclick` event; that still works because the
+        // dblclick handler no-ops when the timer is null.
+        let clickTimer: ReturnType<typeof setTimeout> | null = null;
         g.addEventListener('click', (evt) => {
             evt.stopPropagation();
-            onPinClick(pin.id);
+            if (clickTimer !== null) return;
+            // Compute screen-space anchor NOW (before React rerenders)
+            // so the popover lands exactly next to the pin.
+            const rect = (evt.currentTarget as SVGGElement).getBoundingClientRect();
+            const screenPos = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+            };
+            clickTimer = setTimeout(() => {
+                clickTimer = null;
+                onPinClick(pin.id, screenPos);
+            }, PIN_SINGLE_CLICK_DELAY_MS);
+        });
+        g.addEventListener('dblclick', (evt) => {
+            evt.stopPropagation();
+            if (clickTimer !== null) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+            }
+            if (onPinDoubleClick) onPinDoubleClick(pin.id);
         });
 
         layer.appendChild(g);
