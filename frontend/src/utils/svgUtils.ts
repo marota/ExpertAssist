@@ -1046,6 +1046,9 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
     // when you read geometry AFTER pending DOM writes, but here the
     // only pending write is the `viewBox` attribute which changes the
     // SVG viewport, not the CSS box model of the container div.
+    //
+    // Falls back to getScreenCTM() when clientWidth is unavailable
+    // (e.g. element not yet laid out) to keep pin scaling working.
     let pxPerSvgUnit = 1;
     const vbAttr = svg.getAttribute('viewBox');
     if (vbAttr) {
@@ -1054,6 +1057,12 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
             const containerW = container.clientWidth;
             if (containerW > 0) {
                 pxPerSvgUnit = containerW / parts[2];
+            } else {
+                // Fallback: use getScreenCTM when container has no layout yet.
+                // This path is hit only once (initial render) — subsequent
+                // calls during zoom will have a valid clientWidth.
+                const ctm = (svg as unknown as SVGGraphicsElement).getScreenCTM?.();
+                if (ctm) pxPerSvgUnit = ctm.a;
             }
         }
     }
