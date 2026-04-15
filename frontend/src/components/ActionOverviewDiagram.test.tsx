@@ -125,19 +125,18 @@ describe('ActionOverviewDiagram', () => {
         expect(svg!.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
     });
 
-    it('wraps existing SVG children in a .nad-overview-dim-layer via pre-parse (replaceChildren path)', () => {
-        // Regression: the preparedSvg useMemo wraps children in a
-        // dim-layer off-DOM before replaceChildren injects them —
-        // verify the dim layer exists and has the right opacity.
+    it('adds nad-overview-dimmed CSS class to the SVG for dimming (no opacity group)', () => {
+        // The old approach wrapped children in <g opacity="0.35"> which
+        // created an SVG transparency group — Chrome had to rasterize
+        // all ~43k elements into an intermediate buffer (Layerize: 31s).
+        // Now we use a CSS class instead — no stacking context.
         const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
         const host = container.querySelector('.nad-action-overview-container');
-        const dimLayer = host!.querySelector('svg > g.nad-overview-dim-layer');
-        expect(dimLayer).not.toBeNull();
-        expect(dimLayer!.getAttribute('opacity')).toBe('0.35');
-        // The original SVG content (edges, VL nodes) should be
-        // INSIDE the dim layer, not at the SVG root.
-        expect(dimLayer!.querySelector('.nad-edges')).not.toBeNull();
-        expect(dimLayer!.querySelector('.nad-vl-nodes')).not.toBeNull();
+        const svg = host!.querySelector('svg');
+        expect(svg!.classList.contains('nad-overview-dimmed')).toBe(true);
+        // Original SVG content stays at the SVG root (no wrapper group).
+        expect(svg!.querySelector('.nad-edges')).not.toBeNull();
+        expect(svg!.querySelector('.nad-vl-nodes')).not.toBeNull();
     });
 
     it('clears the container when n1Diagram becomes null', () => {
@@ -519,36 +518,24 @@ describe('ActionOverviewDiagram', () => {
             expect(layer!.querySelector('.nad-overloaded')).not.toBeNull();
         });
 
-        it('places the highlight layer NEXT TO (not inside) the dim layer', () => {
+        it('highlight and pin layers are direct children of the SVG', () => {
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
-            const dim = svg.querySelector(':scope > g.nad-overview-dim-layer');
             const highlightLayer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
-            expect(dim).not.toBeNull();
+            const pinLayer = svg.querySelector(':scope > g.nad-action-overview-pins');
             expect(highlightLayer).not.toBeNull();
-            // Highlight layer must NOT be a descendant of the dim
-            // group — otherwise its halos would inherit the 0.35
-            // opacity and become invisible.
-            expect(dim!.contains(highlightLayer!)).toBe(false);
+            expect(pinLayer).not.toBeNull();
         });
 
-        it('places the highlight layer BEFORE the dim layer in document order (background like N-1 tab)', () => {
-            // Regression guard: the highlight clones must render
-            // BEHIND the dimmed network so the halo peeks out
-            // around the line strokes, mirroring the
-            // `#nad-background-layer` placement on the N-1 tab.
+        it('places highlight layer BEFORE pins in document order', () => {
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
             const directGs = Array.from(svg.children) as Element[];
             const highlightIdx = directGs.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
-            const dimIdx = directGs.findIndex(c => c.classList.contains('nad-overview-dim-layer'));
             const pinIdx = directGs.findIndex(c => c.classList.contains('nad-action-overview-pins'));
             expect(highlightIdx).toBeGreaterThan(-1);
-            expect(dimIdx).toBeGreaterThan(-1);
             expect(pinIdx).toBeGreaterThan(-1);
-            // Order: highlights → dim → pins
-            expect(highlightIdx).toBeLessThan(dimIdx);
-            expect(dimIdx).toBeLessThan(pinIdx);
+            expect(highlightIdx).toBeLessThan(pinIdx);
         });
 
         it('refreshes highlights when contingency changes', () => {
@@ -566,33 +553,23 @@ describe('ActionOverviewDiagram', () => {
         });
     });
 
-    describe('dim background layer', () => {
-        it('wraps existing SVG children in a .nad-overview-dim-layer <g>', () => {
-            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
-            const dim = container.querySelector('.nad-action-overview-container svg > g.nad-overview-dim-layer');
-            expect(dim).not.toBeNull();
-            // The VL nodes group from the test fixture should now be INSIDE the dim group
-            expect(dim!.querySelector('.nad-vl-nodes')).not.toBeNull();
-        });
-
-        it('applies an opacity attribute below 1 on the dim layer', () => {
-            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
-            const dim = container.querySelector('g.nad-overview-dim-layer');
-            expect(dim).not.toBeNull();
-            const opacity = parseFloat(dim!.getAttribute('opacity') || '1');
-            expect(opacity).toBeGreaterThan(0);
-            expect(opacity).toBeLessThan(1);
-        });
-
-        it('pin layer is a SIBLING of the dim layer (full opacity on top)', () => {
+    describe('dim background (CSS class, no opacity group)', () => {
+        it('applies nad-overview-dimmed class instead of wrapping in an opacity group', () => {
+            // The old <g opacity="0.35"> wrapper created an SVG
+            // transparency group that caused a 31s Layerize on large
+            // grids.  Now we use a CSS class instead.
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
-            const dim = svg.querySelector(':scope > g.nad-overview-dim-layer');
+            expect(svg.classList.contains('nad-overview-dimmed')).toBe(true);
+            // No <g> opacity wrapper should exist.
+            expect(svg.querySelector('g.nad-overview-dim-layer')).toBeNull();
+        });
+
+        it('pin layer is a direct child of the SVG (not nested)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
             const pinLayer = svg.querySelector(':scope > g.nad-action-overview-pins');
-            expect(dim).not.toBeNull();
             expect(pinLayer).not.toBeNull();
-            // Pin layer must NOT be inside the dim wrapper.
-            expect(dim!.contains(pinLayer!)).toBe(false);
         });
     });
 

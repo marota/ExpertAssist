@@ -865,20 +865,15 @@ export const buildActionOverviewPins = (
  * Apply contingency + overload halo highlights to the
  * action-overview diagram, mirroring what the N-1 tab shows.
  *
- * The overview wraps every imported NAD child in a
- * `.nad-overview-dim-layer <g opacity="0.35">` so the pin overlay
- * reads at high contrast.
+ * The overview dims the NAD background via a CSS class
+ * (`nad-overview-dimmed`) on the SVG root — each direct child
+ * gets `opacity: 0.35` via CSS, avoiding an SVG transparency
+ * group that would force Chrome to rasterize all ~43k elements
+ * into an intermediate buffer (Layerize: 31s on large grids).
  *
- * To match the N-1 tab visually, the highlight clones live in a
- * dedicated `.nad-overview-highlight-layer` that is inserted
- * BEFORE the dim layer in document order. That puts the halos
- * BEHIND the dimmed network — the same compositing relationship
- * as the N-1 tab, where halos peek out from behind the original
- * line strokes (see App.css `#nad-background-layer`). Visual
- * stack:
- *
+ * Visual stack (back to front):
  *   1. overview highlight layer (contingency + overload halos)
- *   2. dim layer (faded NAD background, painted on top)
+ *   2. dimmed NAD content (original SVG children at 0.35 opacity)
  *   3. action overview pin layer (Google-Maps pins on top)
  *
  * The clones reuse the existing `.nad-contingency-highlight` and
@@ -911,15 +906,10 @@ export const applyActionOverviewHighlights = (
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const layer = document.createElementNS(SVG_NS, 'g') as SVGGElement;
     layer.setAttribute('class', 'nad-overview-highlight-layer');
-    // Insert BEFORE the dim layer (which itself is inserted by the
-    // ActionOverviewDiagram wrap-on-injection step). That puts the
-    // highlight clones BEHIND the dimmed NAD just like the N-1 tab
-    // background-layer pattern. Fall back to inserting at the
-    // start of the SVG if the dim layer is not yet present.
-    const dimLayer = svg.querySelector('.nad-overview-dim-layer');
-    if (dimLayer) {
-        svg.insertBefore(layer, dimLayer);
-    } else if (svg.firstChild) {
+    // Insert at the START of the SVG so the highlight clones render
+    // BEHIND the dimmed NAD content — same compositing relationship
+    // as the N-1 tab background-layer pattern.
+    if (svg.firstChild) {
         svg.insertBefore(layer, svg.firstChild);
     } else {
         svg.appendChild(layer);

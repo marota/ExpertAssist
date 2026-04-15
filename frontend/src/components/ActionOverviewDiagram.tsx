@@ -154,17 +154,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             svg.style.height = '100%';
         }
 
-        // Wrap existing children in a dim layer (done off-DOM — no
-        // forced layout).
-        const existingChildren = Array.from(svg.childNodes);
-        if (existingChildren.length > 0) {
-            const SVG_NS = 'http://www.w3.org/2000/svg';
-            const dimGroup = document.createElementNS(SVG_NS, 'g');
-            dimGroup.setAttribute('class', 'nad-overview-dim-layer');
-            dimGroup.setAttribute('opacity', DIM_BACKGROUND_OPACITY);
-            existingChildren.forEach(c => dimGroup.appendChild(c));
-            svg.appendChild(dimGroup);
-        }
+        // Dim the network background by applying a CSS class instead
+        // of wrapping in a <g opacity="0.35">.  The SVG `opacity`
+        // attribute creates a transparency group that forces Chrome
+        // to rasterize all ~43k children into an intermediate buffer
+        // before compositing — the "Layerize" step takes ~31s on
+        // large grids.  Using a CSS class avoids that by letting the
+        // browser apply the dimming as a simple style on each child
+        // without creating a stacking context.
+        svg.classList.add('nad-overview-dimmed');
         console.log(`[SVG] Action overview pre-parse took ${(performance.now() - start).toFixed(2)}ms`);
         return svg;
     }, [svgString]);
