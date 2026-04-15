@@ -138,18 +138,19 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const actionId = a.id.toLowerCase();
                 const actionDesc = (a.description || '').toLowerCase();
 
-                const isDisco = t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture');
-                const isReco = t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture');
-                const isOpenCoupling = t.includes('open_coupling');
-                const isCloseCoupling = t.includes('close_coupling');
+                // Check coupling FIRST — coupling descriptions also contain 'ouverture'/'fermeture'
+                const isOpenCoupling = t.includes('open_coupling') || (actionDesc.includes('couplage') && actionDesc.includes('ouverture'));
+                const isCloseCoupling = t.includes('close_coupling') || (actionDesc.includes('couplage') && actionDesc.includes('fermeture'));
+                const isDisco = !isOpenCoupling && !isCloseCoupling && (t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture'));
+                const isReco = !isOpenCoupling && !isCloseCoupling && (t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture'));
                 const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
                 const isLoadShedding = (actionId.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
                 const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
 
-                if (isDisco) return typeFilters.disco;
-                if (isReco) return typeFilters.reco;
                 if (isOpenCoupling) return typeFilters.open;
                 if (isCloseCoupling) return typeFilters.close;
+                if (isDisco) return typeFilters.disco;
+                if (isReco) return typeFilters.reco;
                 if (isPstAction) return typeFilters.pst;
                 if (isLoadShedding) return typeFilters.ls;
                 if (isRenewableCurtailment) return typeFilters.rc;
@@ -196,19 +197,20 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 const aid = actionId.toLowerCase();
                 const t = type.toLowerCase();
 
-                const isDisco = t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture');
-                const isReco = t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture');
-                const isOpenCoupling = t.includes('open_coupling');
-                const isCloseCoupling = t.includes('close_coupling');
+                // Check coupling FIRST — coupling descriptions also contain 'ouverture'/'fermeture'
+                const isOpenCoupling = t.includes('open_coupling') || (actionDesc.includes('couplage') && actionDesc.includes('ouverture'));
+                const isCloseCoupling = t.includes('close_coupling') || (actionDesc.includes('couplage') && actionDesc.includes('fermeture'));
+                const isDisco = !isOpenCoupling && !isCloseCoupling && (t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture'));
+                const isReco = !isOpenCoupling && !isCloseCoupling && (t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture'));
                 const isPstAction = (aid.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
                 const isLoadShedding = (aid.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
                 const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
 
                 let shouldShow = false;
-                if (isDisco) shouldShow = typeFilters.disco;
-                else if (isReco) shouldShow = typeFilters.reco;
-                else if (isOpenCoupling) shouldShow = typeFilters.open;
+                if (isOpenCoupling) shouldShow = typeFilters.open;
                 else if (isCloseCoupling) shouldShow = typeFilters.close;
+                else if (isDisco) shouldShow = typeFilters.disco;
+                else if (isReco) shouldShow = typeFilters.reco;
                 else if (isPstAction) shouldShow = typeFilters.pst;
                 else if (isLoadShedding) shouldShow = typeFilters.ls;
                 else if (isRenewableCurtailment) shouldShow = typeFilters.rc;
