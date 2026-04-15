@@ -114,6 +114,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     visible,
 }) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
+
+    // Track whether the component has been shown at least once.
+    // Before the first show we use `display: none` (zero rendering
+    // cost).  After that we switch to `visibility: hidden` so the
+    // SVG stays in its composite layer and subsequent tab-switches
+    // are instant (~1ms compositor-only vs ~11s full repaint).
+    const hasBeenVisibleRef = useRef(false);
+    if (visible) hasBeenVisibleRef.current = true;
+
     // Pull the svg string into a local so the React Compiler can
     // see that both the injection effect and the initialViewBox memo
     // depend on the same primitive, not on the full `n1Diagram`
@@ -504,15 +513,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             style={{
                 position: 'absolute',
                 inset: 0,
-                display: 'flex',
                 flexDirection: 'column',
                 background: 'white',
-                // Use visibility instead of display:none so the SVG stays
-                // painted in a cached composite layer.  Switching from
-                // visibility:hidden→visible is a composite-only operation
-                // (~1ms) whereas display:none→flex forces a full re-layout
-                // and re-paint of all ~11k SVG elements (~11s on large grids).
-                visibility: visible ? 'visible' : 'hidden',
+                // Before the first show: display:none → zero cost.
+                // After the first show: visibility:hidden keeps the SVG
+                // painted in its composite layer so re-showing is a
+                // compositor-only operation (~1ms vs ~11s full repaint).
+                ...(hasBeenVisibleRef.current
+                    ? { display: 'flex', visibility: visible ? 'visible' as const : 'hidden' as const }
+                    : { display: visible ? 'flex' : 'none' }),
                 pointerEvents: visible ? 'auto' : 'none',
                 // Sit above the hidden MemoizedSvgContainer for
                 // actionDiagram (which stays mounted to preserve
