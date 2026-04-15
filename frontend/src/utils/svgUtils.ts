@@ -909,11 +909,14 @@ export const applyActionOverviewHighlights = (
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const layer = document.createElementNS(SVG_NS, 'g') as SVGGElement;
     layer.setAttribute('class', 'nad-overview-highlight-layer');
-    // Insert AFTER the dim rect (if present) so highlights render
-    // ABOVE the dimming overlay but BELOW the pin layer.  The dim
-    // rect has class `.nad-overview-dim-rect`; the pin layer has
-    // class `.nad-action-overview-pins`.  We insert before the pin
-    // layer if it exists, otherwise at the end of the SVG.
+    // Insert AFTER the dim rect but BEFORE the pin layer, so
+    // highlights render ABOVE the dimmed background (fully visible
+    // and undimmed) but BELOW the pins.  The thick halo strokes
+    // (120-150px) visually extend well beyond the network lines,
+    // giving the "background glow" effect even though the layer
+    // sits above the dimmed NAD in paint order.
+    //
+    // Visual stack: NAD content → dim rect → highlights → pins.
     const pinLayer = svg.querySelector('.nad-action-overview-pins');
     if (pinLayer) {
         svg.insertBefore(layer, pinLayer);
@@ -1006,6 +1009,17 @@ const readPinBaseRadius = (svg: SVGSVGElement): number => {
 const PIN_MIN_SCREEN_RADIUS_PX = 22;
 
 /**
+ * Minimum pin body radius as a fraction of the current viewBox
+ * extent. On large grids the VL circle radius (used as `baseR`)
+ * is tiny relative to the diagram — e.g. r=40 on a 30000-unit
+ * wide diagram. The screen-pixel floor (`PIN_MIN_SCREEN_RADIUS_PX`)
+ * only kicks in during zoom, but at the initial auto-fit zoom the
+ * pins may still be too small to notice. This fraction ensures
+ * pin diameter is always at least 1/50th of the viewBox window.
+ */
+const PIN_VIEWBOX_FRACTION = 50;
+
+/**
  * Rescale the action-overview pin glyphs so that, as the viewBox
  * grows (user zooms out), they grow proportionally in SVG-space to
  * stay at least `PIN_MIN_SCREEN_RADIUS_PX` pixels wide on screen —
@@ -1073,10 +1087,23 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         pinBaseRadiusCache.set(svg, baseR);
     }
     const minSvgR = PIN_MIN_SCREEN_RADIUS_PX / pxPerSvgUnit;
+    // Second floor: pin radius must be at least 1/50th of the
+    // current viewBox extent so pins stay prominent on large grids
+    // where the VL circles are tiny relative to the diagram.
+    let viewBoxMinR = 0;
+    if (vbAttr) {
+        const parts = vbAttr.split(/[\s,]+/).map(Number);
+        if (parts.length === 4) {
+            const extent = Math.max(parts[2], parts[3]);
+            viewBoxMinR = extent / PIN_VIEWBOX_FRACTION;
+        }
+    }
     // Keep `baseR` as the floor — this is what makes pins match VL
     // circles at normal zoom. When the user zooms far out, minSvgR
-    // exceeds baseR and the pins grow to stay visible.
-    const effectiveR = Math.max(baseR, minSvgR);
+    // exceeds baseR and the pins grow to stay visible. The viewBox
+    // fraction floor ensures pins are prominent even on first render
+    // of very large grids.
+    const effectiveR = Math.max(baseR, minSvgR, viewBoxMinR);
     const scale = effectiveR / baseR;
 
     layer.querySelectorAll('.nad-action-overview-pin-body').forEach(body => {

@@ -1555,14 +1555,13 @@ describe('applyActionOverviewHighlights', () => {
         expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
     });
 
-    it('inserts the highlight layer BEFORE the pin layer (or at the end of the SVG)', () => {
+    it('inserts the highlight layer AFTER the dim rect (above dimmed NAD, below pins)', () => {
         const { container, meta } = buildContainer();
         applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
         const svg = container.querySelector('svg')!;
-        // The highlight layer should be a direct child of the SVG.
         const layer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
         expect(layer).not.toBeNull();
-        // When there is no pin layer yet, the highlight layer goes at the end.
+        // When there is no pin layer, the highlight layer goes at the end.
         expect(svg.lastElementChild).toBe(layer);
     });
 

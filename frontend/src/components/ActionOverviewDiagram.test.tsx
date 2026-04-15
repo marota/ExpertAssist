@@ -437,8 +437,9 @@ describe('ActionOverviewDiagram', () => {
                         expect(match).not.toBeNull();
                         const scale = parseFloat(match![1]);
                         // pxPerSvgUnit=0.1, MIN_SCREEN_RADIUS_PX=22,
-                        // baseR=40 → effectiveR=max(40, 220)=220 → scale=5.5
-                        expect(scale).toBeCloseTo(220 / 40, 2);
+                        // baseR=40, viewBoxMinR=99999/50≈2000
+                        // effectiveR=max(40, 220, 2000)=2000 → scale≈50
+                        expect(scale).toBeCloseTo(99999 / 50 / 40, 1);
                         resolve();
                     });
                 });
@@ -524,14 +525,17 @@ describe('ActionOverviewDiagram', () => {
             expect(pinLayer).not.toBeNull();
         });
 
-        it('places highlight layer BEFORE pins in document order', () => {
+        it('places highlight layer AFTER dim rect and BEFORE pins in document order', () => {
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
-            const directGs = Array.from(svg.children) as Element[];
-            const highlightIdx = directGs.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
-            const pinIdx = directGs.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+            const children = Array.from(svg.children);
+            const dimIdx = children.findIndex(c => c.classList.contains('nad-overview-dim-rect'));
+            const highlightIdx = children.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+            const pinIdx = children.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+            expect(dimIdx).toBeGreaterThan(-1);
             expect(highlightIdx).toBeGreaterThan(-1);
             expect(pinIdx).toBeGreaterThan(-1);
+            expect(dimIdx).toBeLessThan(highlightIdx);
             expect(highlightIdx).toBeLessThan(pinIdx);
         });
 
@@ -589,7 +593,7 @@ describe('ActionOverviewDiagram', () => {
             expect(pinLayer).not.toBeNull();
         });
 
-        it('dim rect is placed BEFORE highlights and pins in document order', () => {
+        it('visual stack order: NAD content → dim rect → highlights → pins', () => {
             const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
             const svg = container.querySelector('.nad-action-overview-container svg')!;
             const children = Array.from(svg.children);
@@ -599,6 +603,7 @@ describe('ActionOverviewDiagram', () => {
             expect(dimIdx).toBeGreaterThan(-1);
             expect(highlightIdx).toBeGreaterThan(-1);
             expect(pinIdx).toBeGreaterThan(-1);
+            // Dim rect after NAD content, highlights above dim, pins last
             expect(dimIdx).toBeLessThan(highlightIdx);
             expect(highlightIdx).toBeLessThan(pinIdx);
         });
