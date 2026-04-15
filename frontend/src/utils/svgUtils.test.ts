@@ -1372,6 +1372,28 @@ describe('applyActionOverviewPins', () => {
         expect(path!.hasAttribute('stroke-width')).toBe(false);
     });
 
+    it('uses a high-contrast dark slate fill on the pin label text (not the severity colour)', () => {
+        // Regression: earlier the label text was filled with the
+        // severity colour, which matched the teardrop and faded
+        // into the pin outline when the text slightly overflowed
+        // the inner white disc.
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'g', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'o', x: 0, y: 0, severity: 'orange', label: '90%', title: '' },
+            { id: 'r', x: 0, y: 0, severity: 'red', label: '110%', title: '' },
+            { id: 'x', x: 0, y: 0, severity: 'grey', label: 'DIV', title: '' },
+        ], () => {});
+        const texts = Array.from(container.querySelectorAll('g.nad-action-overview-pin text'));
+        // Every pin label — regardless of severity — uses the
+        // same dark fill so it stays readable on the white disc
+        // AND on the coloured teardrop if it overflows.
+        texts.forEach(t => {
+            expect(t.getAttribute('fill')).toBe('#1f2937');
+        });
+    });
+
     it('is idempotent — re-applying wipes the previous layer', () => {
         const container = document.createElement('div');
         container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';

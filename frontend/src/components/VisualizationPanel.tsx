@@ -591,16 +591,30 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         // lives INSIDE the tab text instead of as a separate close
                         // button so it does not collide with the Flow/Impacts toggle
                         // and other top-right controls.
+                        //
+                        // The label uses a flex layout so the chip stays visible and
+                        // clickable even on narrow tabs (the outer button otherwise
+                        // applies `overflow: hidden; text-overflow: ellipsis` which
+                        // was truncating the chip to a bare "..." ellipsis).
                         {
                             id: 'action' as TabId,
                             label: selectedActionId ? (
-                                <>
-                                    Remedial Action:{' '}
+                                <span
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        width: '100%',
+                                        minWidth: 0,
+                                    }}
+                                >
+                                    <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>Remedial Action:</span>
                                     <span
                                         data-testid="action-tab-deselect-chip"
                                         role="button"
                                         tabIndex={0}
-                                        title="Click the action id to return to the overview"
+                                        title={`${selectedActionId} — click to return to the overview`}
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onActionSelect?.(null);
@@ -615,25 +629,52 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                         style={{
                                             display: 'inline-flex',
                                             alignItems: 'center',
-                                            gap: 4,
-                                            padding: '1px 8px',
-                                            borderRadius: 10,
+                                            gap: 6,
+                                            padding: '2px 10px',
+                                            borderRadius: 12,
                                             background: '#fce4ec',
                                             color: '#ad1457',
-                                            border: '1px solid #f48fb1',
+                                            border: '1.5px solid #ec407a',
                                             cursor: 'pointer',
-                                            textDecoration: 'underline dotted',
-                                            fontWeight: 600,
+                                            fontWeight: 700,
+                                            // Let the chip shrink before the "Remedial Action:" label does
+                                            flex: '1 1 auto',
+                                            minWidth: 0,
                                             maxWidth: '100%',
                                             overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
                                         }}
                                     >
-                                        {selectedActionId}
-                                        <span aria-hidden style={{ fontSize: 10, opacity: 0.8 }}>{'\u2715'}</span>
+                                        <span
+                                            style={{
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                minWidth: 0,
+                                            }}
+                                        >
+                                            {selectedActionId}
+                                        </span>
+                                        <span
+                                            aria-hidden
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                flexShrink: 0,
+                                                width: 14,
+                                                height: 14,
+                                                borderRadius: '50%',
+                                                background: '#ec407a',
+                                                color: 'white',
+                                                fontSize: 10,
+                                                lineHeight: 1,
+                                            }}
+                                        >
+                                            {'\u2715'}
+                                        </span>
                                     </span>
-                                </>
-                            ) : 'Remedial action: overview',
+                                </span>
+                            ) as React.ReactNode : 'Remedial action: overview' as React.ReactNode,
                             available: !!actionDiagram?.svg || !!n1Diagram?.svg,
                             accentColor: '#ff4081',
                             dimColor: '#aab',
@@ -671,7 +712,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                     background: 'transparent',
                                     color: isDetached ? '#7c8894' : (tab.available ? (isActive ? '#2c3e50' : tab.dimColor) : '#bbb'),
                                     fontSize: tab.id === 'action' && selectedActionId ? '0.75rem' : '0.85rem',
-                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    // The action tab with a selected card carries its
+                                    // own flex label with internal ellipsis on the chip.
+                                    // We must NOT apply white-space: nowrap /
+                                    // text-overflow: ellipsis on the outer button for
+                                    // that tab — it was truncating the whole label
+                                    // down to a bare "Remedial Action: ..." string and
+                                    // hiding the clickable deselect chip.
+                                    overflow: 'hidden',
+                                    textOverflow: tab.id === 'action' && selectedActionId ? 'clip' : 'ellipsis',
+                                    whiteSpace: tab.id === 'action' && selectedActionId ? 'normal' : 'nowrap',
+                                    display: tab.id === 'action' && selectedActionId ? 'flex' : undefined,
+                                    alignItems: tab.id === 'action' && selectedActionId ? 'center' : undefined,
+                                    justifyContent: tab.id === 'action' && selectedActionId ? 'center' : undefined,
                                     minWidth: 0,
                                 }}
                             >

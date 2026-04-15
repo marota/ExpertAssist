@@ -1154,9 +1154,14 @@ export const applyActionOverviewPins = (
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'central');
         text.setAttribute('font-size', String(labelFont));
-        text.setAttribute('font-weight', '700');
+        text.setAttribute('font-weight', '800');
         text.setAttribute('font-family', 'system-ui, -apple-system, Arial, sans-serif');
-        text.setAttribute('fill', severityFill[pin.severity]);
+        // Use a high-contrast slate colour instead of the severity
+        // hue — when the label text slightly overflows the inner
+        // white disc it would otherwise blend into the coloured
+        // teardrop. Dark slate reads clearly against both the
+        // white disc AND every severity fill.
+        text.setAttribute('fill', '#1f2937');
         text.setAttribute('pointer-events', 'none');
         text.textContent = pin.label;
         body.appendChild(text);

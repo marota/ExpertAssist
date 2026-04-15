@@ -16,7 +16,7 @@ import {
     rescaleActionOverviewPins,
 } from '../utils/svgUtils';
 import { usePanZoom } from '../hooks/usePanZoom';
-import ActionCard from './ActionCard';
+import ActionCardPopover from './ActionCardPopover';
 import {
     POPOVER_WIDTH,
     POPOVER_MAX_HEIGHT,
@@ -449,10 +449,9 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         const idx = keys.indexOf(popoverPin.id);
         return idx < 0 ? 0 : idx;
     }, [popoverPin, actions]);
-    // Stubs for ActionCard callbacks we don't need in the popover
-    // (re-simulate inputs, asset-click-to-zoom, etc.). Kept stable
-    // via useCallback so ActionCard's React.memo can skip re-renders.
-    const noopActionCardCb = useCallback(() => { /* intentional no-op */ }, []);
+    // ActionCardPopover wraps the no-op stubs for the
+    // re-simulate / asset-click callbacks internally — we only
+    // need to pass the minimal set of handlers below.
     const showInspectDropdown = inspectFocused
         && inspectQuery.length > 0
         && filteredInspectables.length > 0
@@ -684,86 +683,46 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
               - Outside clicks, Escape, and popover close button
                 all dismiss it via setPopoverPin(null).
             */}
+            {/*
+              Popover.
+              The ActionCard rendered inside the popover is the
+              EXACT SAME `ActionCard` component the sidebar feed
+              uses — both callsites import from the same module.
+              The `ActionCardPopover` wrapper handles the floating
+              chrome (position, close button, shadow) and forwards
+              the minimal set of callbacks this preview view
+              needs, so when we add or rename a field on
+              `ActionCard` we only need to update the feed's
+              render call and the popover wrapper — never
+              two parallel implementations.
+            */}
             {visible && popoverPin && popoverDetails && (
-                <div
-                    ref={popoverRef}
-                    data-testid="action-overview-popover"
-                    data-action-id={popoverPin.id}
-                    data-place-above={popoverPin.placeAbove ? 'true' : 'false'}
-                    data-horizontal-align={popoverPin.horizontalAlign}
+                <ActionCardPopover
+                    popoverRef={popoverRef}
+                    testId="action-overview-popover"
+                    extraDataAttributes={{
+                        'data-place-above': popoverPin.placeAbove ? 'true' : 'false',
+                        'data-horizontal-align': popoverPin.horizontalAlign,
+                    }}
+                    actionId={popoverPin.id}
+                    details={popoverDetails}
+                    index={popoverIndex}
                     style={{
                         ...computePopoverStyle(popoverPin),
                         width: POPOVER_WIDTH,
                         maxHeight: POPOVER_MAX_HEIGHT,
                         overflowY: 'auto',
-                        background: 'white',
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 8,
-                        boxShadow: '0 10px 24px rgba(0, 0, 0, 0.25)',
-                        zIndex: 300,
                     }}
-                    onMouseDown={e => e.stopPropagation()}
-                >
-                    {/* Close control — mirrors the ✕ shape used by
-                        other floating panels (SLD overlay, confirm
-                        dialogs). */}
-                    <button
-                        data-testid="action-overview-popover-close"
-                        onClick={() => setPopoverPin(null)}
-                        title="Close"
-                        style={{
-                            position: 'absolute',
-                            top: 6,
-                            right: 8,
-                            zIndex: 2,
-                            background: 'white',
-                            border: '1px solid #cbd5e1',
-                            borderRadius: '50%',
-                            width: 22,
-                            height: 22,
-                            cursor: 'pointer',
-                            fontSize: 12,
-                            color: '#475569',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-                            lineHeight: 1,
-                        }}
-                    >
-                        {'\u2715'}
-                    </button>
-                    <ActionCard
-                        id={popoverPin.id}
-                        details={popoverDetails}
-                        index={popoverIndex}
-                        isViewing={false}
-                        isSelected={selectedActionIds?.has(popoverPin.id) ?? false}
-                        isRejected={rejectedActionIds?.has(popoverPin.id) ?? false}
-                        linesOverloaded={Array.from(overloadedLines)}
-                        monitoringFactor={monitoringFactor}
-                        nodesByEquipmentId={n1MetaIndex?.nodesByEquipmentId ?? null}
-                        edgesByEquipmentId={n1MetaIndex?.edgesByEquipmentId ?? null}
-                        cardEditMw={{}}
-                        cardEditTap={{}}
-                        resimulating={null}
-                        // Clicking the card body activates the
-                        // full action drill-down view — same
-                        // effect as a double-click on the pin.
-                        onActionSelect={(id) => {
-                            setPopoverPin(null);
-                            if (id) onActionSelect(id);
-                        }}
-                        onActionFavorite={onActionFavorite ?? noopActionCardCb}
-                        onActionReject={onActionReject ?? noopActionCardCb}
-                        // Asset-click from the popover badges does
-                        // not zoom the overview diagram — kept as
-                        // a no-op to avoid surprising the operator
-                        // while the popover is open.
-                        onAssetClick={noopActionCardCb}
-                        onCardEditMwChange={noopActionCardCb}
-                        onCardEditTapChange={noopActionCardCb}
-                        onResimulate={noopActionCardCb}
-                        onResimulateTap={noopActionCardCb}
-                    />
-                </div>
+                    linesOverloaded={overloadedLines}
+                    monitoringFactor={monitoringFactor}
+                    metaIndex={n1MetaIndex ?? null}
+                    selectedActionIds={selectedActionIds}
+                    rejectedActionIds={rejectedActionIds}
+                    onActivateAction={onActionSelect}
+                    onActionFavorite={onActionFavorite}
+                    onActionReject={onActionReject}
+                    onClose={() => setPopoverPin(null)}
+                />
             )}
         </div>
     );
