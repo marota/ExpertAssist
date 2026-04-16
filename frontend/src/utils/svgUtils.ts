@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import type { AssetDelta, ViewBox, MetadataIndex, NodeMeta, EdgeMeta, ActionDetail, CombinedAction } from '../types';
+import type { AssetDelta, ViewBox, MetadataIndex, NodeMeta, EdgeMeta, ActionDetail } from '../types';
 
 // ===== Cached DOM ID Map =====
 // Avoids repeated querySelectorAll('[id]') scans on large SVG containers.
@@ -919,86 +919,74 @@ export const buildActionOverviewPins = (
 };
 
 /**
- * Build descriptors for combined-action pins. Each combined action
- * connects two unitary action pins with a curved line and places a
- * new pin at the midpoint of the curve.
+ * Build descriptors for combined-action pins. A simulated combined
+ * action is identified by an action key containing '+' in the
+ * `actions` dict (e.g. "disco_X+reco_Y"). For each such entry the
+ * function locates the two constituent unitary pins and produces a
+ * `CombinedPinInfo` with a curved connection between them and a
+ * dedicated pin at the curve midpoint.
  *
- * Only pairs that have been **simulated** (i.e. whose pair key also
- * exists as a key in `simulatedActions`) are included — estimation-
- * only pairs from the superposition theorem are skipped.
+ * NOTE: simulated pairs land in `actions` (not `combined_actions`)
+ * — see CombinedActionsModal's handleSimulate. That is why this
+ * function scans `actions` for '+' keys rather than iterating over
+ * `combined_actions`.
  *
  * Pure function — no DOM access.
  */
 export const buildCombinedActionPins = (
-    combinedActions: Record<string, CombinedAction> | null | undefined,
+    actions: Record<string, ActionDetail> | null | undefined,
     unitaryPins: readonly ActionPinInfo[],
     monitoringFactor: number,
-    simulatedActions?: Record<string, ActionDetail> | null,
 ): CombinedPinInfo[] => {
-    if (!combinedActions) return [];
+    if (!actions) return [];
     const pinById = new Map(unitaryPins.map(p => [p.id, p]));
     const result: CombinedPinInfo[] = [];
 
-    for (const [pairId, combined] of Object.entries(combinedActions)) {
-        // Skip estimation-only pairs: only render if the pair has
-        // been fully simulated (its key exists in the actions dict).
-        const simDetail = simulatedActions?.[pairId];
-        if (simulatedActions && !simDetail) continue;
+    for (const [actionId, detail] of Object.entries(actions)) {
+        if (!actionId.includes('+')) continue;
 
-        const pin1 = pinById.get(combined.action1_id);
-        const pin2 = pinById.get(combined.action2_id);
+        const parts = actionId.split('+');
+        if (parts.length !== 2) continue;
+        const [id1, id2] = parts;
+
+        const pin1 = pinById.get(id1);
+        const pin2 = pinById.get(id2);
         if (!pin1 || !pin2) continue;
 
         // Midpoint of the quadratic curve control point offset.
         // The control point is offset perpendicular to the line
-        // between the two pins, and the midpoint of the curve is
-        // at (p1 + 2*ctrl + p2) / 4 for a quadratic Bezier.
+        // between the two pins.
         const dx = pin2.x - pin1.x;
         const dy = pin2.y - pin1.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        // Perpendicular offset: 30% of the distance between pins
         const offsetFraction = 0.3;
         const ctrlX = (pin1.x + pin2.x) / 2 + (-dy / dist) * dist * offsetFraction;
         const ctrlY = (pin1.y + pin2.y) / 2 + (dx / dist) * dist * offsetFraction;
-        // Midpoint of quadratic Bezier: B(0.5) = (1-t)^2*P1 + 2t(1-t)*C + t^2*P2
+        // Midpoint of quadratic Bezier: B(0.5)
         const t = 0.5;
         const midX = (1 - t) * (1 - t) * pin1.x + 2 * t * (1 - t) * ctrlX + t * t * pin2.x;
         const midY = (1 - t) * (1 - t) * pin1.y + 2 * t * (1 - t) * ctrlY + t * t * pin2.y;
 
-        // Prefer simulated data (more accurate) over estimation data.
-        const maxRho = simDetail?.max_rho ?? combined.max_rho;
-        const maxRhoLine = simDetail?.max_rho_line ?? combined.max_rho_line;
-        const isIslanded = simDetail?.is_islanded ?? combined.is_islanded;
-        const nonConvergence = simDetail?.non_convergence;
-        const description = simDetail?.description_unitaire ?? combined.description;
+        const severity = computeActionSeverity(detail, monitoringFactor);
 
-        let severity: ActionPinInfo['severity'];
-        if (nonConvergence || isIslanded) severity = 'grey';
-        else if (combined.error) severity = 'grey';
-        else if (maxRho != null && maxRho > monitoringFactor) severity = 'red';
-        else if (maxRho != null && maxRho > monitoringFactor - 0.05) severity = 'orange';
-        else severity = 'green';
-
-        const label = maxRho != null
-            ? `${(maxRho * 100).toFixed(0)}%`
-            : nonConvergence ? 'DIV'
-                : isIslanded ? 'ISL'
-                    : combined.error ? 'ERR' : '\u2014';
+        const label = detail.max_rho != null
+            ? `${(detail.max_rho * 100).toFixed(0)}%`
+            : detail.non_convergence ? 'DIV'
+                : detail.is_islanded ? 'ISL' : '\u2014';
 
         const title = [
-            `${combined.action1_id} + ${combined.action2_id}`,
-            description,
-            maxRho != null
-                ? `max loading ${(maxRho * 100).toFixed(1)}%${maxRhoLine ? ` on ${maxRhoLine}` : ''}`
-                : nonConvergence ? 'load-flow divergent'
-                    : isIslanded ? 'islanding'
-                        : combined.error ?? '',
+            `${id1} + ${id2}`,
+            detail.description_unitaire,
+            detail.max_rho != null
+                ? `max loading ${(detail.max_rho * 100).toFixed(1)}%${detail.max_rho_line ? ` on ${detail.max_rho_line}` : ''}`
+                : detail.non_convergence ? 'load-flow divergent'
+                    : detail.is_islanded ? 'islanding' : '',
         ].filter(Boolean).join(' \u2014 ');
 
         result.push({
-            pairId,
-            action1Id: combined.action1_id,
-            action2Id: combined.action2_id,
+            pairId: actionId,
+            action1Id: id1,
+            action2Id: id2,
             p1: { x: pin1.x, y: pin1.y },
             p2: { x: pin2.x, y: pin2.y },
             x: midX,

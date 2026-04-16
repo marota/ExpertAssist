@@ -6,7 +6,7 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ActionDetail, CombinedAction, DiagramData, MetadataIndex, ViewBox } from '../types';
+import type { ActionDetail, DiagramData, MetadataIndex, ViewBox } from '../types';
 import {
     applyActionOverviewHighlights,
     applyActionOverviewPins,
@@ -74,8 +74,6 @@ interface ActionOverviewDiagramProps {
     selectedActionIds?: Set<string>;
     /** Rejected-action set — pins are dimmed with a red cross. */
     rejectedActionIds?: Set<string>;
-    /** Combined action pairs — rendered as curved connections between unitary pins. */
-    combinedActions?: Record<string, CombinedAction> | null;
     /**
      * Called when a pin is single-clicked (preview). The parent can
      * use this to scroll the sidebar action feed to the matching card.
@@ -130,7 +128,6 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
-    combinedActions,
     onPinPreview,
     contingency,
     overloadedLines,
@@ -239,9 +236,9 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     }, [n1MetaIndex, actions, monitoringFactor]);
 
     const combinedPins = useMemo(() => {
-        if (!combinedActions || pins.length === 0) return [];
-        return buildCombinedActionPins(combinedActions, pins, monitoringFactor, actions);
-    }, [combinedActions, pins, monitoringFactor, actions]);
+        if (!actions || pins.length === 0) return [];
+        return buildCombinedActionPins(actions, pins, monitoringFactor);
+    }, [actions, pins, monitoringFactor]);
 
     // Deterministic auto-fit rectangle derived from the bounding
     // box of contingency + overloads + pins. Recomputed whenever any
