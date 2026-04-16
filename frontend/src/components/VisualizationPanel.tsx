@@ -232,8 +232,8 @@ interface VisualizationPanelProps {
     rejectedActionIds?: Set<string>;
     /** Called when a pin is single-clicked on the overview (scroll sidebar to card). */
     onPinPreview?: (actionId: string) => void;
-    /** Ref to the overview's usePanZoom instance (for tied-tab sync). */
-    overviewPzRef?: React.MutableRefObject<PZInstance | null>;
+    /** Called when the overview's usePanZoom instance changes (for tied-tab sync). */
+    onOverviewPzChange?: (pz: PZInstance) => void;
     /**
      * Monitoring factor used to derive each action's severity
      * colour, kept in sync with the card palette.
@@ -294,7 +294,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     selectedActionIds,
     rejectedActionIds,
     onPinPreview,
-    overviewPzRef,
+    onOverviewPzChange,
     monitoringFactor,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
@@ -1028,7 +1028,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             overloadedLines={overloadedLinesMemo}
                             inspectableItems={inspectableItems}
                             visible={!selectedActionId && !actionDiagramLoading}
-                            pzRef={overviewPzRef}
+                            onPzChange={onOverviewPzChange}
                             isTied={isTabTiedFn('action')}
                             onToggleTie={() => toggleTabTieCb('action')}
                             isDetached={!!detachedTabs['action']}

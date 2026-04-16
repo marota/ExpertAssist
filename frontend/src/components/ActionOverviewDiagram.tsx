@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ActionDetail, DiagramData, MetadataIndex, ViewBox } from '../types';
 import {
     applyActionOverviewHighlights,
@@ -86,12 +86,19 @@ interface ActionOverviewDiagramProps {
     inspectableItems: readonly string[];
     visible: boolean;
     /**
-     * Optional ref that the parent can use to read the overview's
-     * `usePanZoom` instance.  This lets the tied-tabs sync hook
-     * mirror the overview's viewBox when the action tab is detached
-     * and no action card is focused.
+     * Called whenever the overview's `usePanZoom` instance changes
+     * (which happens on every viewBox update, since usePanZoom
+     * returns a new object identity via useMemo).  The parent stores
+     * the instance in React **state** so the tied-tabs sync hook
+     * sees the new viewBox in its dependency list and can propagate
+     * the change bidirectionally.
+     *
+     * A ref-based approach doesn't work here: writing to a ref
+     * doesn't trigger a re-render of App, so the sync hook's
+     * `actionVb` dep stays stale and detached→main mirroring
+     * never fires.
      */
-    pzRef?: MutableRefObject<ReturnType<typeof usePanZoom> | null>;
+    onPzChange?: (pz: ReturnType<typeof usePanZoom>) => void;
     /** Whether the action tab is currently tied (zoom-sync with main window). */
     isTied?: boolean;
     /** Toggle the tied state for the action tab. */
@@ -125,7 +132,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     overloadedLines,
     inspectableItems,
     visible,
-    pzRef,
+    onPzChange,
     isTied,
     onToggleTie,
     isDetached,
@@ -279,13 +286,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // doesn't steal wheel events from other tabs.
     const pz = usePanZoom(containerRef, initialViewBox, visible && svgReady);
 
-    // Expose the PZ instance to the parent so the tied-tabs sync
-    // hook can mirror the overview's viewBox when the action tab
-    // is detached without an action focused.
+    // Notify the parent whenever the PZ instance changes.  Because
+    // `usePanZoom` returns a new object on every viewBox update
+    // (line 313 of usePanZoom.ts: `useMemo([viewBox, setViewBox])`),
+    // this fires on every pan/zoom — which is exactly what the
+    // tied-tabs sync hook needs to detect a change in the detached
+    // popup and mirror it to the main window.
     useEffect(() => {
-        if (pzRef) pzRef.current = pz;
-        return () => { if (pzRef) pzRef.current = null; };
-    }, [pz, pzRef]);
+        onPzChange?.(pz);
+    }, [pz, onPzChange]);
 
     // Asset-focus "consume once" tracking — declared up here so
     // `handleReset` (defined just below) can clear it.

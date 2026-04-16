@@ -80,13 +80,25 @@ function App() {
   // include it in the tie system so that when the action tab is
   // detached and showing the overview (no selectedActionId), zoom /
   // focus changes are mirrored to the main window.
-  const overviewPzRef = useRef<PZInstance | null>(null);
+  //
+  // This MUST be React state (not a ref) so that when the overview's
+  // viewBox changes inside ActionOverviewDiagram, the new PZ instance
+  // propagates up to App via the onPzChange callback, triggering a
+  // re-render.  That re-render updates `actionVb` inside
+  // useTiedTabsSync's deps, letting it detect the change and mirror
+  // it to the main window.  A ref would silently hold the new value
+  // without triggering the sync hook — making detached→main sync
+  // one-directional.
+  const [overviewPz, setOverviewPz] = useState<PZInstance | null>(null);
+  const handleOverviewPzChange = useCallback((pz: PZInstance) => {
+    setOverviewPz(pz);
+  }, []);
 
   // When the overview is visible (no selected action), use its PZ
   // for the 'action' slot in the tie map.  Otherwise fall back to
   // the action-variant diagram's PZ.
-  const actionPZForTie = (!diagrams.selectedActionId && overviewPzRef.current)
-    ? overviewPzRef.current
+  const actionPZForTie = (!diagrams.selectedActionId && overviewPz)
+    ? overviewPz
     : diagrams.actionPZ;
 
   // ===== Tied Detached Tabs =====
@@ -1217,7 +1229,7 @@ function App() {
             selectedActionIds={selectedActionIds}
             rejectedActionIds={rejectedActionIds}
             onPinPreview={handlePinPreview}
-            overviewPzRef={overviewPzRef}
+            onOverviewPzChange={handleOverviewPzChange}
             monitoringFactor={monitoringFactor}
           />
         </div>
