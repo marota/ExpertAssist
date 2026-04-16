@@ -6,10 +6,11 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
 import React, { useState, useMemo, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, MetadataIndex } from '../types';
 import MemoizedSvgContainer from './MemoizedSvgContainer';
 import SldOverlay from './SldOverlay';
 import DetachableTabHost from './DetachableTabHost';
+import ActionOverviewDiagram from './ActionOverviewDiagram';
 import type { DetachedTabsMap } from '../hooks/useDetachedTabs';
 
 /**
@@ -128,6 +129,12 @@ const InspectSearchField: React.FC<{
     );
 };
 
+// Module-level stable references so React.memo children don't
+// break referential equality on every parent render.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const NOOP_ACTION_SELECT = (_id: string | null) => { /* intentional no-op */ };
+const EMPTY_STRING_ARRAY: readonly string[] = [];
+
 interface VisualizationPanelProps {
     activeTab: TabId;
     configLoading: boolean;
@@ -200,6 +207,33 @@ interface VisualizationPanelProps {
     isTabTied?: (tab: TabId) => boolean;
     /** Toggle the "tied" flag for the given tab. */
     onToggleTabTie?: (tab: TabId) => void;
+    /**
+     * Metadata index for the N-1 diagram. Used by the
+     * action-overview view (shown in the Remedial Action tab
+     * when no card is selected) to resolve each action to an
+     * (x, y) anchor on the network.
+     */
+    n1MetaIndex?: MetadataIndex | null;
+    /**
+     * Invoked when the user clicks a pin on the action-overview
+     * view — should trigger the same action-select flow as
+     * clicking a card in the sidebar. Accepts `null` so the
+     * top-right ✕ button on the action tab can deselect.
+     */
+    onActionSelect?: (actionId: string | null) => void;
+    /** Toggle an action's favourite (starred) status. */
+    onActionFavorite?: (actionId: string) => void;
+    /** Reject an action from the suggestions feed. */
+    onActionReject?: (actionId: string) => void;
+    /** Selected-action id set (for the overview popover styling). */
+    selectedActionIds?: Set<string>;
+    /** Rejected-action id set (for the overview popover styling). */
+    rejectedActionIds?: Set<string>;
+    /**
+     * Monitoring factor used to derive each action's severity
+     * colour, kept in sync with the card palette.
+     */
+    monitoringFactor?: number;
 }
 
 
@@ -248,6 +282,13 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onViewModeChangeForTab,
     isTabTied,
     onToggleTabTie,
+    n1MetaIndex,
+    onActionSelect,
+    onActionFavorite,
+    onActionReject,
+    selectedActionIds,
+    rejectedActionIds,
+    monitoringFactor,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
     const detachTabCb = onDetachTab ?? (() => {});
@@ -262,6 +303,14 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     const viewModeChangeForTabCb = onViewModeChangeForTab ?? ((_tab: TabId, mode: 'network' | 'delta') => onViewModeChange(mode));
     const isTabTiedFn = isTabTied ?? (() => false);
     const toggleTabTieCb = onToggleTabTie ?? (() => {});
+
+    // Stable fallbacks for the ActionOverviewDiagram props so that
+    // React.memo on the child doesn't break on every parent render.
+    const actionSelectCb = onActionSelect ?? NOOP_ACTION_SELECT;
+    const overloadedLinesMemo = React.useMemo(
+        () => n1Diagram?.lines_overloaded ?? result?.lines_overloaded ?? EMPTY_STRING_ARRAY,
+        [n1Diagram?.lines_overloaded, result?.lines_overloaded],
+    );
     const [warningDismissed, setWarningDismissed] = useState(false);
     const [voltageFilterExpanded, setVoltageFilterExpanded] = useState(false);
 
@@ -543,10 +592,109 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
             <div style={{ display: 'flex', borderBottom: '1px solid #ccc', flexShrink: 0 }}>
                 {(
                     [
-                        { id: 'n' as TabId, label: 'Network (N)', available: !!nDiagram?.svg, accentColor: '#3498db', dimColor: '#7f8c8d', placeholder: 'Configure a network path in Settings to load the base-case diagram.' },
-                        { id: 'n-1' as TabId, label: 'Contingency (N-1)', available: !!n1Diagram?.svg, accentColor: '#e74c3c', dimColor: '#aab', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
-                        { id: 'action' as TabId, label: selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', available: !!actionDiagram?.svg, accentColor: '#ff4081', dimColor: '#aab', placeholder: 'Select an action card from the suggestions panel to view its effect on the network.' },
-                        { id: 'overflow' as TabId, label: 'Overflow Analysis', available: !!result?.pdf_url, accentColor: '#27ae60', dimColor: '#aab', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
+                        { id: 'n' as TabId, label: 'Network (N)' as React.ReactNode, available: !!nDiagram?.svg, accentColor: '#3498db', dimColor: '#7f8c8d', placeholder: 'Configure a network path in Settings to load the base-case diagram.' },
+                        { id: 'n-1' as TabId, label: 'Contingency (N-1)' as React.ReactNode, available: !!n1Diagram?.svg, accentColor: '#e74c3c', dimColor: '#aab', placeholder: 'Select a contingency element from the dropdown to view the N-1 state.' },
+                        // When no card is selected, the Remedial Action tab hosts the
+                        // action-overview view (pins over the N-1 network). It is considered
+                        // "available" as soon as the N-1 diagram has loaded, so the tab is no
+                        // longer italicised while the user is still browsing the overview.
+                        //
+                        // When a card IS selected, the action id is rendered as a
+                        // clickable chip that deselects the action on click — taking
+                        // the user back to the overview view in the same tab. The chip
+                        // lives INSIDE the tab text instead of as a separate close
+                        // button so it does not collide with the Flow/Impacts toggle
+                        // and other top-right controls.
+                        //
+                        // The label uses a flex layout so the chip stays visible and
+                        // clickable even on narrow tabs (the outer button otherwise
+                        // applies `overflow: hidden; text-overflow: ellipsis` which
+                        // was truncating the chip to a bare "..." ellipsis).
+                        {
+                            id: 'action' as TabId,
+                            label: selectedActionId ? (
+                                <span
+                                    style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 6,
+                                        width: '100%',
+                                        minWidth: 0,
+                                    }}
+                                >
+                                    <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>Remedial Action:</span>
+                                    <span
+                                        data-testid="action-tab-deselect-chip"
+                                        role="button"
+                                        tabIndex={0}
+                                        title={`${selectedActionId} — click to return to the overview`}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onActionSelect?.(null);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                onActionSelect?.(null);
+                                            }
+                                        }}
+                                        style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: 6,
+                                            padding: '2px 10px',
+                                            borderRadius: 12,
+                                            background: '#fce4ec',
+                                            color: '#ad1457',
+                                            border: '1.5px solid #ec407a',
+                                            cursor: 'pointer',
+                                            fontWeight: 700,
+                                            // Let the chip shrink before the "Remedial Action:" label does
+                                            flex: '1 1 auto',
+                                            minWidth: 0,
+                                            maxWidth: '100%',
+                                            overflow: 'hidden',
+                                        }}
+                                    >
+                                        <span
+                                            style={{
+                                                overflow: 'hidden',
+                                                textOverflow: 'ellipsis',
+                                                whiteSpace: 'nowrap',
+                                                minWidth: 0,
+                                            }}
+                                        >
+                                            {selectedActionId}
+                                        </span>
+                                        <span
+                                            aria-hidden
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                flexShrink: 0,
+                                                width: 14,
+                                                height: 14,
+                                                borderRadius: '50%',
+                                                background: '#ec407a',
+                                                color: 'white',
+                                                fontSize: 10,
+                                                lineHeight: 1,
+                                            }}
+                                        >
+                                            {'\u2715'}
+                                        </span>
+                                    </span>
+                                </span>
+                            ) as React.ReactNode : 'Remedial action: overview' as React.ReactNode,
+                            available: !!actionDiagram?.svg || !!n1Diagram?.svg,
+                            accentColor: '#ff4081',
+                            dimColor: '#aab',
+                            placeholder: 'Select a contingency and run the analysis to see remedial actions.',
+                        },
+                        { id: 'overflow' as TabId, label: 'Overflow Analysis' as React.ReactNode, available: !!result?.pdf_url, accentColor: '#27ae60', dimColor: '#aab', placeholder: 'Run \u201cAnalyze & Suggest\u201d to see the overflow graph.' },
                     ] as const
                 ).map(tab => {
                     const isActive = activeTab === tab.id;
@@ -578,7 +726,19 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                     background: 'transparent',
                                     color: isDetached ? '#7c8894' : (tab.available ? (isActive ? '#2c3e50' : tab.dimColor) : '#bbb'),
                                     fontSize: tab.id === 'action' && selectedActionId ? '0.75rem' : '0.85rem',
-                                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                    // The action tab with a selected card carries its
+                                    // own flex label with internal ellipsis on the chip.
+                                    // We must NOT apply white-space: nowrap /
+                                    // text-overflow: ellipsis on the outer button for
+                                    // that tab — it was truncating the whole label
+                                    // down to a bare "Remedial Action: ..." string and
+                                    // hiding the clickable deselect chip.
+                                    overflow: 'hidden',
+                                    textOverflow: tab.id === 'action' && selectedActionId ? 'clip' : 'ellipsis',
+                                    whiteSpace: tab.id === 'action' && selectedActionId ? 'normal' : 'nowrap',
+                                    display: tab.id === 'action' && selectedActionId ? 'flex' : undefined,
+                                    alignItems: tab.id === 'action' && selectedActionId ? 'center' : undefined,
+                                    justifyContent: tab.id === 'action' && selectedActionId ? 'center' : undefined,
                                     minWidth: 0,
                                 }}
                             >
@@ -801,7 +961,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         width: '100%', height: '100%',
                         position: 'absolute', top: 0, left: 0,
                     }}>
-                        {detachedTabs['action'] && renderDetachedHeader('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
+                        {detachedTabs['action'] && renderDetachedHeader('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', '#ff4081')}
                         {/* Convergence warning banner */}
                         {actionDiagram && actionDiagram.lf_converged === false && (
                             <div style={{
@@ -815,6 +975,37 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                         )}
                         {/* Always mounted — see comment on N-1 container. */}
                         <MemoizedSvgContainer svg={actionDiagram?.svg || ''} containerRef={actionSvgContainerRef} display="block" tabId="action" />
+                        {/*
+                          Action-overview layer: rendered on top of the
+                          (hidden) action-diagram container when no card
+                          is selected. When a card IS selected it folds
+                          away (visible=false) and the existing action
+                          variant diagram + highlights take over, so the
+                          selection-driven interactions persist intact.
+                        */}
+                        <ActionOverviewDiagram
+                            n1Diagram={n1Diagram}
+                            n1MetaIndex={n1MetaIndex ?? null}
+                            actions={result?.actions}
+                            monitoringFactor={monitoringFactor ?? 1}
+                            onActionSelect={actionSelectCb}
+                            onActionFavorite={onActionFavorite}
+                            onActionReject={onActionReject}
+                            selectedActionIds={selectedActionIds}
+                            rejectedActionIds={rejectedActionIds}
+                            contingency={selectedBranch || null}
+                            overloadedLines={overloadedLinesMemo}
+                            inspectableItems={inspectableItems}
+                            visible={!selectedActionId && !actionDiagramLoading}
+                        />
+                        {/*
+                          The "back to overview" affordance now lives
+                          inside the tab label as a clickable chip
+                          around the action id (see the action tab
+                          definition above). The previous top-right ✕
+                          button was removed because it overlapped
+                          with the Flow/Impacts toggle.
+                        */}
                         {actionDiagramLoading && (
                             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', background: 'rgba(255,255,255,0.85)', zIndex: 20 }}>
                                 Generating Action Variant Diagram...
@@ -825,15 +1016,16 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                                 Failed to load diagram for action {selectedActionId}
                             </div>
                         )}
-                        {!actionDiagramLoading && !actionDiagram?.svg && !selectedActionId && (
-                            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#999', fontStyle: 'italic', textAlign: 'center', padding: '40px', background: 'white' }}>
-                                Select an action card from the suggestions panel to view its effect on the network.
-                            </div>
-                        )}
+                        {/*
+                          The "select a card..." placeholder is now
+                          replaced by the ActionOverviewDiagram above
+                          (which itself shows its own empty-state copy
+                          when the N-1 background is missing).
+                        */}
                         {renderTabOverlay('action', true)}
                     </div>
                 </DetachableTabHost>
-                {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial Action', '#ff4081')}
+                {activeTab === 'action' && detachedTabs['action'] && renderDetachedPlaceholder('action', selectedActionId ? `Remedial Action: ${selectedActionId}` : 'Remedial action: overview', '#ff4081')}
 
                 {/* Voltage Range Sidebar — collapsed by default, toggle to expand */}
                 {uniqueVoltages.length > 1 && (() => {

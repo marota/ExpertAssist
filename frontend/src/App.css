@@ -489,3 +489,32 @@ circle.nad-highlight {
     background: rgba(220, 220, 220, 0.95);
     color: #333;
 }
+/* ============================================================
+   Action-overview pins (Remedial Action tab, no card selected)
+   ============================================================ */
+.nad-action-overview-pin {
+    transition: transform 0.15s ease;
+    transform-box: fill-box;
+    transform-origin: center bottom;
+}
+.nad-action-overview-pin:hover {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+.nad-action-overview-pin:hover > path {
+    stroke-width: 2.5;
+}
+/* The dim effect is achieved by a single white <rect> with
+   opacity 0.65 inserted ABOVE the NAD content.  Highlights are
+   inserted at the START of the SVG (behind NAD content), matching
+   the N-1 tab's background-layer pattern.  Pins sit on top.
+   Visual stack: highlights → NAD content → dim rect → pins.
+   No per-child opacity or stacking contexts needed.
+   See ActionOverviewDiagram.tsx preparedSvg. */
+.nad-action-overview-container svg {
+    display: block;
+    /* Trade anti-aliasing quality for rendering speed.  On a
+       10k+ element power-grid NAD the difference can be several
+       seconds of paint time. */
+    shape-rendering: optimizeSpeed;
+    text-rendering: optimizeSpeed;
+}

@@ -482,6 +482,45 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         return sortedActionEntries.filter(([id]) => !selectedActionIds.has(id) && !rejectedActionIds.has(id));
     }, [sortedActionEntries, selectedActionIds, rejectedActionIds, analysisLoading]);
 
+    // When an action becomes the currently-viewed one (typically
+    // after the user double-clicks a pin in the action overview
+    // diagram, or clicks an action card body), scroll the
+    // sidebar so the matching card is centred in the viewport.
+    // Without this, double-clicking a pin can activate an action
+    // that is many cards down the feed and the operator has to
+    // hunt for it manually.
+    //
+    // Implementation note: we look up the card by its existing
+    // `data-testid="action-card-${id}"` attribute and call
+    // `scrollIntoView({ block: 'center' })`. The browser walks
+    // up to the nearest scrollable ancestor (the sidebar's
+    // overflow-y: auto wrapper in App.tsx) and scrolls that.
+    //
+    // Wrapped in a rAF so the scroll runs after the matching
+    // card has had a chance to mount/move in response to the
+    // selection change in the same render cycle.
+    useEffect(() => {
+        if (!selectedActionId) return;
+        let cancelled = false;
+        const rafId = requestAnimationFrame(() => {
+            if (cancelled) return;
+            const el = document.querySelector(
+                `[data-testid="action-card-${CSS.escape(selectedActionId)}"]`,
+            );
+            if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+                (el as HTMLElement).scrollIntoView({
+                    block: 'center',
+                    inline: 'nearest',
+                    behavior: 'smooth',
+                });
+            }
+        });
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(rafId);
+        };
+    }, [selectedActionId]);
+
     const rejectedEntries = useMemo(() => {
         return sortedActionEntries.filter(([id]) => rejectedActionIds.has(id));
     }, [sortedActionEntries, rejectedActionIds]);

@@ -6,7 +6,7 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
@@ -70,12 +70,17 @@ describe('VisualizationPanel', () => {
 
     it('renders action tab with action ID when action is selected', () => {
         render(<VisualizationPanel {...createDefaultProps({ selectedActionId: 'action_1' })} />);
-        expect(screen.getByText('Remedial Action: action_1')).toBeInTheDocument();
+        // The label is now JSX: "Remedial Action: " + a clickable
+        // chip containing the action id. Assert on the chip
+        // presence + content rather than the plain-text match.
+        const chip = screen.getByTestId('action-tab-deselect-chip');
+        expect(chip).toBeInTheDocument();
+        expect(chip.textContent).toContain('action_1');
     });
 
     it('renders action tab with default label when no action selected', () => {
         render(<VisualizationPanel {...createDefaultProps()} />);
-        expect(screen.getByText('Remedial Action')).toBeInTheDocument();
+        expect(screen.getByText('Remedial action: overview')).toBeInTheDocument();
     });
 
     it('always renders overflow tab (even without pdf_url)', () => {
@@ -703,6 +708,77 @@ describe('VisualizationPanel', () => {
             const afterContainer = container.querySelector('#n-svg-container');
             expect(afterContainer).toBe(initialContainer);
             expect(screen.queryByText('Loading configuration...')).not.toBeInTheDocument();
+        });
+    });
+
+    describe('Action tab "back to overview" interaction', () => {
+        // The "back to overview" affordance lives INSIDE the
+        // action tab label as a clickable chip around the action
+        // id (data-testid="action-tab-deselect-chip"). The
+        // previous top-right ✕ button was removed because it
+        // overlapped with the Flow/Impacts toggle.
+        const actionDiagram: DiagramData = {
+            svg: '<svg viewBox="0 0 100 100"><g/></svg>',
+            metadata: null,
+        };
+
+        it('renders the deselect chip when a card is selected', () => {
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram,
+                n1Diagram: { svg: '<svg/>', metadata: null },
+            })} />);
+            const chip = screen.getByTestId('action-tab-deselect-chip');
+            expect(chip).toBeInTheDocument();
+            expect(chip.textContent).toContain('action_1');
+        });
+
+        it('does NOT render the deselect chip when no action is selected', () => {
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: null,
+                actionDiagram,
+                n1Diagram: { svg: '<svg/>', metadata: null },
+            })} />);
+            expect(screen.queryByTestId('action-tab-deselect-chip')).not.toBeInTheDocument();
+            // The default overview label is shown instead.
+            expect(screen.getByText('Remedial action: overview')).toBeInTheDocument();
+        });
+
+        it('clicking the chip calls onActionSelect(null) and does NOT trigger onTabChange', async () => {
+            const onActionSelect = vi.fn();
+            const onTabChange = vi.fn();
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram,
+                n1Diagram: { svg: '<svg/>', metadata: null },
+                onActionSelect,
+                onTabChange,
+            })} />);
+            await userEvent.click(screen.getByTestId('action-tab-deselect-chip'));
+            expect(onActionSelect).toHaveBeenCalledWith(null);
+            // stopPropagation must keep the parent <button>'s
+            // onTabChange from firing.
+            expect(onTabChange).not.toHaveBeenCalled();
+        });
+
+        it('Enter / Space on the chip also deselects the action (keyboard accessibility)', () => {
+            const onActionSelect = vi.fn();
+            render(<VisualizationPanel {...createDefaultProps({
+                activeTab: 'action' as TabId,
+                selectedActionId: 'action_1',
+                actionDiagram,
+                n1Diagram: { svg: '<svg/>', metadata: null },
+                onActionSelect,
+            })} />);
+            const chip = screen.getByTestId('action-tab-deselect-chip');
+            chip.focus();
+            // Use fireEvent.keyDown directly to exercise the
+            // span's role="button" + onKeyDown handler.
+            fireEvent.keyDown(chip, { key: 'Enter' });
+            expect(onActionSelect).toHaveBeenCalledWith(null);
         });
     });
 });

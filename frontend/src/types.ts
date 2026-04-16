@@ -416,6 +416,16 @@ export type InteractionType =
     | 'sld_overlay_opened'
     | 'sld_overlay_tab_changed'
     | 'sld_overlay_closed'
+    // Action Overview Diagram
+    | 'overview_shown'
+    | 'overview_hidden'
+    | 'overview_pin_clicked'
+    | 'overview_pin_double_clicked'
+    | 'overview_popover_closed'
+    | 'overview_zoom_in'
+    | 'overview_zoom_out'
+    | 'overview_zoom_fit'
+    | 'overview_inspect_changed'
     // Session Management
     | 'session_saved'
     | 'session_reload_modal_opened'

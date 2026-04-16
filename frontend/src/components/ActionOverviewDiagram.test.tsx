@@ -1,0 +1,871 @@
+// Copyright (c) 2025-2026, RTE (https://www.rte-france.com)
+// This Source Code Form is subject to the terms of the Mozilla Public License, version 2.0.
+// If a copy of the Mozilla Public License, version 2.0 was not distributed with this file,
+// you can obtain one at http://mozilla.org/MPL/2.0/.
+// SPDX-License-Identifier: MPL-2.0
+// This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, fireEvent, cleanup, act } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import ActionOverviewDiagram from './ActionOverviewDiagram';
+import { interactionLogger } from '../utils/interactionLogger';
+import type { ActionDetail, DiagramData, EdgeMeta, MetadataIndex, NodeMeta } from '../types';
+
+// ------------------------------------------------------------
+// Test fixtures
+//
+// A 4-node square with an extra isolated VL, mirrored from the
+// svgUtils action-overview test fixture so the expected pin
+// anchors and fit rectangles stay consistent between the two
+// test suites.
+// ------------------------------------------------------------
+const makeMetaIndex = (): MetadataIndex => {
+    const nodes: NodeMeta[] = [
+        { equipmentId: 'VL_N1', svgId: 'svg-n1', x: 0, y: 0 },
+        { equipmentId: 'VL_N2', svgId: 'svg-n2', x: 100, y: 0 },
+        { equipmentId: 'VL_N3', svgId: 'svg-n3', x: 0, y: 100 },
+        { equipmentId: 'VL_N4', svgId: 'svg-n4', x: 100, y: 100 },
+        { equipmentId: 'VL_FAR', svgId: 'svg-far', x: 500, y: 500 },
+    ];
+    const edges: EdgeMeta[] = [
+        { equipmentId: 'LINE_A', svgId: 'svg-line-a', node1: 'svg-n1', node2: 'svg-n2' },
+        { equipmentId: 'LINE_B', svgId: 'svg-line-b', node1: 'svg-n2', node2: 'svg-n4' },
+        { equipmentId: 'LINE_C', svgId: 'svg-line-c', node1: 'svg-n1', node2: 'svg-n3' },
+        { equipmentId: 'LINE_D', svgId: 'svg-line-d', node1: 'svg-n3', node2: 'svg-n4' },
+    ];
+    return {
+        nodesByEquipmentId: new Map(nodes.map(n => [n.equipmentId, n] as const)),
+        nodesBySvgId: new Map(nodes.map(n => [n.svgId, n] as const)),
+        edgesByEquipmentId: new Map(edges.map(e => [e.equipmentId, e] as const)),
+        edgesByNode: new Map(),
+    };
+};
+
+const makeAction = (overrides: Partial<ActionDetail> = {}): ActionDetail => ({
+    description_unitaire: 'test action',
+    rho_before: null,
+    rho_after: null,
+    max_rho: null,
+    max_rho_line: '',
+    is_rho_reduction: false,
+    ...overrides,
+});
+
+// A minimal NAD-like SVG background — the test component
+// parses this via innerHTML and queries for the injected pin
+// layer. Includes:
+//  - `.nad-vl-nodes circle[r="40"]` so the pin sizing logic
+//    (which reads the VL circle radius) has something realistic
+//    to latch on
+//  - `<g id="svg-line-X">` stubs for every line referenced by
+//    the metadata index so `applyActionOverviewHighlights` can
+//    locate and clone the contingency / overload edges.
+const makeN1Diagram = (): DiagramData => ({
+    svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -50 700 700">' +
+        '  <g class="nad-vl-nodes"><circle r="40"/></g>' +
+        '  <g class="nad-edges">' +
+        '    <g id="svg-line-a"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+        '    <g id="svg-line-b"><line x1="100" y1="0" x2="100" y2="100"/></g>' +
+        '    <g id="svg-line-c"><line x1="0" y1="0" x2="0" y2="100"/></g>' +
+        '    <g id="svg-line-d"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+        '  </g>' +
+        '</svg>',
+    metadata: null,
+    lines_overloaded: ['LINE_B'],
+    lines_overloaded_rho: [1.03],
+});
+
+const makeActions = (): Record<string, ActionDetail> => ({
+    'disco_LINE_A': makeAction({
+        action_topology: {
+            lines_ex_bus: { LINE_A: -1 },
+            lines_or_bus: { LINE_A: -1 },
+            gens_bus: {},
+            loads_bus: {},
+        },
+        max_rho: 0.5, // green
+        max_rho_line: 'LINE_D',
+    }),
+    'coupling_VL_FAR': makeAction({
+        description_unitaire: "Ouverture du poste 'VL_FAR'",
+        max_rho: 1.1, // red
+        max_rho_line: 'LINE_B',
+    }),
+});
+
+const defaultProps = () => ({
+    n1Diagram: makeN1Diagram(),
+    n1MetaIndex: makeMetaIndex(),
+    actions: makeActions(),
+    monitoringFactor: 0.95,
+    onActionSelect: vi.fn(),
+    contingency: 'LINE_C' as string | null,
+    overloadedLines: ['LINE_B'] as readonly string[],
+    inspectableItems: ['LINE_A', 'LINE_B', 'LINE_C', 'LINE_D', 'VL_N1', 'VL_FAR'],
+    visible: true,
+});
+
+describe('ActionOverviewDiagram', () => {
+    afterEach(() => {
+        cleanup();
+    });
+
+    it('injects the N-1 SVG as background into its own container', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        // The overview SVG (from innerHTML injection) should live
+        // inside the nad-action-overview-container div.
+        const host = container.querySelector('.nad-action-overview-container');
+        expect(host).not.toBeNull();
+        const svg = host!.querySelector('svg');
+        expect(svg).not.toBeNull();
+        // width/height are normalised to fill the container
+        expect(svg!.getAttribute('width')).toBe('100%');
+        expect(svg!.getAttribute('height')).toBe('100%');
+        expect(svg!.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
+    });
+
+    it('marks the SVG with nad-overview-dimmed class and inserts a dim rect overlay', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        const host = container.querySelector('.nad-action-overview-container');
+        const svg = host!.querySelector('svg');
+        expect(svg!.classList.contains('nad-overview-dimmed')).toBe(true);
+        expect(svg!.querySelector('rect.nad-overview-dim-rect')).not.toBeNull();
+        // Original SVG content stays at the SVG root (no wrapper group).
+        expect(svg!.querySelector('.nad-edges')).not.toBeNull();
+        expect(svg!.querySelector('.nad-vl-nodes')).not.toBeNull();
+    });
+
+    it('clears the container when n1Diagram becomes null', () => {
+        const props = defaultProps();
+        const { container, rerender } = render(<ActionOverviewDiagram {...props} />);
+        const host = container.querySelector('.nad-action-overview-container')!;
+        expect(host.querySelector('svg')).not.toBeNull();
+
+        rerender(<ActionOverviewDiagram {...props} n1Diagram={null as unknown as DiagramData} />);
+        expect(host.querySelector('svg')).toBeNull();
+    });
+
+    it('renders one pin per simulated action using the severity palette', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        const pins = container.querySelectorAll('g.nad-action-overview-pin');
+        expect(pins.length).toBe(2);
+        const fills = Array.from(pins).map(p => p.querySelector('path')?.getAttribute('fill'));
+        // disco_LINE_A: rho=0.5 → green; coupling_VL_FAR: rho=1.1 → red
+        expect(fills).toEqual(expect.arrayContaining(['#28a745', '#dc3545']));
+    });
+
+    it('draws pins WITHOUT a stroke outline', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        // path lives inside the inner .nad-action-overview-pin-body
+        // wrapper so the rescaler can upscale it on unzoom.
+        const paths = container.querySelectorAll('g.nad-action-overview-pin path');
+        expect(paths.length).toBeGreaterThan(0);
+        paths.forEach(p => {
+            expect(p.getAttribute('stroke')).toBe('none');
+            expect(p.hasAttribute('stroke-width')).toBe(false);
+        });
+    });
+
+    it('each pin displays the rounded max loading as its label', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        const texts = Array.from(container.querySelectorAll('g.nad-action-overview-pin text'))
+            .map(t => t.textContent);
+        // 0.5 → "50%", 1.1 → "110%"
+        expect(texts).toEqual(expect.arrayContaining(['50%', '110%']));
+    });
+
+    it('pin anchors on the asset highlighted by the corresponding card', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        const groups = Array.from(container.querySelectorAll('g.nad-action-overview-pin'));
+        const byId = Object.fromEntries(groups.map(g => [
+            g.getAttribute('data-action-id'),
+            g.getAttribute('transform'),
+        ]));
+        // disco_LINE_A anchors on LINE_A midpoint (50, 0)
+        expect(byId['disco_LINE_A']).toBe('translate(50 0)');
+        // coupling_VL_FAR anchors on the VL node (500, 500)
+        expect(byId['coupling_VL_FAR']).toBe('translate(500 500)');
+    });
+
+    it('double-clicking a pin invokes onActionSelect with its id (drill-down path)', () => {
+        // Semantics changed in the click-vs-dblclick split:
+        //  - single-click → opens the popover (separate test below)
+        //  - double-click → selects the action (this test)
+        const onActionSelect = vi.fn();
+        const { container } = render(
+            <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
+        );
+        const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+        expect(pin).not.toBeNull();
+        fireEvent.doubleClick(pin!);
+        expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
+    });
+
+    it('auto-zooms to the fit rectangle on mount', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        // Fit rect unions:
+        //   contingency LINE_C:  (0,0)..(0,100)
+        //   overload   LINE_B:   (100,0)..(100,100)
+        //   pins:                (50, 0), (500, 500)
+        // Raw bbox = [0..500, 0..500] → 5% pad → [-25..525, -25..525]
+        // So w=550, h=550, x=-25, y=-25.
+        const svg = container.querySelector('.nad-action-overview-container svg');
+        const vb = svg!.getAttribute('viewBox')!;
+        const parts = vb.split(/\s+/).map(parseFloat);
+        expect(parts[0]).toBeCloseTo(-25, 0);
+        expect(parts[1]).toBeCloseTo(-25, 0);
+        expect(parts[2]).toBeCloseTo(550, 0);
+        expect(parts[3]).toBeCloseTo(550, 0);
+    });
+
+    it('renders severity legend (Solves overload / Low margin / Still overloaded / Divergent)', () => {
+        const { getByText } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        expect(getByText('Solves overload')).toBeInTheDocument();
+        expect(getByText('Low margin')).toBeInTheDocument();
+        expect(getByText('Still overloaded')).toBeInTheDocument();
+        expect(getByText('Divergent / islanded')).toBeInTheDocument();
+    });
+
+    it('shows the pin count in the header', () => {
+        const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+        expect(container.textContent).toContain('2 pins on the N-1 network');
+    });
+
+    it('hides itself when visible=false', () => {
+        const { container } = render(
+            <ActionOverviewDiagram {...defaultProps()} visible={false} />,
+        );
+        const root = container.querySelector('[data-testid="action-overview-diagram"]') as HTMLElement;
+        expect(root.style.display).toBe('none');
+    });
+
+    it('shows the "no analysis yet" empty state when there are no actions', () => {
+        const { getByText } = render(
+            <ActionOverviewDiagram {...defaultProps()} actions={{}} />,
+        );
+        expect(getByText(/Run.*Analyze.*Suggest/)).toBeInTheDocument();
+    });
+
+    it('shows the "no background" empty state when no N-1 diagram is loaded', () => {
+        const { getByText } = render(
+            <ActionOverviewDiagram {...defaultProps()} n1Diagram={null} />,
+        );
+        expect(getByText(/Load a contingency first/)).toBeInTheDocument();
+    });
+
+    describe('local zoom controls', () => {
+        it('clicking "+" shrinks the viewBox around its centre', () => {
+            const { container, getByTitle } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const before = svg.getAttribute('viewBox')!.split(/\s+/).map(parseFloat);
+            fireEvent.click(getByTitle('Zoom In'));
+            const after = svg.getAttribute('viewBox')!.split(/\s+/).map(parseFloat);
+            // Width shrinks by 0.8×
+            expect(after[2]).toBeCloseTo(before[2] * 0.8, 1);
+            expect(after[3]).toBeCloseTo(before[3] * 0.8, 1);
+        });
+
+        it('clicking "-" grows the viewBox around its centre', () => {
+            const { container, getByTitle } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const before = svg.getAttribute('viewBox')!.split(/\s+/).map(parseFloat);
+            fireEvent.click(getByTitle('Zoom Out'));
+            const after = svg.getAttribute('viewBox')!.split(/\s+/).map(parseFloat);
+            expect(after[2]).toBeCloseTo(before[2] * 1.25, 1);
+            expect(after[3]).toBeCloseTo(before[3] * 1.25, 1);
+        });
+
+        it('Fit button restores the auto-fit rectangle after panning', () => {
+            const { container, getByTitle } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const fit = svg.getAttribute('viewBox')!;
+            fireEvent.click(getByTitle('Zoom In'));
+            expect(svg.getAttribute('viewBox')).not.toBe(fit);
+            fireEvent.click(getByTitle(/Reset view/i));
+            expect(svg.getAttribute('viewBox')).toBe(fit);
+        });
+    });
+
+    describe('asset-focus inspect search', () => {
+        beforeEach(() => {
+            // `usePanZoom` debounces the React commit through setTimeout;
+            // use fake timers so the tests can deterministically flush
+            // any pending commits.
+            vi.useFakeTimers();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('typing an exact equipment id zooms onto it', () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const fitVb = svg.getAttribute('viewBox')!;
+
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+
+            const focused = svg.getAttribute('viewBox')!;
+            expect(focused).not.toBe(fitVb);
+            // VL_FAR is a single-point → expanded to 150x150 around (500, 500)
+            const parts = focused.split(/\s+/).map(parseFloat);
+            expect(parts[0]).toBeCloseTo(500 - 75 - 150 * 0.35, 0);
+            expect(parts[1]).toBeCloseTo(500 - 75 - 150 * 0.35, 0);
+        });
+
+        it('does NOT re-focus on the same asset after the user zooms out (regression)', () => {
+            // This is the "sticking" bug: after focusing on an asset,
+            // unzooming used to re-run the effect and snap back onto
+            // the asset. The fix is `lastFocusedRef` — here we assert
+            // that a subsequent zoom-out is preserved.
+            const { container, getByTitle, getByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+
+            // Focus on VL_FAR
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            const focusedVb = svg.getAttribute('viewBox')!;
+
+            // Zoom out — this changes pz.viewBox and therefore the
+            // memoised pz object identity, which previously caused
+            // the inspect effect to re-fire and snap back onto VL_FAR.
+            fireEvent.click(getByTitle('Zoom Out'));
+            // Flush any pending rAF / setTimeout commits
+            act(() => { vi.runAllTimers(); });
+
+            const afterZoomOut = svg.getAttribute('viewBox')!;
+            expect(afterZoomOut).not.toBe(focusedVb);
+
+            // One more zoom-out: the view should continue to widen,
+            // NOT snap back onto the asset.
+            const afterPrevZoom = svg.getAttribute('viewBox')!;
+            fireEvent.click(getByTitle('Zoom Out'));
+            act(() => { vi.runAllTimers(); });
+            const afterZoomOut2 = svg.getAttribute('viewBox')!;
+            expect(afterZoomOut2).not.toBe(afterPrevZoom);
+            expect(afterZoomOut2).not.toBe(focusedVb);
+        });
+
+        it('clearing the inspect query returns the view to the auto-fit rectangle', () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const fitVb = svg.getAttribute('viewBox')!;
+
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            expect(svg.getAttribute('viewBox')).not.toBe(fitVb);
+
+            fireEvent.change(input, { target: { value: '' } });
+            expect(svg.getAttribute('viewBox')).toBe(fitVb);
+        });
+
+        it('Fit button re-enables focusing on the same asset again', () => {
+            // After a Fit reset, typing the same asset id should
+            // focus again — the reset clears `lastFocusedRef` so the
+            // consume-once guard no longer swallows the re-entry.
+            const { container, getByTitle, getByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            const focusedVb1 = svg.getAttribute('viewBox')!;
+
+            // Back to fit
+            fireEvent.click(getByTitle(/Reset view/i));
+            fireEvent.change(input, { target: { value: '' } });
+
+            // Re-type the same asset id — should focus again, NOT
+            // silently skip because the ref remembered it.
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            const focusedVb2 = svg.getAttribute('viewBox')!;
+            expect(focusedVb2).toBe(focusedVb1);
+        });
+    });
+
+    describe('pin sizing and screen-constant rescaling', () => {
+        it('sizes pins from the VL circle radius (40 in the fixture)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            // The teardrop path uses the VL circle radius R=40
+            // from makeN1Diagram(), so the arc command must
+            // reference "A 40 40" in its `d` attribute.
+            const path = container.querySelector('g.nad-action-overview-pin path');
+            expect(path).not.toBeNull();
+            expect(path!.getAttribute('d')).toContain('A 40 40');
+        });
+
+        it('wraps every pin glyph in a rescalable .nad-action-overview-pin-body', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const bodies = container.querySelectorAll('g.nad-action-overview-pin-body');
+            expect(bodies.length).toBe(2);
+            // Outer translate stays clean, body carries the scale.
+            bodies.forEach(b => {
+                expect(b.getAttribute('transform')).toMatch(/^scale\(/);
+            });
+        });
+
+        it('rescales pins when the svg viewBox attribute changes', () => {
+            // MutationObserver on the svg's viewBox attribute is
+            // what keeps pins screen-constant during wheel/drag.
+            // Directly mutating viewBox here simulates usePanZoom's
+            // fast-path DOM writes and verifies the rescaler reacts.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg') as unknown as SVGGraphicsElement;
+            const svgContainer = container.querySelector('.nad-action-overview-container')!;
+
+            // Mock clientWidth so the viewBox-based pxPerSvgUnit
+            // calculation yields 0.1 (clientWidth / viewBoxWidth).
+            // viewBox will be "0 0 99999 99999", so clientWidth = 9999.9
+            Object.defineProperty(svgContainer, 'clientWidth', { value: 9999.9, configurable: true });
+
+            // Mutate the viewBox — the MutationObserver schedules
+            // a rAF, so we wait one animation frame to read the
+            // committed scale.
+            (svg as unknown as SVGSVGElement).setAttribute('viewBox', '0 0 99999 99999');
+
+            return new Promise<void>(resolve => {
+                // First a microtask flush to let MO deliver its records,
+                // then a rAF to let the throttled rescaler run.
+                queueMicrotask(() => {
+                    requestAnimationFrame(() => {
+                        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+                        const match = body.getAttribute('transform')!.match(/^scale\(([0-9.]+)\)$/);
+                        expect(match).not.toBeNull();
+                        const scale = parseFloat(match![1]);
+                        // pxPerSvgUnit=0.1, MIN_SCREEN_RADIUS_PX=22,
+                        // baseR=40, viewBoxMinR=99999/50≈2000
+                        // effectiveR=max(40, 220, 2000)=2000 → scale≈50
+                        expect(scale).toBeCloseTo(99999 / 50 / 40, 1);
+                        resolve();
+                    });
+                });
+            });
+        });
+
+        it('does not upscale pins when VL circles are already big enough on screen', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svgContainer = container.querySelector('.nad-action-overview-container')!;
+            const svg = svgContainer.querySelector('svg') as unknown as SVGGraphicsElement;
+            // viewBox "0 0 100 100", clientWidth=200 → pxPerSvgUnit=2
+            // → VL circle with r=40 = 80 screen px, well above the 22-px floor.
+            Object.defineProperty(svgContainer, 'clientWidth', { value: 200, configurable: true });
+            (svg as unknown as SVGSVGElement).setAttribute('viewBox', '0 0 100 100');
+
+            return new Promise<void>(resolve => {
+                queueMicrotask(() => {
+                    requestAnimationFrame(() => {
+                        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+                        expect(body.getAttribute('transform')).toBe('scale(1)');
+                        resolve();
+                    });
+                });
+            });
+        });
+
+        it('rAF-throttles rescale: many viewBox mutations in a row trigger AT MOST one rescale per animation frame', () => {
+            // Regression guard for the "Page ne répondant pas" lag:
+            // the wheel-zoom path in usePanZoom mutates the viewBox
+            // many times per frame; without rAF batching that would
+            // call getScreenCTM (a forced layout) on every mutation
+            // and freeze the page on large grids.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg') as unknown as SVGGraphicsElement;
+            let ctmCalls = 0;
+            svg.getScreenCTM = (() => {
+                ctmCalls += 1;
+                return { a: 0.5, b: 0, c: 0, d: 0.5, e: 0, f: 0 };
+            }) as unknown as SVGGraphicsElement['getScreenCTM'];
+
+            // Reset the counter — initial pin mount + dim wrap may
+            // have invoked getScreenCTM already; we only care about
+            // the burst that follows the rapid viewBox writes.
+            ctmCalls = 0;
+
+            // Simulate a wheel-zoom burst: 20 viewBox writes in a row.
+            for (let i = 1; i <= 20; i++) {
+                (svg as unknown as SVGSVGElement).setAttribute('viewBox', `0 0 ${1000 + i} ${1000 + i}`);
+            }
+
+            return new Promise<void>(resolve => {
+                queueMicrotask(() => {
+                    requestAnimationFrame(() => {
+                        // Even though we wrote viewBox 20 times, the
+                        // throttled rescaler should have run AT MOST
+                        // once for that frame (and called getScreenCTM
+                        // exactly once inside that single rescale).
+                        expect(ctmCalls).toBeLessThanOrEqual(1);
+                        resolve();
+                    });
+                });
+            });
+        });
+    });
+
+    describe('contingency + overload highlights', () => {
+        it('renders contingency + overload highlight clones via applyActionOverviewHighlights', () => {
+            // The fixture sets contingency='LINE_C' and overloadedLines=['LINE_B'].
+            // Both must produce a clone inside the .nad-overview-highlight-layer.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const layer = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer).not.toBeNull();
+            expect(layer!.querySelector('.nad-contingency-highlight')).not.toBeNull();
+            expect(layer!.querySelector('.nad-overloaded')).not.toBeNull();
+        });
+
+        it('highlight and pin layers are direct children of the SVG', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const highlightLayer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
+            const pinLayer = svg.querySelector(':scope > g.nad-action-overview-pins');
+            expect(highlightLayer).not.toBeNull();
+            expect(pinLayer).not.toBeNull();
+        });
+
+        it('places highlight layer BEFORE NAD content (at SVG start) and BEFORE dim rect and pins', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const children = Array.from(svg.children);
+            const highlightIdx = children.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+            const dimIdx = children.findIndex(c => c.classList.contains('nad-overview-dim-rect'));
+            const pinIdx = children.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+            expect(highlightIdx).toBeGreaterThan(-1);
+            expect(dimIdx).toBeGreaterThan(-1);
+            expect(pinIdx).toBeGreaterThan(-1);
+            // Highlights at start, before everything else
+            expect(highlightIdx).toBeLessThan(dimIdx);
+            expect(highlightIdx).toBeLessThan(pinIdx);
+        });
+
+        it('refreshes highlights when contingency changes', () => {
+            const { container, rerender } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const layer1 = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer1).not.toBeNull();
+            // Change contingency to a non-resolvable id — the
+            // highlight layer should be wiped (1 contingency lost),
+            // leaving only the overload clone.
+            rerender(<ActionOverviewDiagram {...defaultProps()} contingency={null} />);
+            const layer2 = container.querySelector('.nad-overview-highlight-layer');
+            expect(layer2).not.toBeNull();
+            expect(layer2!.querySelector('.nad-contingency-highlight')).toBeNull();
+            expect(layer2!.querySelector('.nad-overloaded')).not.toBeNull();
+        });
+    });
+
+    describe('dim background (rect overlay, no opacity group or per-child opacity)', () => {
+        it('inserts a white dim rect overlay instead of wrapping in an opacity group or using CSS per-child opacity', () => {
+            // The old <g opacity="0.35"> wrapper created an SVG
+            // transparency group (Layerize: 31s). CSS per-child
+            // opacity still created stacking contexts (25s). Now we
+            // use a single white <rect> overlay — zero stacking contexts.
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const dimRect = svg.querySelector('rect.nad-overview-dim-rect');
+            expect(dimRect).not.toBeNull();
+            expect(dimRect!.getAttribute('fill')).toBe('white');
+            expect(dimRect!.getAttribute('opacity')).toBe('0.65');
+            expect(dimRect!.getAttribute('pointer-events')).toBe('none');
+            // No <g> opacity wrapper should exist.
+            expect(svg.querySelector('g.nad-overview-dim-layer')).toBeNull();
+        });
+
+        it('dim rect covers the viewBox with margin', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const dimRect = svg.querySelector('rect.nad-overview-dim-rect')!;
+            // viewBox="-50 -50 700 700", margin = 700 * 0.1 = 70
+            const x = parseFloat(dimRect.getAttribute('x')!);
+            const y = parseFloat(dimRect.getAttribute('y')!);
+            const w = parseFloat(dimRect.getAttribute('width')!);
+            const h = parseFloat(dimRect.getAttribute('height')!);
+            expect(x).toBeCloseTo(-50 - 70, 0);
+            expect(y).toBeCloseTo(-50 - 70, 0);
+            expect(w).toBeCloseTo(700 + 140, 0);
+            expect(h).toBeCloseTo(700 + 140, 0);
+        });
+
+        it('pin layer is a direct child of the SVG (not nested)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const pinLayer = svg.querySelector(':scope > g.nad-action-overview-pins');
+            expect(pinLayer).not.toBeNull();
+        });
+
+        it('visual stack order: highlights → NAD content → dim rect → pins', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const svg = container.querySelector('.nad-action-overview-container svg')!;
+            const children = Array.from(svg.children);
+            const highlightIdx = children.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+            const dimIdx = children.findIndex(c => c.classList.contains('nad-overview-dim-rect'));
+            const pinIdx = children.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+            expect(highlightIdx).toBeGreaterThan(-1);
+            expect(dimIdx).toBeGreaterThan(-1);
+            expect(pinIdx).toBeGreaterThan(-1);
+            // Highlights first (behind NAD), dim rect after NAD, pins last
+            expect(highlightIdx).toBeLessThan(dimIdx);
+            expect(dimIdx).toBeLessThan(pinIdx);
+        });
+    });
+
+    describe('click popover (single-click on pin)', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it('opens an ActionCard popover on single-click (after the single-click delay)', async () => {
+            const { container, queryByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            // Before clicking, no popover is mounted.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            // The click action is deferred — popover is NOT up yet.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+
+            // Advance the single-click delay + flush React batching.
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = queryByTestId('action-overview-popover');
+            expect(popover).not.toBeNull();
+            expect(popover!.getAttribute('data-action-id')).toBe('disco_LINE_A');
+            // The popover embeds the real ActionCard for this id.
+            expect(popover!.querySelector('[data-testid="action-card-disco_LINE_A"]')).not.toBeNull();
+        });
+
+        it('does NOT open the popover when the user double-clicks the same pin', async () => {
+            const onActionSelect = vi.fn();
+            const { container, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            // Simulate the real browser sequence: click, click, dblclick.
+            fireEvent.click(pin!);
+            fireEvent.click(pin!);
+            fireEvent.doubleClick(pin!);
+            act(() => { vi.advanceTimersByTime(500); });
+
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+            expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
+        });
+
+        it('closes the popover when the ✕ button is clicked', async () => {
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+            fireEvent.click(getByTestId('action-overview-popover-close'));
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('closes the popover when Escape is pressed', async () => {
+            const { container, queryByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+            act(() => {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+            });
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('clicking inside the popover does NOT dismiss it (stopPropagation)', async () => {
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            fireEvent.mouseDown(popover);
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+        });
+
+        it('clicking the ActionCard body inside the popover activates the drill-down and closes the popover', async () => {
+            const onActionSelect = vi.fn();
+            const { container, getByTestId, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} onActionSelect={onActionSelect} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const card = getByTestId('action-card-disco_LINE_A');
+            fireEvent.click(card);
+            expect(onActionSelect).toHaveBeenCalledWith('disco_LINE_A');
+            // Popover should have been cleared as part of the activation flow.
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('does not render the popover when the overview is hidden', async () => {
+            const { container, rerender, queryByTestId } = render(
+                <ActionOverviewDiagram {...defaultProps()} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            expect(queryByTestId('action-overview-popover')).not.toBeNull();
+
+            rerender(<ActionOverviewDiagram {...defaultProps()} visible={false} />);
+            expect(queryByTestId('action-overview-popover')).toBeNull();
+        });
+
+        it('records data-place-above and data-horizontal-align attributes from the placement helper', async () => {
+            // Stub getBoundingClientRect on the pin so the click
+            // handler captures a known screen position.  We pin
+            // it to the bottom-right corner of the viewport
+            // (1024x768 in jsdom by default) so the placement
+            // helper picks above + end.
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]') as SVGGElement;
+            pin.getBoundingClientRect = (() => ({
+                left: 900, right: 920,
+                top: 700, bottom: 720,
+                width: 20, height: 20,
+                x: 900, y: 700,
+                toJSON: () => ({}),
+            })) as unknown as SVGGElement['getBoundingClientRect'];
+
+            fireEvent.click(pin);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            expect(popover.getAttribute('data-place-above')).toBe('true');
+            expect(popover.getAttribute('data-horizontal-align')).toBe('end');
+            // Above placement → uses CSS `bottom`, not `top`.
+            expect(popover.style.bottom).not.toBe('');
+            expect(popover.style.top).toBe('');
+        });
+
+        it('renders the popover BELOW the pin when the pin is in the top of the viewport', async () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]') as SVGGElement;
+            pin.getBoundingClientRect = (() => ({
+                left: 100, right: 120,
+                top: 50, bottom: 70,
+                width: 20, height: 20,
+                x: 100, y: 50,
+                toJSON: () => ({}),
+            })) as unknown as SVGGElement['getBoundingClientRect'];
+
+            fireEvent.click(pin);
+            act(() => { vi.advanceTimersByTime(300); });
+
+            const popover = getByTestId('action-overview-popover');
+            expect(popover.getAttribute('data-place-above')).toBe('false');
+            expect(popover.getAttribute('data-horizontal-align')).toBe('start');
+            expect(popover.style.top).not.toBe('');
+            expect(popover.style.bottom).toBe('');
+        });
+    });
+
+    describe('interaction logging', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            interactionLogger.clear();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        const lastLog = (type: string) =>
+            interactionLogger.getLog().filter(e => e.type === type).pop();
+
+        it('logs overview_shown when the component becomes visible', () => {
+            render(<ActionOverviewDiagram {...defaultProps()} />);
+            expect(lastLog('overview_shown')).toBeDefined();
+            expect(lastLog('overview_shown')!.details).toHaveProperty('pin_count');
+        });
+
+        it('logs overview_hidden when visible flips false', () => {
+            const { rerender } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            rerender(<ActionOverviewDiagram {...defaultProps()} visible={false} />);
+            expect(lastLog('overview_hidden')).toBeDefined();
+        });
+
+        it('logs overview_pin_clicked on single-click (after the delay)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            const entry = lastLog('overview_pin_clicked');
+            expect(entry).toBeDefined();
+            expect(entry!.details.action_id).toBe('disco_LINE_A');
+        });
+
+        it('logs overview_pin_double_clicked on double-click', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            fireEvent.click(pin!);
+            fireEvent.doubleClick(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            const entry = lastLog('overview_pin_double_clicked');
+            expect(entry).toBeDefined();
+            expect(entry!.details.action_id).toBe('disco_LINE_A');
+            // The single-click should NOT have been logged (cancelled by dblclick)
+            expect(lastLog('overview_pin_clicked')).toBeUndefined();
+        });
+
+        it('logs overview_popover_closed with reason on close button', () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            fireEvent.click(getByTestId('action-overview-popover-close'));
+            const entry = lastLog('overview_popover_closed');
+            expect(entry).toBeDefined();
+            expect(entry!.details.reason).toBe('close_button');
+        });
+
+        it('logs overview_popover_closed with reason "escape" on Escape key', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+            expect(lastLog('overview_popover_closed')!.details.reason).toBe('escape');
+        });
+
+        it('logs overview_zoom_in / overview_zoom_out / overview_zoom_fit on button clicks', () => {
+            const { getByTitle } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            fireEvent.click(getByTitle('Zoom In'));
+            expect(lastLog('overview_zoom_in')).toBeDefined();
+            fireEvent.click(getByTitle('Zoom Out'));
+            expect(lastLog('overview_zoom_out')).toBeDefined();
+            fireEvent.click(getByTitle(/Reset view/i));
+            expect(lastLog('overview_zoom_fit')).toBeDefined();
+        });
+
+        it('logs overview_inspect_changed when an exact equipment match is typed', () => {
+            const { getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            const entry = lastLog('overview_inspect_changed');
+            expect(entry).toBeDefined();
+            expect(entry!.details).toEqual({ query: 'VL_FAR', action: 'focus' });
+        });
+
+        it('logs overview_inspect_changed with action "cleared" when query is cleared', () => {
+            const { getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            fireEvent.change(input, { target: { value: '' } });
+            const entry = lastLog('overview_inspect_changed');
+            expect(entry!.details.action).toBe('cleared');
+        });
+    });
+});

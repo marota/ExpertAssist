@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     processSvg,
     boostSvgForLargeGrid,
@@ -18,6 +18,13 @@ import {
     applyDeltaVisuals,
     applyActionTargetHighlights,
     applyContingencyHighlight,
+    buildActionOverviewPins,
+    applyActionOverviewPins,
+    applyActionOverviewHighlights,
+    rescaleActionOverviewPins,
+    computeActionOverviewFitRect,
+    computeEquipmentFitRect,
+    PIN_SINGLE_CLICK_DELAY_MS,
 } from './svgUtils';
 import type { ActionDetail, NodeMeta, EdgeMeta, MetadataIndex } from '../types';
 
@@ -1160,5 +1167,868 @@ describe('Highlight Layering', () => {
             expect(actionTargetIdx).toBeGreaterThan(-1);
             expect(deltaIdx).toBeGreaterThan(Math.max(overloadIdx, contingencyIdx, actionTargetIdx));
         });
+    });
+});
+
+// ============================================================
+// Action-overview pins + fit-rect helpers
+// ============================================================
+
+const makeOverviewMetaIndex = (): MetadataIndex => {
+    // Simple 4-node grid laid out as:
+    //   N1 (0,0) ──LINE_A── N2 (100,0)
+    //   │                    │
+    //  LINE_C               LINE_B
+    //   │                    │
+    //   N3 (0,100) ─LINE_D─ N4 (100,100)
+    //
+    // Plus an isolated voltage-level "VL_FAR" at (500, 500).
+    const nodes: NodeMeta[] = [
+        { equipmentId: 'VL_N1', svgId: 'svg-n1', x: 0, y: 0 },
+        { equipmentId: 'VL_N2', svgId: 'svg-n2', x: 100, y: 0 },
+        { equipmentId: 'VL_N3', svgId: 'svg-n3', x: 0, y: 100 },
+        { equipmentId: 'VL_N4', svgId: 'svg-n4', x: 100, y: 100 },
+        { equipmentId: 'VL_FAR', svgId: 'svg-far', x: 500, y: 500 },
+    ];
+    const edges: EdgeMeta[] = [
+        { equipmentId: 'LINE_A', svgId: 'svg-line-a', node1: 'svg-n1', node2: 'svg-n2' },
+        { equipmentId: 'LINE_B', svgId: 'svg-line-b', node1: 'svg-n2', node2: 'svg-n4' },
+        { equipmentId: 'LINE_C', svgId: 'svg-line-c', node1: 'svg-n1', node2: 'svg-n3' },
+        { equipmentId: 'LINE_D', svgId: 'svg-line-d', node1: 'svg-n3', node2: 'svg-n4' },
+    ];
+    const nodesByEquipmentId = new Map(nodes.map(n => [n.equipmentId, n] as const));
+    const nodesBySvgId = new Map(nodes.map(n => [n.svgId, n] as const));
+    const edgesByEquipmentId = new Map(edges.map(e => [e.equipmentId, e] as const));
+    const edgesByNode = new Map<string, EdgeMeta[]>();
+    edges.forEach(e => {
+        if (!edgesByNode.has(e.node1 as string)) edgesByNode.set(e.node1 as string, []);
+        edgesByNode.get(e.node1 as string)!.push(e);
+        if (!edgesByNode.has(e.node2 as string)) edgesByNode.set(e.node2 as string, []);
+        edgesByNode.get(e.node2 as string)!.push(e);
+    });
+    return { nodesByEquipmentId, nodesBySvgId, edgesByEquipmentId, edgesByNode };
+};
+
+const makeAction = (overrides: Partial<ActionDetail> = {}): ActionDetail => ({
+    description_unitaire: 'test action',
+    rho_before: null,
+    rho_after: null,
+    max_rho: null,
+    max_rho_line: '',
+    is_rho_reduction: false,
+    ...overrides,
+});
+
+describe('buildActionOverviewPins', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('resolves a line action to the edge midpoint', () => {
+        const actions: Record<string, ActionDetail> = {
+            'disco_LINE_A': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.88,
+                max_rho_line: 'LINE_B',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        // LINE_A midpoint = midpoint of (0,0) and (100,0) = (50, 0)
+        expect(pins[0]).toMatchObject({ id: 'disco_LINE_A', x: 50, y: 0 });
+    });
+
+    it('falls back to the voltage-level node for nodal actions', () => {
+        const actions: Record<string, ActionDetail> = {
+            'coupling_VL_FAR': makeAction({
+                description_unitaire: "Ouverture du poste 'VL_FAR'",
+                max_rho: 1.1,
+                max_rho_line: 'LINE_D',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        expect(pins[0]).toMatchObject({ id: 'coupling_VL_FAR', x: 500, y: 500 });
+    });
+
+    it('falls back to max_rho_line when no topology target resolves', () => {
+        const actions: Record<string, ActionDetail> = {
+            'mystery_action': makeAction({
+                description_unitaire: 'mystery',
+                max_rho: 0.9,
+                max_rho_line: 'LINE_D',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(1);
+        // LINE_D midpoint = ((0+100)/2, (100+100)/2) = (50, 100)
+        expect(pins[0]).toMatchObject({ x: 50, y: 100 });
+    });
+
+    it('skips actions whose asset cannot be located', () => {
+        const actions: Record<string, ActionDetail> = {
+            'unknown': makeAction({ description_unitaire: 'floating', max_rho: 0.5, max_rho_line: 'GHOST_LINE' }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins).toHaveLength(0);
+    });
+
+    it('assigns severity based on monitoringFactor', () => {
+        const actions: Record<string, ActionDetail> = {
+            'solved': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+            'low_margin': makeAction({
+                action_topology: { lines_ex_bus: { LINE_B: -1 }, lines_or_bus: { LINE_B: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.92,
+            }),
+            'still_overloaded': makeAction({
+                action_topology: { lines_ex_bus: { LINE_C: -1 }, lines_or_bus: { LINE_C: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 1.1,
+            }),
+            'divergent': makeAction({
+                action_topology: { lines_ex_bus: { LINE_D: -1 }, lines_or_bus: { LINE_D: -1 }, gens_bus: {}, loads_bus: {} },
+                non_convergence: 'did not converge',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        const byId = Object.fromEntries(pins.map(p => [p.id, p] as const));
+        expect(byId['solved'].severity).toBe('green');
+        expect(byId['low_margin'].severity).toBe('orange');
+        expect(byId['still_overloaded'].severity).toBe('red');
+        expect(byId['divergent'].severity).toBe('grey');
+    });
+
+    it('labels pins with the rounded max loading percentage', () => {
+        const actions: Record<string, ActionDetail> = {
+            'a': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.873,
+                max_rho_line: 'LINE_A',
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95);
+        expect(pins[0].label).toBe('87%');
+    });
+
+    it('honours the filterIds allowlist', () => {
+        const actions: Record<string, ActionDetail> = {
+            'a': makeAction({
+                action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+            'b': makeAction({
+                action_topology: { lines_ex_bus: { LINE_B: -1 }, lines_or_bus: { LINE_B: -1 }, gens_bus: {}, loads_bus: {} },
+                max_rho: 0.5,
+            }),
+        };
+        const pins = buildActionOverviewPins(actions, metaIndex, 0.95, ['a']);
+        expect(pins.map(p => p.id)).toEqual(['a']);
+    });
+});
+
+describe('applyActionOverviewPins', () => {
+    it('appends one <g.nad-action-overview-pin> per pin inside the svg', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 20, severity: 'green', label: '50%', title: 'A' },
+            { id: 'b', x: 30, y: 40, severity: 'red', label: '120%', title: 'B' },
+        ], () => {});
+        const pinGroups = container.querySelectorAll('g.nad-action-overview-pin');
+        expect(pinGroups.length).toBe(2);
+        const layer = container.querySelector('g.nad-action-overview-pins');
+        expect(layer).not.toBeNull();
+    });
+
+    it('uses the severity palette (green/orange/red/grey)', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'g', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'o', x: 0, y: 0, severity: 'orange', label: '90%', title: '' },
+            { id: 'r', x: 0, y: 0, severity: 'red', label: '110%', title: '' },
+            { id: 'x', x: 0, y: 0, severity: 'grey', label: 'DIV', title: '' },
+        ], () => {});
+        // path now lives inside the inner `pin-body` wrapper so the
+        // screen-constant rescaler can upscale it on unzoom. Use a
+        // descendant selector so the assertion keeps working.
+        const fills = Array.from(container.querySelectorAll('g.nad-action-overview-pin path'))
+            .map(el => el.getAttribute('fill'));
+        expect(fills).toEqual(['#28a745', '#f0ad4e', '#dc3545', '#9ca3af']);
+    });
+
+    it('draws pins WITHOUT an outline (stroke=none, no stroke-width)', () => {
+        // Regression guard for the "no black outline around pins"
+        // requirement — earlier versions drew a dark stroke and it
+        // competed visually with the NAD line strokes.
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const path = container.querySelector('g.nad-action-overview-pin path');
+        expect(path).not.toBeNull();
+        expect(path!.getAttribute('stroke')).toBe('none');
+        expect(path!.hasAttribute('stroke-width')).toBe(false);
+    });
+
+    it('uses a high-contrast dark slate fill on the pin label text (not the severity colour)', () => {
+        // Regression: earlier the label text was filled with the
+        // severity colour, which matched the teardrop and faded
+        // into the pin outline when the text slightly overflowed
+        // the inner white disc.
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'g', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'o', x: 0, y: 0, severity: 'orange', label: '90%', title: '' },
+            { id: 'r', x: 0, y: 0, severity: 'red', label: '110%', title: '' },
+            { id: 'x', x: 0, y: 0, severity: 'grey', label: 'DIV', title: '' },
+        ], () => {});
+        const texts = Array.from(container.querySelectorAll('g.nad-action-overview-pin text'));
+        // Every pin label — regardless of severity — uses the
+        // same dark fill so it stays readable on the white disc
+        // AND on the coloured teardrop if it overflows.
+        texts.forEach(t => {
+            expect(t.getAttribute('fill')).toBe('#1f2937');
+        });
+    });
+
+    it('is idempotent — re-applying wipes the previous layer', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'b', x: 10, y: 10, severity: 'red', label: '110%', title: '' },
+        ], () => {});
+        applyActionOverviewPins(container, [
+            { id: 'c', x: 20, y: 20, severity: 'orange', label: '92%', title: '' },
+        ], () => {});
+        const layers = container.querySelectorAll('g.nad-action-overview-pins');
+        expect(layers.length).toBe(1);
+        const pinGroups = container.querySelectorAll('g.nad-action-overview-pin');
+        expect(pinGroups.length).toBe(1);
+        expect(pinGroups[0].getAttribute('data-action-id')).toBe('c');
+    });
+
+    it('empty pin list clears the layer entirely', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        applyActionOverviewPins(container, [], () => {});
+        expect(container.querySelectorAll('g.nad-action-overview-pin').length).toBe(0);
+    });
+
+    it('clicking a pin invokes onPinClick (deferred) with the action id and screen position', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+            const clicks: Array<{ id: string; pos: { x: number; y: number } }> = [];
+            applyActionOverviewPins(container, [
+                { id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+            ], (id, pos) => clicks.push({ id, pos }));
+            const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            // Deferred: the callback has NOT fired yet because the
+            // 250 ms single-click delay is still pending.
+            expect(clicks).toEqual([]);
+            vi.advanceTimersByTime(PIN_SINGLE_CLICK_DELAY_MS + 10);
+            expect(clicks.length).toBe(1);
+            expect(clicks[0].id).toBe('action_42');
+            // Screen position is derived from getBoundingClientRect;
+            // jsdom returns zeros but the object shape is preserved.
+            expect(clicks[0].pos).toHaveProperty('x');
+            expect(clicks[0].pos).toHaveProperty('y');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('double-clicking a pin cancels the pending single-click and fires onPinDoubleClick', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+            const singleClicks: string[] = [];
+            const doubleClicks: string[] = [];
+            applyActionOverviewPins(
+                container,
+                [{ id: 'action_42', x: 10, y: 10, severity: 'green', label: '50%', title: '' }],
+                id => singleClicks.push(id),
+                id => doubleClicks.push(id),
+            );
+            const pinGroup = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+            // A real browser double-click sends two click events followed
+            // by dblclick. The first click schedules the timer, the
+            // second is ignored (timer already pending), then dblclick
+            // clears the timer and fires the double-click callback.
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            pinGroup.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            pinGroup.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+            vi.advanceTimersByTime(PIN_SINGLE_CLICK_DELAY_MS + 10);
+            expect(singleClicks).toEqual([]);
+            expect(doubleClicks).toEqual(['action_42']);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does nothing when the container has no <svg>', () => {
+        const container = document.createElement('div');
+        // Should NOT throw
+        expect(() => applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {})).not.toThrow();
+    });
+
+    it('stops mousedown propagation so usePanZoom drag does not eat the click', () => {
+        // Regression: if mousedown bubbles up to the svg-container,
+        // usePanZoom calls setInteracting(true) which sets
+        // pointer-events: none on every svg child via App.css. The
+        // pin's click never lands. We assert here that mousedown
+        // is stopped at the pin (propagation chain truncated).
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 10, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const pin = container.querySelector('g.nad-action-overview-pin') as SVGGElement;
+        let bubbled = false;
+        // Listen on the svg ancestor — if propagation is properly
+        // stopped at the pin, this listener will NOT fire.
+        const svg = container.querySelector('svg')!;
+        svg.addEventListener('mousedown', () => { bubbled = true; });
+        pin.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        expect(bubbled).toBe(false);
+    });
+});
+
+describe('applyActionOverviewHighlights', () => {
+    const buildContainer = (): { container: HTMLElement; meta: MetadataIndex } => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-edges">' +
+            '    <g id="svg-cont"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+            '    <g id="svg-ovl-1"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+            '    <g id="svg-ovl-2"><line x1="0" y1="200" x2="100" y2="200"/></g>' +
+            '  </g>' +
+            '</svg>';
+        const meta: MetadataIndex = {
+            nodesByEquipmentId: new Map(),
+            nodesBySvgId: new Map(),
+            edgesByEquipmentId: new Map<string, EdgeMeta>([
+                ['CONT_LINE', { equipmentId: 'CONT_LINE', svgId: 'svg-cont', node1: '', node2: '' }],
+                ['OVL_1', { equipmentId: 'OVL_1', svgId: 'svg-ovl-1', node1: '', node2: '' }],
+                ['OVL_2', { equipmentId: 'OVL_2', svgId: 'svg-ovl-2', node1: '', node2: '' }],
+            ]),
+            edgesByNode: new Map(),
+        };
+        return { container, meta };
+    };
+
+    it('creates a .nad-overview-highlight-layer with one clone per highlighted edge', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+        const layer = container.querySelector('g.nad-overview-highlight-layer');
+        expect(layer).not.toBeNull();
+        // 1 contingency + 2 overloads = 3 clones
+        expect(layer!.children.length).toBe(3);
+    });
+
+    it('uses the existing nad-contingency-highlight class on the contingency clone', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-contingency-highlight');
+        expect(clone).not.toBeNull();
+        expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
+    });
+
+    it('uses the existing nad-overloaded class on overload clones', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, null, ['OVL_1']);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-overloaded');
+        expect(clone).not.toBeNull();
+        expect(clone!.classList.contains('nad-highlight-clone')).toBe(true);
+    });
+
+    it('inserts the highlight layer at the START of the SVG (behind NAD content)', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', []);
+        const svg = container.querySelector('svg')!;
+        const layer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
+        expect(layer).not.toBeNull();
+        // Highlight layer should be the first child (behind everything).
+        expect(svg.firstElementChild).toBe(layer);
+    });
+
+    it('inserts highlight layer BEFORE existing dim rect and pin layer', () => {
+        const { container, meta } = buildContainer();
+        const svg = container.querySelector('svg')!;
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+
+        // Simulate dim rect and pin layer already present (as in the real component).
+        const dimRect = document.createElementNS(SVG_NS, 'rect');
+        dimRect.setAttribute('class', 'nad-overview-dim-rect');
+        svg.appendChild(dimRect);
+
+        const pinLayer = document.createElementNS(SVG_NS, 'g');
+        pinLayer.setAttribute('class', 'nad-action-overview-pins');
+        svg.appendChild(pinLayer);
+
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        const children = Array.from(svg.children);
+        const highlightIdx = children.findIndex(c => c.classList.contains('nad-overview-highlight-layer'));
+        const dimIdx = children.findIndex(c => c.classList.contains('nad-overview-dim-rect'));
+        const pinIdx = children.findIndex(c => c.classList.contains('nad-action-overview-pins'));
+        // Highlights behind NAD content (at start), dim rect and pins after
+        expect(highlightIdx).toBe(0);
+        expect(highlightIdx).toBeLessThan(dimIdx);
+        expect(dimIdx).toBeLessThan(pinIdx);
+    });
+
+    it('re-inserts highlight layer at SVG start on idempotent re-call', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+        const svg = container.querySelector('svg')!;
+        const layer = svg.querySelector(':scope > g.nad-overview-highlight-layer');
+        // Should still be at the start after the second call.
+        expect(svg.firstElementChild).toBe(layer);
+    });
+
+    it('is idempotent — repeated calls wipe the previous highlight layer', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        const layers = container.querySelectorAll('g.nad-overview-highlight-layer');
+        expect(layers.length).toBe(1);
+        expect(layers[0].children.length).toBe(2); // 1 contingency + 1 overload
+    });
+
+    it('clears the highlight layer when called with neither contingency nor overloads', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1']);
+        applyActionOverviewHighlights(container, meta, null, []);
+        expect(container.querySelector('g.nad-overview-highlight-layer')).toBeNull();
+    });
+
+    it('skips equipment ids that are not in the metadata', () => {
+        const { container, meta } = buildContainer();
+        applyActionOverviewHighlights(container, meta, 'GHOST', ['OVL_1', 'GHOST2']);
+        const layer = container.querySelector('g.nad-overview-highlight-layer')!;
+        // Only OVL_1 resolved → 1 clone
+        expect(layer.children.length).toBe(1);
+    });
+
+    it('no-ops gracefully on null container / metaIndex / svg', () => {
+        expect(() => applyActionOverviewHighlights(null, null, null, [])).not.toThrow();
+        expect(() => applyActionOverviewHighlights(document.createElement('div'), null, 'X', ['Y'])).not.toThrow();
+        const empty = document.createElement('div');
+        expect(() => applyActionOverviewHighlights(empty, { nodesByEquipmentId: new Map(), nodesBySvgId: new Map(), edgesByEquipmentId: new Map(), edgesByNode: new Map() }, 'X', [])).not.toThrow();
+    });
+
+    it('wraps pin glyph inside a .nad-action-overview-pin-body subgroup for rescaling', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 20, severity: 'green', label: '50%', title: 'A' },
+        ], () => {});
+        const pin = container.querySelector('g.nad-action-overview-pin')!;
+        // Outer group: translate only (no scale at this level)
+        expect(pin.getAttribute('transform')).toBe('translate(10 20)');
+        // Inner body group: carries the rescaling scale() transform
+        const body = pin.querySelector(':scope > g.nad-action-overview-pin-body');
+        expect(body).not.toBeNull();
+        expect(body!.getAttribute('transform')).toMatch(/^scale\(/);
+        // The glyph (path, inner disc, text) all live inside the body
+        expect(body!.querySelector('path')).not.toBeNull();
+        expect(body!.querySelector('circle')).not.toBeNull();
+        expect(body!.querySelector('text')).not.toBeNull();
+    });
+
+    it('uses the VL circle radius from the SVG as the pin base radius', () => {
+        // Large-grid NAD: VL circles have r=80 (after boost).
+        // The pin teardrop path must reference R=80 in its `d`
+        // attribute so it matches VL circles at 1:1 zoom.
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 200000 200000">' +
+            '  <g class="nad-vl-nodes"><circle r="80"/></g>' +
+            '</svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const path = container.querySelector('g.nad-action-overview-pin path')!;
+        // Teardrop arc endpoints: A ${R} ${R} … ${R} ${-R-tail}
+        // With R=80, the d attribute must reference "80" in the arc.
+        expect(path.getAttribute('d')).toContain('A 80 80');
+    });
+
+    it('falls back to r=30 when the SVG has no usable VL circles', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const path = container.querySelector('g.nad-action-overview-pin path')!;
+        expect(path.getAttribute('d')).toContain('A 30 30');
+    });
+});
+
+describe('rescaleActionOverviewPins', () => {
+    const renderContainer = (svgInner: string = ''): HTMLElement => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-vl-nodes"><circle r="30"/></g>' +
+            svgInner +
+            '</svg>';
+        return container;
+    };
+
+    it('is a no-op when the container has no pin layer', () => {
+        const container = renderContainer();
+        // Should NOT throw even though there's no pin layer yet.
+        expect(() => rescaleActionOverviewPins(container)).not.toThrow();
+    });
+
+    it('is a no-op when the container has no <svg>', () => {
+        const container = document.createElement('div');
+        expect(() => rescaleActionOverviewPins(container)).not.toThrow();
+    });
+
+    it('applies a scale(1) body transform at 1:1 mapping (jsdom fallback)', () => {
+        // jsdom does not implement getScreenCTM, so the rescaler
+        // falls back to pxPerSvgUnit=1. With baseR=30 (VL circle)
+        // and MIN_SCREEN_RADIUS_PX=22, baseR wins as the floor and
+        // the body scale stays at 1.
+        const container = renderContainer();
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 50, y: 50, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        rescaleActionOverviewPins(container);
+        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+        expect(body.getAttribute('transform')).toBe('scale(1)');
+    });
+
+    it('upscales the pin body when the zoom level puts VL circles below the screen-pixel floor', () => {
+        // Simulate a very zoomed-out NAD: viewBox is 1000 wide but the
+        // container is only 100 px wide → pxPerSvgUnit = 100 / 1000 = 0.1.
+        // At that ratio, baseR=30 → 3 screen px, well below the
+        // 22-px floor, so the rescaler must upscale the body.
+        const container = renderContainer();
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        // Mock clientWidth on the container (jsdom reports 0 by default).
+        // viewBox="0 0 1000 1000", clientWidth=100 → pxPerSvgUnit = 0.1
+        Object.defineProperty(container, 'clientWidth', { value: 100, configurable: true });
+
+        rescaleActionOverviewPins(container);
+        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+        const match = body.getAttribute('transform')!.match(/^scale\(([0-9.]+)\)$/);
+        expect(match).not.toBeNull();
+        const scale = parseFloat(match![1]);
+        // Effective SVG radius = 22 px / 0.1 px/unit = 220 units.
+        // Scale = 220 / 30 ≈ 7.33.
+        expect(scale).toBeCloseTo(220 / 30, 2);
+    });
+
+    it('keeps scale=1 when zoom level is detailed enough (VL circles already above floor)', () => {
+        const container = renderContainer();
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        // viewBox="0 0 1000 1000", clientWidth=2000 → pxPerSvgUnit = 2
+        // → 30 units = 60 screen px, way above the 22 px floor.
+        Object.defineProperty(container, 'clientWidth', { value: 2000, configurable: true });
+
+        rescaleActionOverviewPins(container);
+        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+        expect(body.getAttribute('transform')).toBe('scale(1)');
+    });
+
+    it('rescales EVERY pin on the layer, not just the first', () => {
+        const container = renderContainer();
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+            { id: 'b', x: 100, y: 0, severity: 'red', label: '110%', title: '' },
+            { id: 'c', x: 200, y: 0, severity: 'orange', label: '92%', title: '' },
+        ], () => {});
+        // viewBox="0 0 1000 1000", clientWidth=100 → pxPerSvgUnit = 0.1
+        Object.defineProperty(container, 'clientWidth', { value: 100, configurable: true });
+
+        rescaleActionOverviewPins(container);
+        const bodies = container.querySelectorAll('g.nad-action-overview-pin-body');
+        expect(bodies.length).toBe(3);
+        const scales = Array.from(bodies).map(b => b.getAttribute('transform'));
+        // All three pins share the same screen-constant scale.
+        expect(new Set(scales).size).toBe(1);
+        expect(scales[0]).not.toBe('scale(1)');
+    });
+
+    it('is automatically invoked by applyActionOverviewPins for initial sizing', () => {
+        // If we never called rescaleActionOverviewPins directly,
+        // the pin body should still have a transform attribute —
+        // applyActionOverviewPins calls the rescaler at the end so
+        // the first paint is already compensated.
+        const container = renderContainer();
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 0, y: 0, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+        const body = container.querySelector('g.nad-action-overview-pin-body')!;
+        expect(body.hasAttribute('transform')).toBe(true);
+    });
+});
+
+describe('computeActionOverviewFitRect', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('returns null when nothing can be located', () => {
+        expect(computeActionOverviewFitRect(metaIndex, null, [], [])).toBeNull();
+    });
+
+    it('includes the contingency edge endpoints in the rectangle', () => {
+        // LINE_A spans (0,0)→(100,0). Both spans are below
+        // MIN_SPAN=200 so they're expanded around their centers:
+        //   x: span 100 → 200 centered on 50 → [-50, 150]
+        //   y: span 0   → 200 centered on 0  → [-100, 100]
+        const rect = computeActionOverviewFitRect(metaIndex, 'LINE_A', [], [], 0);
+        expect(rect!.x).toBeCloseTo(-50);
+        expect(rect!.w).toBeCloseTo(200);
+        expect(rect!.y).toBeCloseTo(-100);
+        expect(rect!.h).toBeCloseTo(200);
+    });
+
+    it('unions contingency + overloads + pins', () => {
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            'LINE_A', // (0,0)..(100,0)
+            ['LINE_D'], // (0,100)..(100,100)
+            [{ x: 500, y: 500 }],
+            0,
+        );
+        expect(rect!.x).toBeCloseTo(0);
+        expect(rect!.y).toBeCloseTo(0);
+        expect(rect!.w).toBeCloseTo(500);
+        expect(rect!.h).toBeCloseTo(500);
+    });
+
+    it('applies a 5% margin by default', () => {
+        // Regression guard for the "5% margin" requirement.
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            null,
+            [],
+            [{ x: 0, y: 0 }, { x: 1000, y: 1000 }],
+        );
+        // Raw bbox is 1000x1000. With 5% padding on each side we
+        // expect: x = -50, y = -50, w = 1100, h = 1100.
+        expect(rect!.x).toBeCloseTo(-50);
+        expect(rect!.y).toBeCloseTo(-50);
+        expect(rect!.w).toBeCloseTo(1100);
+        expect(rect!.h).toBeCloseTo(1100);
+    });
+
+    it('expands degenerate spans (single point) to a minimum size', () => {
+        const rect = computeActionOverviewFitRect(
+            metaIndex,
+            null,
+            [],
+            [{ x: 10, y: 20 }],
+            0,
+        );
+        // Single point: w=h<MIN_SPAN=200 → expanded to 200 around center
+        expect(rect!.w).toBeCloseTo(200);
+        expect(rect!.h).toBeCloseTo(200);
+        expect(rect!.x).toBeCloseTo(10 - 100);
+        expect(rect!.y).toBeCloseTo(20 - 100);
+    });
+
+    it('returns null when metaIndex is null', () => {
+        expect(computeActionOverviewFitRect(null, 'LINE_A', [], [])).toBeNull();
+    });
+});
+
+describe('computeEquipmentFitRect', () => {
+    const metaIndex = makeOverviewMetaIndex();
+
+    it('focuses on an edge using both endpoints', () => {
+        const rect = computeEquipmentFitRect(metaIndex, 'LINE_A', 0);
+        // LINE_A spans (0,0)→(100,0); both spans below MIN_SPAN=150
+        // → expanded around center (50, 0): x ∈ [-25, 125], y ∈ [-75, 75].
+        expect(rect!.x).toBeCloseTo(-25);
+        expect(rect!.w).toBeCloseTo(150);
+        expect(rect!.y).toBeCloseTo(-75);
+        expect(rect!.h).toBeCloseTo(150);
+    });
+
+    it('focuses on a voltage-level node', () => {
+        const rect = computeEquipmentFitRect(metaIndex, 'VL_FAR', 0);
+        // Single point at (500,500) → expanded to 150x150 around center
+        expect(rect!.x).toBeCloseTo(500 - 75);
+        expect(rect!.y).toBeCloseTo(500 - 75);
+        expect(rect!.w).toBeCloseTo(150);
+        expect(rect!.h).toBeCloseTo(150);
+    });
+
+    it('returns null for an unknown equipment id', () => {
+        expect(computeEquipmentFitRect(metaIndex, 'UNKNOWN', 0)).toBeNull();
+    });
+
+    it('returns null when metaIndex is null', () => {
+        expect(computeEquipmentFitRect(null, 'LINE_A', 0)).toBeNull();
+    });
+});
+
+// ============================================================
+// Performance-critical batching & caching tests
+// ============================================================
+
+describe('applyActionOverviewHighlights — batched DOM writes', () => {
+    const buildContainer = (): { container: HTMLElement; meta: MetadataIndex } => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-edges">' +
+            '    <g id="svg-cont"><line x1="0" y1="0" x2="100" y2="0"/></g>' +
+            '    <g id="svg-ovl-1"><line x1="0" y1="100" x2="100" y2="100"/></g>' +
+            '    <g id="svg-ovl-2"><line x1="0" y1="200" x2="100" y2="200"/></g>' +
+            '  </g>' +
+            '</svg>';
+        const meta: MetadataIndex = {
+            nodesByEquipmentId: new Map(),
+            nodesBySvgId: new Map(),
+            edgesByEquipmentId: new Map<string, EdgeMeta>([
+                ['CONT_LINE', { equipmentId: 'CONT_LINE', svgId: 'svg-cont', node1: '', node2: '' }],
+                ['OVL_1', { equipmentId: 'OVL_1', svgId: 'svg-ovl-1', node1: '', node2: '' }],
+                ['OVL_2', { equipmentId: 'OVL_2', svgId: 'svg-ovl-2', node1: '', node2: '' }],
+            ]),
+            edgesByNode: new Map(),
+        };
+        return { container, meta };
+    };
+
+    it('inserts all clones in a single DOM mutation (no interleaved appendChild)', () => {
+        const { container, meta } = buildContainer();
+        const svg = container.querySelector('svg')!;
+
+        // Count how many times the highlight layer's children change.
+        // With the batched DocumentFragment approach, the layer gets
+        // a single appendChild(frag) at the end.
+        let insertCount = 0;
+        // The highlight layer is inserted via appendChild (when no
+        // pin layer exists) or insertBefore (when pin layer exists).
+        // Spy on both paths to catch the layer insertion, then spy
+        // on the layer's appendChild to count clone insertions.
+        const spyOnLayer = (node: Node) => {
+            if (node instanceof Element && node.classList?.contains('nad-overview-highlight-layer')) {
+                const origAppend = node.appendChild.bind(node);
+                node.appendChild = function <U extends Node>(child: U): U {
+                    insertCount++;
+                    return origAppend(child);
+                };
+            }
+        };
+        const realAppendChild = svg.appendChild.bind(svg);
+        svg.appendChild = function <T extends Node>(node: T): T {
+            const result = realAppendChild(node);
+            spyOnLayer(node);
+            return result;
+        };
+        const realInsertBefore = svg.insertBefore.bind(svg);
+        svg.insertBefore = function <T extends Node>(node: T, ref: Node | null): T {
+            const result = realInsertBefore(node, ref);
+            spyOnLayer(node);
+            return result;
+        };
+
+        applyActionOverviewHighlights(container, meta, 'CONT_LINE', ['OVL_1', 'OVL_2']);
+
+        // With DocumentFragment batching, there should be exactly 1
+        // appendChild call on the layer (the fragment), not 3 (one
+        // per clone).
+        expect(insertCount).toBe(1);
+        // But all 3 clones still appear in the DOM:
+        const layer = container.querySelector('g.nad-overview-highlight-layer')!;
+        expect(layer.children.length).toBe(3);
+    });
+
+    it('strips nad-delta-* classes from cloned highlights', () => {
+        const { container, meta } = buildContainer();
+        // Tag an original edge with delta classes that should be
+        // stripped on the clone.
+        const orig = container.querySelector('#svg-ovl-1')!;
+        orig.classList.add('nad-delta-positive');
+
+        applyActionOverviewHighlights(container, meta, null, ['OVL_1']);
+        const clone = container.querySelector('g.nad-overview-highlight-layer .nad-overloaded')!;
+        expect(clone.classList.contains('nad-delta-positive')).toBe(false);
+        expect(clone.classList.contains('nad-delta-negative')).toBe(false);
+        expect(clone.classList.contains('nad-delta-grey')).toBe(false);
+    });
+});
+
+describe('applyActionOverviewPins — batched DOM writes', () => {
+    it('builds all pins off-DOM before inserting the layer into the SVG', () => {
+        const container = document.createElement('div');
+        container.innerHTML = '<svg viewBox="0 0 200 200"></svg>';
+        const svg = container.querySelector('svg')!;
+
+        // Track appendChild calls on the SVG itself.
+        let svgAppendCount = 0;
+        const origAppend = svg.appendChild.bind(svg);
+        svg.appendChild = function <T extends Node>(child: T): T {
+            svgAppendCount++;
+            return origAppend(child);
+        };
+
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 10, y: 20, severity: 'green', label: '50%', title: 'A' },
+            { id: 'b', x: 30, y: 40, severity: 'red', label: '120%', title: 'B' },
+            { id: 'c', x: 50, y: 60, severity: 'orange', label: '90%', title: 'C' },
+        ], () => {});
+
+        // Only ONE appendChild on the SVG (the fully-populated layer),
+        // not one per pin.
+        expect(svgAppendCount).toBe(1);
+        // All 3 pins are present in the DOM:
+        expect(container.querySelectorAll('g.nad-action-overview-pin').length).toBe(3);
+    });
+});
+
+describe('rescaleActionOverviewPins — baseRadius caching', () => {
+    it('does not re-query circle[r] on subsequent rescale calls', () => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<svg viewBox="0 0 1000 1000">' +
+            '  <g class="nad-vl-nodes"><circle r="30"/></g>' +
+            '</svg>';
+
+        applyActionOverviewPins(container, [
+            { id: 'a', x: 50, y: 50, severity: 'green', label: '50%', title: '' },
+        ], () => {});
+
+        const svg = container.querySelector('svg')!;
+        // After applyActionOverviewPins, the cache is populated.
+        // Spy on querySelector to verify it's not called for circle[r]
+        // during rescale.
+        const origQS = svg.querySelector.bind(svg);
+        let circleQueryCount = 0;
+        svg.querySelector = function (selector: string) {
+            if (selector.includes('circle[r]')) circleQueryCount++;
+            return origQS(selector);
+        } as typeof svg.querySelector;
+
+        rescaleActionOverviewPins(container);
+        rescaleActionOverviewPins(container);
+        rescaleActionOverviewPins(container);
+
+        // The cached path should skip the circle[r] lookup entirely.
+        expect(circleQueryCount).toBe(0);
     });
 });

@@ -83,6 +83,16 @@ type InteractionType =
   | 'zoom_out'                     // User clicked zoom-out button
   | 'zoom_reset'                   // User clicked zoom reset button
   | 'inspect_query_changed'        // User typed in search/inspect box
+  // === Action Overview Diagram ===
+  | 'overview_shown'               // Overview view became visible (no card selected)
+  | 'overview_hidden'              // Overview view hidden (card selected / tab switched)
+  | 'overview_pin_clicked'         // Single-click on a pin → popover opened
+  | 'overview_pin_double_clicked'  // Double-click on a pin → action drill-down activated
+  | 'overview_popover_closed'      // Popover dismissed (✕ / Escape / outside-click / drill-down)
+  | 'overview_zoom_in'             // User clicked overview zoom-in button
+  | 'overview_zoom_out'            // User clicked overview zoom-out button
+  | 'overview_zoom_fit'            // User clicked overview "Fit" button
+  | 'overview_inspect_changed'     // User focused or cleared an asset in the overview inspect search
   // === SLD Overlay ===
   | 'sld_overlay_opened'           // User double-clicked VL to open SLD
   | 'sld_overlay_tab_changed'      // User switched SLD tab (n / n-1 / action)
@@ -170,6 +180,20 @@ Each event's `details` field contains **all parameters needed to replay** the us
 | `zoom_out` | `{ tab: TabId }` | Click - button |
 | `zoom_reset` | `{ tab: TabId }` | Click reset button |
 | `inspect_query_changed` | `{ query: string, target_tab?: TabId }` — `target_tab` is only present when the inspect field was triggered from a detached-tab overlay (per-tab inspect routing). Absent = main-window active tab. | Type in search box |
+
+### Action Overview Diagram
+
+| Event | Details | Replay Action |
+|-------|---------|---------------|
+| `overview_shown` | `{ has_pins: boolean, pin_count: number }` — the overview became visible (no card selected). `pin_count` is 0 before the first analysis runs. | Switch to the Remedial Action tab with no card selected, or deselect a card. |
+| `overview_hidden` | `{}` — the overview was folded away because a card was selected or the tab was switched. | Select an action card (double-click pin, click card body, etc.). |
+| `overview_pin_clicked` | `{ action_id: string }` — a single click opened the floating ActionCard popover next to the pin. | Click a pin once (popover preview). |
+| `overview_pin_double_clicked` | `{ action_id: string }` — a double-click activated the full action drill-down view (the action-variant diagram replaces the overview in the tab). Cancels any pending single-click popover. | Double-click a pin. |
+| `overview_popover_closed` | `{ reason: 'close_button' \| 'escape' \| 'outside_click' }` — the popover was dismissed. Drill-down activation fires `overview_pin_double_clicked` instead (no popover-close event in that case). | Close the popover via ✕, Escape, or clicking outside. |
+| `overview_zoom_in` | `{}` | Click the overview `+` zoom button. |
+| `overview_zoom_out` | `{}` | Click the overview `-` zoom button. |
+| `overview_zoom_fit` | `{}` — resets the viewBox to the auto-fit rectangle (contingency + overloads + pins). | Click the overview `Fit` button. |
+| `overview_inspect_changed` | `{ query: string, action: 'focus' \| 'cleared' }` — `focus` means the typed query matched an exact equipment id and the view zoomed onto it. `cleared` means the query was emptied and the view returned to the fit rectangle. Intermediate keystrokes that don't match are not logged. | Type in the overview inspect field or clear it. |
 
 ### SLD Overlay
 

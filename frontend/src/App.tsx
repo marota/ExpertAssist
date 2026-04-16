@@ -1181,6 +1181,13 @@ function App() {
             onFocusDetachedTab={focusDetachedTab}
             isTabTied={isTabTied}
             onToggleTabTie={toggleTabTie}
+            n1MetaIndex={diagrams.n1MetaIndex}
+            onActionSelect={wrappedActionSelect}
+            onActionFavorite={wrappedActionFavorite}
+            onActionReject={actionsHook.handleActionReject}
+            selectedActionIds={selectedActionIds}
+            rejectedActionIds={rejectedActionIds}
+            monitoringFactor={monitoringFactor}
           />
         </div>
       </div>
