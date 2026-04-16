@@ -796,13 +796,6 @@ const severityFillHighlighted: Record<ActionPinInfo['severity'], string> = {
     grey: '#7b8a96',
 };
 
-/**
- * Combined-action pin fill — a distinct blue to differentiate from
- * unitary action severity colours.
- */
-const COMBINED_PIN_FILL = '#6366f1';
-const COMBINED_PIN_FILL_DIMMED = '#a5a7f0';
-const COMBINED_PIN_FILL_HIGHLIGHTED = '#4f46e5';
 
 const computeActionSeverity = (
     details: ActionDetail,
@@ -1307,11 +1300,10 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         body.setAttribute('transform', `scale(${scale})`);
     });
 
-    // Scale the combined-action curve stroke widths linearly with the
-    // pin scale so curves stay proportional to pins at every zoom
-    // level. The base multiplier (0.2) keeps them thinner than a pin
-    // radius, and the cap prevents runaway thickness on extreme zoom.
-    const curveScale = Math.min(scale, 8);
+    // Scale curve stroke widths with scale^0.6 — grows faster than
+    // sqrt (visible) but much slower than linear (no noodle bowl).
+    // At scale=1 → 1, scale=5 → 2.6, scale=15 → 5.2, scale=30 → 8.
+    const curveScale = Math.pow(scale, 0.6);
     const curveStrokeW = baseR * 0.2 * curveScale;
     const curveDash = `${baseR * 0.5 * curveScale} ${baseR * 0.3 * curveScale}`;
     layer.querySelectorAll('.nad-combined-action-curve').forEach(curve => {
@@ -1534,11 +1526,10 @@ export const applyActionOverviewPins = (
             `M ${cp.p1.x} ${cp.p1.y} Q ${ctrlX} ${ctrlY} ${cp.p2.x} ${cp.p2.y}`);
         curvePath.setAttribute('class', 'nad-combined-action-curve');
         curvePath.setAttribute('fill', 'none');
-        curvePath.setAttribute('stroke', COMBINED_PIN_FILL);
+        curvePath.setAttribute('stroke', severityFill[cp.severity]);
         curvePath.setAttribute('stroke-width', String(r * 0.2));
         curvePath.setAttribute('stroke-dasharray', `${r * 0.5} ${r * 0.3}`);
         curvePath.setAttribute('stroke-linecap', 'round');
-        curvePath.setAttribute('opacity', '0.7');
         curvePath.setAttribute('pointer-events', 'none');
         frag.appendChild(curvePath);
 
@@ -1554,15 +1545,17 @@ export const applyActionOverviewPins = (
         body.setAttribute('transform', 'scale(1)');
         g.appendChild(body);
 
-        // Use blue-ish palette for combined pins; dim/highlight if
-        // the pair id is in the selected/rejected sets.
-        let fill = COMBINED_PIN_FILL;
+        // Use the severity palette (same as unitary pins) so the
+        // combined pin colour matches the action card.
+        let fill: string;
         let stroke: string | undefined;
         if (selectedIds?.has(cp.pairId)) {
-            fill = COMBINED_PIN_FILL_HIGHLIGHTED;
+            fill = severityFillHighlighted[cp.severity];
             stroke = '#eab308';
         } else if (rejectedIds?.has(cp.pairId)) {
-            fill = COMBINED_PIN_FILL_DIMMED;
+            fill = severityFillDimmed[cp.severity];
+        } else {
+            fill = severityFill[cp.severity];
         }
 
         buildPinGlyph(body, r, fill, cp.label, cp.title, stroke, stroke ? r * 0.12 : undefined);
@@ -1574,7 +1567,7 @@ export const applyActionOverviewPins = (
         badge.setAttribute('cx', '0');
         badge.setAttribute('cy', String(badgeCy));
         badge.setAttribute('r', String(r * 0.35));
-        badge.setAttribute('fill', COMBINED_PIN_FILL);
+        badge.setAttribute('fill', severityFill[cp.severity]);
         badge.setAttribute('stroke', 'white');
         badge.setAttribute('stroke-width', String(r * 0.06));
         badge.setAttribute('pointer-events', 'none');
