@@ -6,11 +6,12 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ActionDetail, DiagramData, MetadataIndex, ViewBox } from '../types';
+import type { ActionDetail, CombinedAction, DiagramData, MetadataIndex, ViewBox } from '../types';
 import {
     applyActionOverviewHighlights,
     applyActionOverviewPins,
     buildActionOverviewPins,
+    buildCombinedActionPins,
     computeActionOverviewFitRect,
     computeEquipmentFitRect,
     invalidateIdMapCache,
@@ -69,10 +70,12 @@ interface ActionOverviewDiagramProps {
     onActionFavorite?: (actionId: string) => void;
     /** Reject an action (popover action). */
     onActionReject?: (actionId: string) => void;
-    /** Selected-action set, for the popover's `isSelected` styling. */
+    /** Selected-action set — pins are highlighted with a gold star. */
     selectedActionIds?: Set<string>;
-    /** Rejected-action set, for the popover's `isRejected` styling. */
+    /** Rejected-action set — pins are dimmed with a red cross. */
     rejectedActionIds?: Set<string>;
+    /** Combined action pairs — rendered as curved connections between unitary pins. */
+    combinedActions?: Record<string, CombinedAction> | null;
     /**
      * Called when a pin is single-clicked (preview). The parent can
      * use this to scroll the sidebar action feed to the matching card.
@@ -127,6 +130,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
+    combinedActions,
     onPinPreview,
     contingency,
     overloadedLines,
@@ -234,6 +238,11 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         return result;
     }, [n1MetaIndex, actions, monitoringFactor]);
 
+    const combinedPins = useMemo(() => {
+        if (!combinedActions || pins.length === 0) return [];
+        return buildCombinedActionPins(combinedActions, pins, monitoringFactor);
+    }, [combinedActions, pins, monitoringFactor]);
+
     // Deterministic auto-fit rectangle derived from the bounding
     // box of contingency + overloads + pins. Recomputed whenever any
     // of those inputs changes — the new object identity propagates
@@ -241,8 +250,9 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // re-applies the fit automatically.
     const fitRect = useMemo<ViewBox | null>(() => {
         if (!n1MetaIndex) return null;
-        return computeActionOverviewFitRect(n1MetaIndex, contingency, overloadedLines, pins);
-    }, [n1MetaIndex, contingency, overloadedLines, pins]);
+        const allPinPositions = [...pins, ...combinedPins];
+        return computeActionOverviewFitRect(n1MetaIndex, contingency, overloadedLines, allPinPositions);
+    }, [n1MetaIndex, contingency, overloadedLines, pins, combinedPins]);
 
     // Fall back to the original NAD viewBox if we couldn't build a
     // fit rectangle (e.g. no analysis has run yet) — that way the
@@ -384,10 +394,14 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         const container = containerRef.current;
         if (!container) return;
         performance.mark('aod:applyPins:start');
-        applyActionOverviewPins(container, pins, handlePinClick, handlePinDoubleClick);
+        applyActionOverviewPins(container, pins, handlePinClick, handlePinDoubleClick, {
+            selectedActionIds,
+            rejectedActionIds,
+            combinedPins,
+        });
         performance.mark('aod:applyPins:end');
         perfMeasure('aod:applyPins', 'aod:applyPins:start', 'aod:applyPins:end');
-    }, [pins, handlePinClick, handlePinDoubleClick, svgReady, preparedSvg]);
+    }, [pins, handlePinClick, handlePinDoubleClick, svgReady, preparedSvg, selectedActionIds, rejectedActionIds, combinedPins]);
 
     // Screen-constant pin compensation.
     //

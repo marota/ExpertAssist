@@ -6,7 +6,7 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
 import React, { useState, useMemo, useRef, type RefObject } from 'react';
-import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, MetadataIndex } from '../types';
+import type { DiagramData, AnalysisResult, TabId, VlOverlay, SldTab, MetadataIndex, CombinedAction } from '../types';
 import MemoizedSvgContainer from './MemoizedSvgContainer';
 import SldOverlay from './SldOverlay';
 import DetachableTabHost from './DetachableTabHost';
@@ -230,6 +230,8 @@ interface VisualizationPanelProps {
     selectedActionIds?: Set<string>;
     /** Rejected-action id set (for the overview popover styling). */
     rejectedActionIds?: Set<string>;
+    /** Combined action pairs for the overview diagram connections. */
+    combinedActions?: Record<string, CombinedAction> | null;
     /** Called when a pin is single-clicked on the overview (scroll sidebar to card). */
     onPinPreview?: (actionId: string) => void;
     /** Called when the overview's usePanZoom instance changes (for tied-tab sync). */
@@ -293,6 +295,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
+    combinedActions,
     onPinPreview,
     onOverviewPzChange,
     monitoringFactor,
@@ -1023,6 +1026,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             onActionReject={onActionReject}
                             selectedActionIds={selectedActionIds}
                             rejectedActionIds={rejectedActionIds}
+                            combinedActions={combinedActions}
                             onPinPreview={onPinPreview}
                             contingency={selectedBranch || null}
                             overloadedLines={overloadedLinesMemo}

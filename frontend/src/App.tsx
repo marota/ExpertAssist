@@ -1228,6 +1228,7 @@ function App() {
             onActionReject={actionsHook.handleActionReject}
             selectedActionIds={selectedActionIds}
             rejectedActionIds={rejectedActionIds}
+            combinedActions={result?.combined_actions ?? null}
             onPinPreview={handlePinPreview}
             onOverviewPzChange={handleOverviewPzChange}
             monitoringFactor={monitoringFactor}
