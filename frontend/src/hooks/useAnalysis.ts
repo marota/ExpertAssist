@@ -36,7 +36,7 @@ export interface AnalysisState {
     setSuggestedByRecommenderIds: Dispatch<SetStateAction<Set<string>>>,
     setActiveTab?: (tab: TabId) => void
   ) => Promise<void>;
-  handleDisplayPrioritizedActions: (selectedActionIds: Set<string>) => void;
+  handleDisplayPrioritizedActions: (selectedActionIds: Set<string>, setActiveTab?: (tab: TabId) => void) => void;
   handleToggleOverload: (overload: string) => void;
 }
 
@@ -188,11 +188,14 @@ export function useAnalysis(): AnalysisState {
     }
   }, [selectedOverloads, monitorDeselected]);
 
-  const handleDisplayPrioritizedActions = useCallback((selectedActionIds: Set<string>) => {
+  const handleDisplayPrioritizedActions = useCallback((selectedActionIds: Set<string>, setActiveTab?: (tab: TabId) => void) => {
     if (!pendingAnalysisResult) return;
     interactionLogger.record('prioritized_actions_displayed', {
       actions_count: Object.keys(pendingAnalysisResult.actions).length,
     });
+    // Auto-switch to the Remedial Action tab so the operator sees the
+    // action overview with pins right after pressing the button.
+    setActiveTab?.('action');
     setResult(prev => {
       // Preserve manually-added ("first guess") actions across the
       // analysis display step. We select them by the `is_manual`

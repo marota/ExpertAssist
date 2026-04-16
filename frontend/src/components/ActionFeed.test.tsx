@@ -2495,5 +2495,30 @@ describe('ActionFeed', () => {
             const cardC = screen.getByTestId('action-card-act_c');
             expect(cardC.scrollIntoView).toHaveBeenCalled();
         });
+
+        it('scrolls to card when scrollTarget is set (pin preview)', async () => {
+            const { rerender } = render(<ActionFeed {...makeProps()} />);
+            rerender(<ActionFeed {...makeProps({ scrollTarget: { id: 'act_b', seq: 1 } })} />);
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const card = screen.getByTestId('action-card-act_b');
+            expect(card.scrollIntoView).toHaveBeenCalledWith(
+                expect.objectContaining({ block: 'center' })
+            );
+        });
+
+        it('re-scrolls to the same card when scrollTarget seq increments', async () => {
+            const { rerender } = render(
+                <ActionFeed {...makeProps({ scrollTarget: { id: 'act_a', seq: 1 } })} />
+            );
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const card = screen.getByTestId('action-card-act_a');
+            expect(card.scrollIntoView).toHaveBeenCalledTimes(1);
+
+            rerender(
+                <ActionFeed {...makeProps({ scrollTarget: { id: 'act_a', seq: 2 } })} />
+            );
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            expect(card.scrollIntoView).toHaveBeenCalledTimes(2);
+        });
     });
 });

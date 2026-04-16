@@ -229,6 +229,8 @@ interface VisualizationPanelProps {
     selectedActionIds?: Set<string>;
     /** Rejected-action id set (for the overview popover styling). */
     rejectedActionIds?: Set<string>;
+    /** Called when a pin is single-clicked on the overview (scroll sidebar to card). */
+    onPinPreview?: (actionId: string) => void;
     /**
      * Monitoring factor used to derive each action's severity
      * colour, kept in sync with the card palette.
@@ -288,6 +290,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
+    onPinPreview,
     monitoringFactor,
 }) => {
     // No-op fallbacks so conditional branches don't need to guard.
@@ -993,6 +996,7 @@ const VisualizationPanel: React.FC<VisualizationPanelProps> = ({
                             onActionReject={onActionReject}
                             selectedActionIds={selectedActionIds}
                             rejectedActionIds={rejectedActionIds}
+                            onPinPreview={onPinPreview}
                             contingency={selectedBranch || null}
                             overloadedLines={overloadedLinesMemo}
                             inspectableItems={inspectableItems}

@@ -73,6 +73,11 @@ interface ActionOverviewDiagramProps {
     selectedActionIds?: Set<string>;
     /** Rejected-action set, for the popover's `isRejected` styling. */
     rejectedActionIds?: Set<string>;
+    /**
+     * Called when a pin is single-clicked (preview). The parent can
+     * use this to scroll the sidebar action feed to the matching card.
+     */
+    onPinPreview?: (actionId: string) => void;
     /** Current contingency (selected branch) — included in the auto-fit rectangle. */
     contingency: string | null;
     /** Overloaded lines in the N-1 state — included in the auto-fit rectangle. */
@@ -102,6 +107,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
+    onPinPreview,
     contingency,
     overloadedLines,
     inspectableItems,
@@ -299,12 +305,16 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             screenY: screenPos.y,
             ...placement,
         });
+        // Scroll the sidebar action feed to the matching card so the
+        // operator can see both the popover on the diagram and the full
+        // card details side-by-side.
+        onPinPreview?.(actionId);
         // Measure will complete after React commits the state update.
         requestAnimationFrame(() => {
             performance.mark('aod:pinClick:end');
             perfMeasure('aod:pinClick', 'aod:pinClick:start', 'aod:pinClick:end');
         });
-    }, []);
+    }, [onPinPreview]);
 
     const handlePinDoubleClick = useCallback((actionId: string) => {
         interactionLogger.record('overview_pin_double_clicked', { action_id: actionId });

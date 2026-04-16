@@ -120,6 +120,19 @@ function App() {
     nSvgContainerRef, n1SvgContainerRef, actionSvgContainerRef
   } = diagrams;
 
+  // When a pin on the overview is single-clicked we want the sidebar
+  // action feed to scroll to the matching card without selecting it
+  // (which would drill into the action-variant view).  This counter-
+  // based state lets ActionFeed react on every click even if the same
+  // pin is tapped twice in a row (a plain id string would not trigger
+  // a re-render on the second identical value).
+  const [scrollTarget, setScrollTarget] = useState<{ id: string; seq: number } | null>(null);
+  const scrollSeqRef = useRef(0);
+  const handlePinPreview = useCallback((actionId: string) => {
+    scrollSeqRef.current += 1;
+    setScrollTarget({ id: actionId, seq: scrollSeqRef.current });
+  }, []);
+
   const contingencyOptions = useMemo(() => {
     const q = selectedBranch.toUpperCase();
     const opts: string[] = [];
@@ -332,8 +345,8 @@ function App() {
   );
 
   const wrappedDisplayPrioritized = useCallback(
-    () => analysis.handleDisplayPrioritizedActions(selectedActionIds),
-    [analysis, selectedActionIds]
+    () => analysis.handleDisplayPrioritizedActions(selectedActionIds, diagrams.setActiveTab),
+    [analysis, selectedActionIds, diagrams.setActiveTab]
   );
 
   const wrappedAssetClick = useCallback(
@@ -1107,6 +1120,7 @@ function App() {
               actionScores={result?.action_scores}
               linesOverloaded={result?.lines_overloaded || []}
               selectedActionId={selectedActionId}
+              scrollTarget={scrollTarget}
               selectedActionIds={selectedActionIds}
               rejectedActionIds={rejectedActionIds}
               manuallyAddedIds={manuallyAddedIds}
@@ -1187,6 +1201,7 @@ function App() {
             onActionReject={actionsHook.handleActionReject}
             selectedActionIds={selectedActionIds}
             rejectedActionIds={rejectedActionIds}
+            onPinPreview={handlePinPreview}
             monitoringFactor={monitoringFactor}
           />
         </div>
