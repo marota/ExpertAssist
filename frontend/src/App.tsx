@@ -1130,6 +1130,11 @@ function App() {
                   placeholder="Search line/bus..."
                   style={{ width: '100%', padding: '7px 10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box', fontSize: '0.85rem' }}
                 />
+                {selectedBranch && nameMap[selectedBranch] && (
+                  <div style={{ fontSize: '0.78rem', color: '#4b5563', marginTop: '3px', fontStyle: 'italic', lineHeight: 1.3 }}>
+                    {nameMap[selectedBranch]}
+                  </div>
+                )}
                 <datalist id="contingencies">
                   {contingencyOptions}
                 </datalist>

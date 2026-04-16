@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<iidm:network xmlns:iidm="http://www.powsybl.org/schema/iidm/1_14" xmlns:reft="http://www.powsybl.org/schema/iidm/ext/reference_terminals/1_0" xmlns:slt="http://www.powsybl.org/schema/iidm/ext/slack_terminal/1_5" id="pypsa_eur_fr400" caseDate="2026-04-16T14:15:24.566Z" forecastDistance="0" sourceFormat="" minimumValidationLevel="STEADY_STATE_HYPOTHESIS">
+<iidm:network xmlns:iidm="http://www.powsybl.org/schema/iidm/1_14" xmlns:reft="http://www.powsybl.org/schema/iidm/ext/reference_terminals/1_0" xmlns:slt="http://www.powsybl.org/schema/iidm/ext/slack_terminal/1_5" id="pypsa_eur_fr400" caseDate="2026-04-16T14:35:36.162Z" forecastDistance="0" sourceFormat="" minimumValidationLevel="STEADY_STATE_HYPOTHESIS">
     <iidm:substation id="SS_relation_13260100-400" name="HAVRE (LE) (CENTRALE)" country="FR">
         <iidm:voltageLevel id="VL_relation_13260100-400" name="HAVRE (LE) (CENTRALE) 400kV" nominalV="400.0" lowVoltageLimit="360.0" highVoltageLimit="440.00000000000006" topologyKind="NODE_BREAKER">
             <iidm:nodeBreakerTopology>

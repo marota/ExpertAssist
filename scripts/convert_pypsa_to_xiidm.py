@@ -844,6 +844,12 @@ for uid in line_ids:
     actions[f"disco_{uid}"] = {
         "description": f"Disconnection of line '{display}' ({vl1_name} — {vl2_name})",
         "description_unitaire": f"Ouverture de la ligne '{display}'",
+        "content": {
+            "set_bus": {
+                "lines_or_id": {uid: -1},
+                "lines_ex_id": {uid: -1},
+            }
+        },
     }
 
 # Transformer disconnection actions
@@ -852,6 +858,12 @@ if len(trafos) > 0:
         actions[f"disco_{t_id}"] = {
             "description": f"Disconnection of transformer '{t_name}'",
             "description_unitaire": f"Ouverture du transformateur '{t_name}'",
+            "content": {
+                "set_bus": {
+                    "lines_or_id": {t_id: -1},
+                    "lines_ex_id": {t_id: -1},
+                }
+            },
         }
 
 actions_path = os.path.join(OUT_DIR, "actions.json")
