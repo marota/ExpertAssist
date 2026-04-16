@@ -1300,16 +1300,9 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         body.setAttribute('transform', `scale(${scale})`);
     });
 
-    // Scale curve stroke widths with scale^0.6 — grows faster than
-    // sqrt (visible) but much slower than linear (no noodle bowl).
-    // At scale=1 → 1, scale=5 → 2.6, scale=15 → 5.2, scale=30 → 8.
-    const curveScale = Math.pow(scale, 0.6);
-    const curveStrokeW = baseR * 0.2 * curveScale;
-    const curveDash = `${baseR * 0.5 * curveScale} ${baseR * 0.3 * curveScale}`;
-    layer.querySelectorAll('.nad-combined-action-curve').forEach(curve => {
-        curve.setAttribute('stroke-width', String(curveStrokeW));
-        curve.setAttribute('stroke-dasharray', curveDash);
-    });
+    // Curves use a fixed stroke width that matches the network edges
+    // — no dynamic rescaling needed since they live in SVG-space and
+    // scale naturally with the viewBox, just like the edges do.
 
     performance.mark('aod:rescalePins:end');
     const entry = performance.measure('aod:rescalePins', 'aod:rescalePins:start', 'aod:rescalePins:end');
@@ -1426,6 +1419,19 @@ export const applyActionOverviewPins = (
     pinBaseRadiusCache.set(svg, r);
     const labelFont = Math.max(9, r * 0.8);
 
+    // Read the actual edge stroke width from the network SVG so
+    // combined-action curves match the underlying edge thickness.
+    // Falls back to 3 SVG units if no edge path is found.
+    let edgeStrokeW = 3;
+    const edgePath = svg.querySelector('.nad-edge-paths path[style*="stroke-width"], .nad-edge-paths path') as SVGElement | null;
+    if (edgePath) {
+        const sw = edgePath.style?.strokeWidth || edgePath.getAttribute('stroke-width');
+        if (sw) {
+            const n = parseFloat(sw);
+            if (Number.isFinite(n) && n > 0) edgeStrokeW = n;
+        }
+    }
+
     const SVG_NS = 'http://www.w3.org/2000/svg';
     const layer = document.createElementNS(SVG_NS, 'g');
     layer.setAttribute('class', 'nad-action-overview-pins');
@@ -1527,8 +1533,8 @@ export const applyActionOverviewPins = (
         curvePath.setAttribute('class', 'nad-combined-action-curve');
         curvePath.setAttribute('fill', 'none');
         curvePath.setAttribute('stroke', severityFill[cp.severity]);
-        curvePath.setAttribute('stroke-width', String(r * 0.2));
-        curvePath.setAttribute('stroke-dasharray', `${r * 0.5} ${r * 0.3}`);
+        curvePath.setAttribute('stroke-width', String(edgeStrokeW));
+        curvePath.setAttribute('stroke-dasharray', `${edgeStrokeW * 2.5} ${edgeStrokeW * 1.5}`);
         curvePath.setAttribute('stroke-linecap', 'round');
         curvePath.setAttribute('pointer-events', 'none');
         frag.appendChild(curvePath);
