@@ -18,6 +18,7 @@ import {
 } from '../utils/svgUtils';
 import { usePanZoom } from '../hooks/usePanZoom';
 import ActionCardPopover from './ActionCardPopover';
+import { interactionLogger } from '../utils/interactionLogger';
 import {
     POPOVER_WIDTH,
     POPOVER_MAX_HEIGHT,
@@ -289,6 +290,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     } | null>(null);
 
     const handlePinClick = useCallback((actionId: string, screenPos: { x: number; y: number }) => {
+        interactionLogger.record('overview_pin_clicked', { action_id: actionId });
         performance.mark('aod:pinClick:start');
         const placement = decidePopoverPlacement(screenPos.x, screenPos.y);
         setPopoverPin({
@@ -305,6 +307,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     }, []);
 
     const handlePinDoubleClick = useCallback((actionId: string) => {
+        interactionLogger.record('overview_pin_double_clicked', { action_id: actionId });
         // Make sure no stale popover is left behind on the way
         // into the drill-down view.
         setPopoverPin(null);
@@ -401,23 +404,29 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // "opening fresh".
     const wasVisibleRef = useRef(false);
     useEffect(() => {
-        if (visible && !wasVisibleRef.current && initialViewBox) {
-            pz.setViewBox(initialViewBox);
+        if (visible && !wasVisibleRef.current) {
+            interactionLogger.record('overview_shown', { has_pins: pins.length > 0, pin_count: pins.length });
+            if (initialViewBox) pz.setViewBox(initialViewBox);
+        } else if (!visible && wasVisibleRef.current) {
+            interactionLogger.record('overview_hidden');
         }
         wasVisibleRef.current = visible;
-    }, [visible, initialViewBox, pz]);
+    }, [visible, initialViewBox, pz, pins.length]);
 
     const handleZoomIn = useCallback(() => {
         if (!pz.viewBox) return;
+        interactionLogger.record('overview_zoom_in');
         pz.setViewBox(scaleViewBox(pz.viewBox, ZOOM_STEP_IN));
     }, [pz]);
 
     const handleZoomOut = useCallback(() => {
         if (!pz.viewBox) return;
+        interactionLogger.record('overview_zoom_out');
         pz.setViewBox(scaleViewBox(pz.viewBox, ZOOM_STEP_OUT));
     }, [pz]);
 
     const handleReset = useCallback(() => {
+        interactionLogger.record('overview_zoom_fit');
         if (initialViewBox) pz.setViewBox(initialViewBox);
         // Clearing here ensures that re-typing the same asset id
         // after a reset will focus it again — without this the
@@ -456,9 +465,11 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
         if (exactInspectMatch) {
             // Consume the new query — zoom onto the asset.
+            interactionLogger.record('overview_inspect_changed', { query: exactInspectMatch, action: 'focus' });
             const target = computeEquipmentFitRect(n1MetaIndex, exactInspectMatch);
             if (target) pz.setViewBox(target);
         } else if (lastFocusedRef.current && initialViewBox) {
+            interactionLogger.record('overview_inspect_changed', { query: '', action: 'cleared' });
             // Query cleared (or no longer an exact match): go
             // back to the auto-fit rectangle so the user sees
             // the whole network-plus-pins again.
@@ -482,22 +493,25 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     const noBackground = !n1Diagram?.svg;
 
     // ----- Popover dismissal -----
-    // Close on Escape, on outside-click, or when visibility is
-    // toggled away (e.g. the user switched tabs).
+    // All close paths (Escape, outside-click, ✕ button, drill-down
+    // activation) route through this helper so the log entry is
+    // emitted exactly once per dismiss.
+    const closePopover = useCallback((reason: string) => {
+        interactionLogger.record('overview_popover_closed', { reason });
+        setPopoverPin(null);
+    }, []);
+
     const popoverRef = useRef<HTMLDivElement | null>(null);
     useEffect(() => {
         if (!popoverPin) return;
         const onDocMouseDown = (e: MouseEvent) => {
             const target = e.target as Node | null;
             if (popoverRef.current && target && popoverRef.current.contains(target)) return;
-            // Also ignore clicks on any pin — the pin's own click
-            // handler owns the popover-state update and would
-            // otherwise race with this listener.
             if (target instanceof Element && target.closest('.nad-action-overview-pin')) return;
-            setPopoverPin(null);
+            closePopover('outside_click');
         };
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setPopoverPin(null);
+            if (e.key === 'Escape') closePopover('escape');
         };
         document.addEventListener('mousedown', onDocMouseDown);
         document.addEventListener('keydown', onKey);
@@ -505,7 +519,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             document.removeEventListener('mousedown', onDocMouseDown);
             document.removeEventListener('keydown', onKey);
         };
-    }, [popoverPin]);
+    }, [popoverPin, closePopover]);
 
     // Pre-compute the props ActionCard needs for the popover render.
     const popoverDetails = popoverPin && actions ? actions[popoverPin.id] : null;
@@ -787,7 +801,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                     onActivateAction={onActionSelect}
                     onActionFavorite={onActionFavorite}
                     onActionReject={onActionReject}
-                    onClose={() => setPopoverPin(null)}
+                    onClose={() => closePopover('close_button')}
                 />
             )}
         </div>

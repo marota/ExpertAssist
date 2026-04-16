@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import ActionOverviewDiagram from './ActionOverviewDiagram';
+import { interactionLogger } from '../utils/interactionLogger';
 import type { ActionDetail, DiagramData, EdgeMeta, MetadataIndex, NodeMeta } from '../types';
 
 // ------------------------------------------------------------
@@ -768,6 +769,103 @@ describe('ActionOverviewDiagram', () => {
             expect(popover.getAttribute('data-horizontal-align')).toBe('start');
             expect(popover.style.top).not.toBe('');
             expect(popover.style.bottom).toBe('');
+        });
+    });
+
+    describe('interaction logging', () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+            interactionLogger.clear();
+        });
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        const lastLog = (type: string) =>
+            interactionLogger.getLog().filter(e => e.type === type).pop();
+
+        it('logs overview_shown when the component becomes visible', () => {
+            render(<ActionOverviewDiagram {...defaultProps()} />);
+            expect(lastLog('overview_shown')).toBeDefined();
+            expect(lastLog('overview_shown')!.details).toHaveProperty('pin_count');
+        });
+
+        it('logs overview_hidden when visible flips false', () => {
+            const { rerender } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            rerender(<ActionOverviewDiagram {...defaultProps()} visible={false} />);
+            expect(lastLog('overview_hidden')).toBeDefined();
+        });
+
+        it('logs overview_pin_clicked on single-click (after the delay)', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            const entry = lastLog('overview_pin_clicked');
+            expect(entry).toBeDefined();
+            expect(entry!.details.action_id).toBe('disco_LINE_A');
+        });
+
+        it('logs overview_pin_double_clicked on double-click', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            fireEvent.click(pin!);
+            fireEvent.doubleClick(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            const entry = lastLog('overview_pin_double_clicked');
+            expect(entry).toBeDefined();
+            expect(entry!.details.action_id).toBe('disco_LINE_A');
+            // The single-click should NOT have been logged (cancelled by dblclick)
+            expect(lastLog('overview_pin_clicked')).toBeUndefined();
+        });
+
+        it('logs overview_popover_closed with reason on close button', () => {
+            const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            fireEvent.click(getByTestId('action-overview-popover-close'));
+            const entry = lastLog('overview_popover_closed');
+            expect(entry).toBeDefined();
+            expect(entry!.details.reason).toBe('close_button');
+        });
+
+        it('logs overview_popover_closed with reason "escape" on Escape key', () => {
+            const { container } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            act(() => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+            expect(lastLog('overview_popover_closed')!.details.reason).toBe('escape');
+        });
+
+        it('logs overview_zoom_in / overview_zoom_out / overview_zoom_fit on button clicks', () => {
+            const { getByTitle } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            fireEvent.click(getByTitle('Zoom In'));
+            expect(lastLog('overview_zoom_in')).toBeDefined();
+            fireEvent.click(getByTitle('Zoom Out'));
+            expect(lastLog('overview_zoom_out')).toBeDefined();
+            fireEvent.click(getByTitle(/Reset view/i));
+            expect(lastLog('overview_zoom_fit')).toBeDefined();
+        });
+
+        it('logs overview_inspect_changed when an exact equipment match is typed', () => {
+            const { getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            const entry = lastLog('overview_inspect_changed');
+            expect(entry).toBeDefined();
+            expect(entry!.details).toEqual({ query: 'VL_FAR', action: 'focus' });
+        });
+
+        it('logs overview_inspect_changed with action "cleared" when query is cleared', () => {
+            const { getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+            const input = getByTestId('overview-inspect-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: 'VL_FAR' } });
+            fireEvent.change(input, { target: { value: '' } });
+            const entry = lastLog('overview_inspect_changed');
+            expect(entry!.details.action).toBe('cleared');
         });
     });
 });
