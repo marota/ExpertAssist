@@ -919,18 +919,27 @@ export const buildActionOverviewPins = (
  * connects two unitary action pins with a curved line and places a
  * new pin at the midpoint of the curve.
  *
+ * Only pairs that have been **simulated** (i.e. whose pair key also
+ * exists as a key in `simulatedActions`) are included — estimation-
+ * only pairs from the superposition theorem are skipped.
+ *
  * Pure function — no DOM access.
  */
 export const buildCombinedActionPins = (
     combinedActions: Record<string, CombinedAction> | null | undefined,
     unitaryPins: readonly ActionPinInfo[],
     monitoringFactor: number,
+    simulatedActions?: Record<string, ActionDetail> | null,
 ): CombinedPinInfo[] => {
     if (!combinedActions) return [];
     const pinById = new Map(unitaryPins.map(p => [p.id, p]));
     const result: CombinedPinInfo[] = [];
 
     for (const [pairId, combined] of Object.entries(combinedActions)) {
+        // Skip estimation-only pairs: only render if the pair has
+        // been fully simulated (its key exists in the actions dict).
+        if (simulatedActions && !simulatedActions[pairId]) continue;
+
         const pin1 = pinById.get(combined.action1_id);
         const pin2 = pinById.get(combined.action2_id);
         if (!pin1 || !pin2) continue;
@@ -1236,10 +1245,13 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         body.setAttribute('transform', `scale(${scale})`);
     });
 
-    // Also scale the combined-action curve stroke widths so they
-    // stay visually proportional to the pins as the user zooms.
-    const curveStrokeW = baseR * 0.3 * scale;
-    const curveDash = `${baseR * 0.6 * scale} ${baseR * 0.3 * scale}`;
+    // Scale the combined-action curve stroke widths conservatively:
+    // use the square root of the pin scale so curves stay readable
+    // at normal zoom but don't become overwhelming fat noodles when
+    // zoomed out on large grids. Cap at 3x the base stroke.
+    const curveScale = Math.min(Math.sqrt(scale), 3);
+    const curveStrokeW = baseR * 0.15 * curveScale;
+    const curveDash = `${baseR * 0.4 * curveScale} ${baseR * 0.25 * curveScale}`;
     layer.querySelectorAll('.nad-combined-action-curve').forEach(curve => {
         curve.setAttribute('stroke-width', String(curveStrokeW));
         curve.setAttribute('stroke-dasharray', curveDash);
@@ -1461,8 +1473,8 @@ export const applyActionOverviewPins = (
         curvePath.setAttribute('class', 'nad-combined-action-curve');
         curvePath.setAttribute('fill', 'none');
         curvePath.setAttribute('stroke', COMBINED_PIN_FILL);
-        curvePath.setAttribute('stroke-width', String(r * 0.3));
-        curvePath.setAttribute('stroke-dasharray', `${r * 0.6} ${r * 0.3}`);
+        curvePath.setAttribute('stroke-width', String(r * 0.15));
+        curvePath.setAttribute('stroke-dasharray', `${r * 0.4} ${r * 0.25}`);
         curvePath.setAttribute('stroke-linecap', 'round');
         curvePath.setAttribute('opacity', '0.7');
         curvePath.setAttribute('pointer-events', 'none');

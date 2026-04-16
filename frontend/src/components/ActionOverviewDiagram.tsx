@@ -240,8 +240,8 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
     const combinedPins = useMemo(() => {
         if (!combinedActions || pins.length === 0) return [];
-        return buildCombinedActionPins(combinedActions, pins, monitoringFactor);
-    }, [combinedActions, pins, monitoringFactor]);
+        return buildCombinedActionPins(combinedActions, pins, monitoringFactor, actions);
+    }, [combinedActions, pins, monitoringFactor, actions]);
 
     // Deterministic auto-fit rectangle derived from the bounding
     // box of contingency + overloads + pins. Recomputed whenever any
