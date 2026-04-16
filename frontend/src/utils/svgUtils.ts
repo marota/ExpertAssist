@@ -1261,13 +1261,13 @@ export const rescaleActionOverviewPins = (container: HTMLElement | null) => {
         body.setAttribute('transform', `scale(${scale})`);
     });
 
-    // Scale the combined-action curve stroke widths conservatively:
-    // use the square root of the pin scale so curves stay readable
-    // at normal zoom but don't become overwhelming fat noodles when
-    // zoomed out on large grids. Cap at 3x the base stroke.
-    const curveScale = Math.min(Math.sqrt(scale), 3);
-    const curveStrokeW = baseR * 0.15 * curveScale;
-    const curveDash = `${baseR * 0.4 * curveScale} ${baseR * 0.25 * curveScale}`;
+    // Scale the combined-action curve stroke widths linearly with the
+    // pin scale so curves stay proportional to pins at every zoom
+    // level. The base multiplier (0.2) keeps them thinner than a pin
+    // radius, and the cap prevents runaway thickness on extreme zoom.
+    const curveScale = Math.min(scale, 8);
+    const curveStrokeW = baseR * 0.2 * curveScale;
+    const curveDash = `${baseR * 0.5 * curveScale} ${baseR * 0.3 * curveScale}`;
     layer.querySelectorAll('.nad-combined-action-curve').forEach(curve => {
         curve.setAttribute('stroke-width', String(curveStrokeW));
         curve.setAttribute('stroke-dasharray', curveDash);
@@ -1489,8 +1489,8 @@ export const applyActionOverviewPins = (
         curvePath.setAttribute('class', 'nad-combined-action-curve');
         curvePath.setAttribute('fill', 'none');
         curvePath.setAttribute('stroke', COMBINED_PIN_FILL);
-        curvePath.setAttribute('stroke-width', String(r * 0.15));
-        curvePath.setAttribute('stroke-dasharray', `${r * 0.4} ${r * 0.25}`);
+        curvePath.setAttribute('stroke-width', String(r * 0.2));
+        curvePath.setAttribute('stroke-dasharray', `${r * 0.5} ${r * 0.3}`);
         curvePath.setAttribute('stroke-linecap', 'round');
         curvePath.setAttribute('opacity', '0.7');
         curvePath.setAttribute('pointer-events', 'none');
