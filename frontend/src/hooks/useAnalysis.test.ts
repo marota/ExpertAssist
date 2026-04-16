@@ -312,6 +312,37 @@ describe('useAnalysis', () => {
             expect(result.current.pendingAnalysisResult).toBeNull();
         });
 
+        it('calls setActiveTab("action") when provided', () => {
+            const { result } = renderHook(() => useAnalysis());
+
+            const pendingResult = {
+                actions: {
+                    act_1: {
+                        description_unitaire: 'Reco',
+                        rho_before: [1.1], rho_after: [0.9],
+                        max_rho: 0.9, max_rho_line: 'LINE_A',
+                        is_rho_reduction: true,
+                    },
+                },
+                lines_overloaded: ['LINE_A'],
+                message: 'OK',
+                dc_fallback: false,
+                pdf_path: null,
+                pdf_url: null,
+            };
+
+            act(() => {
+                result.current.setPendingAnalysisResult(pendingResult);
+            });
+
+            const setActiveTab = vi.fn();
+            act(() => {
+                result.current.handleDisplayPrioritizedActions(new Set(), setActiveTab);
+            });
+
+            expect(setActiveTab).toHaveBeenCalledWith('action');
+        });
+
         it('preserves manually selected actions during merge', async () => {
             const { result } = renderHook(() => useAnalysis());
 

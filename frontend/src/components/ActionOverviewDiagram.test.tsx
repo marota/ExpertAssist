@@ -770,6 +770,32 @@ describe('ActionOverviewDiagram', () => {
             expect(popover.style.top).not.toBe('');
             expect(popover.style.bottom).toBe('');
         });
+
+        it('calls onPinPreview with the action id on single-click', () => {
+            const onPinPreview = vi.fn();
+            const { container } = render(
+                <ActionOverviewDiagram {...defaultProps()} onPinPreview={onPinPreview} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            expect(onPinPreview).toHaveBeenCalledWith('disco_LINE_A');
+        });
+
+        it('does NOT call onPinPreview on double-click (drill-down)', () => {
+            const onPinPreview = vi.fn();
+            const { container } = render(
+                <ActionOverviewDiagram {...defaultProps()} onPinPreview={onPinPreview} />,
+            );
+            const pin = container.querySelector('g.nad-action-overview-pin[data-action-id="disco_LINE_A"]');
+            fireEvent.click(pin!);
+            fireEvent.click(pin!);
+            fireEvent.doubleClick(pin!);
+            act(() => { vi.advanceTimersByTime(300); });
+            // Double-click cancels the single-click timer, so onPinPreview
+            // should NOT have been called.
+            expect(onPinPreview).not.toHaveBeenCalled();
+        });
     });
 
     describe('interaction logging', () => {

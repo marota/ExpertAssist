@@ -25,7 +25,7 @@ import { useAnalysis } from './hooks/useAnalysis';
 import { useDiagrams } from './hooks/useDiagrams';
 import { useSession } from './hooks/useSession';
 import { useDetachedTabs } from './hooks/useDetachedTabs';
-import { useTiedTabsSync } from './hooks/useTiedTabsSync';
+import { useTiedTabsSync, type PZInstance } from './hooks/useTiedTabsSync';
 import { interactionLogger } from './utils/interactionLogger';
 
 function App() {
@@ -74,6 +74,33 @@ function App() {
 
   const diagrams = useDiagrams(branches, voltageLevels, selectedBranch, detachedTabs);
 
+  // ===== Action Overview PZ (for tied-tab sync) =====
+  // The action overview has its own independent usePanZoom instance
+  // (it renders the N-1 NAD as a background with pins).  We need to
+  // include it in the tie system so that when the action tab is
+  // detached and showing the overview (no selectedActionId), zoom /
+  // focus changes are mirrored to the main window.
+  //
+  // This MUST be React state (not a ref) so that when the overview's
+  // viewBox changes inside ActionOverviewDiagram, the new PZ instance
+  // propagates up to App via the onPzChange callback, triggering a
+  // re-render.  That re-render updates `actionVb` inside
+  // useTiedTabsSync's deps, letting it detect the change and mirror
+  // it to the main window.  A ref would silently hold the new value
+  // without triggering the sync hook — making detached→main sync
+  // one-directional.
+  const [overviewPz, setOverviewPz] = useState<PZInstance | null>(null);
+  const handleOverviewPzChange = useCallback((pz: PZInstance) => {
+    setOverviewPz(pz);
+  }, []);
+
+  // When the overview is visible (no selected action), use its PZ
+  // for the 'action' slot in the tie map.  Otherwise fall back to
+  // the action-variant diagram's PZ.
+  const actionPZForTie = (!diagrams.selectedActionId && overviewPz)
+    ? overviewPz
+    : diagrams.actionPZ;
+
   // ===== Tied Detached Tabs =====
   // When a detached tab is "tied", its viewBox is mirrored one-way
   // into the main window's active tab on every pan/zoom change —
@@ -81,7 +108,7 @@ function App() {
   // docs/detachable-viz-tabs.md#tied-detached-tabs for the full
   // design rationale.
   const tiedTabsHook = useTiedTabsSync(
-    { 'n': diagrams.nPZ, 'n-1': diagrams.n1PZ, 'action': diagrams.actionPZ },
+    { 'n': diagrams.nPZ, 'n-1': diagrams.n1PZ, 'action': actionPZForTie },
     diagrams.activeTab,
     detachedTabs,
   );
@@ -119,6 +146,19 @@ function App() {
     inspectableItems,
     nSvgContainerRef, n1SvgContainerRef, actionSvgContainerRef
   } = diagrams;
+
+  // When a pin on the overview is single-clicked we want the sidebar
+  // action feed to scroll to the matching card without selecting it
+  // (which would drill into the action-variant view).  This counter-
+  // based state lets ActionFeed react on every click even if the same
+  // pin is tapped twice in a row (a plain id string would not trigger
+  // a re-render on the second identical value).
+  const [scrollTarget, setScrollTarget] = useState<{ id: string; seq: number } | null>(null);
+  const scrollSeqRef = useRef(0);
+  const handlePinPreview = useCallback((actionId: string) => {
+    scrollSeqRef.current += 1;
+    setScrollTarget({ id: actionId, seq: scrollSeqRef.current });
+  }, []);
 
   const contingencyOptions = useMemo(() => {
     const q = selectedBranch.toUpperCase();
@@ -332,8 +372,8 @@ function App() {
   );
 
   const wrappedDisplayPrioritized = useCallback(
-    () => analysis.handleDisplayPrioritizedActions(selectedActionIds),
-    [analysis, selectedActionIds]
+    () => analysis.handleDisplayPrioritizedActions(selectedActionIds, diagrams.setActiveTab),
+    [analysis, selectedActionIds, diagrams.setActiveTab]
   );
 
   const wrappedAssetClick = useCallback(
@@ -1107,6 +1147,7 @@ function App() {
               actionScores={result?.action_scores}
               linesOverloaded={result?.lines_overloaded || []}
               selectedActionId={selectedActionId}
+              scrollTarget={scrollTarget}
               selectedActionIds={selectedActionIds}
               rejectedActionIds={rejectedActionIds}
               manuallyAddedIds={manuallyAddedIds}
@@ -1187,6 +1228,8 @@ function App() {
             onActionReject={actionsHook.handleActionReject}
             selectedActionIds={selectedActionIds}
             rejectedActionIds={rejectedActionIds}
+            onPinPreview={handlePinPreview}
+            onOverviewPzChange={handleOverviewPzChange}
             monitoringFactor={monitoringFactor}
           />
         </div>

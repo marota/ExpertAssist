@@ -21,6 +21,13 @@ interface ActionFeedProps {
     selectedActionIds: Set<string>;
     rejectedActionIds: Set<string>;
     pendingAnalysisResult: AnalysisResult | null;
+    /**
+     * When set, the feed scrolls to the action card matching the id.
+     * The `seq` counter lets the same action trigger a re-scroll
+     * (e.g. tapping the same pin twice).  Driven by pin single-click
+     * on the action overview diagram.
+     */
+    scrollTarget?: { id: string; seq: number } | null;
     onDisplayPrioritizedActions: () => void;
     onRunAnalysis: () => void;
     canRunAnalysis: boolean;
@@ -50,6 +57,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     actionScores,
     linesOverloaded,
     selectedActionId,
+    scrollTarget,
     selectedActionIds,
     rejectedActionIds,
     pendingAnalysisResult,
@@ -520,6 +528,34 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             cancelAnimationFrame(rafId);
         };
     }, [selectedActionId]);
+
+    // Scroll to a card when a pin on the action overview is
+    // single-clicked (preview).  This is separate from the
+    // selectedActionId scroll above because pin preview does NOT
+    // select the action (no drill-down).  The `seq` counter in the
+    // scrollTarget object ensures that clicking the same pin twice
+    // still triggers a fresh scroll.
+    useEffect(() => {
+        if (!scrollTarget) return;
+        let cancelled = false;
+        const rafId = requestAnimationFrame(() => {
+            if (cancelled) return;
+            const el = document.querySelector(
+                `[data-testid="action-card-${CSS.escape(scrollTarget.id)}"]`,
+            );
+            if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
+                (el as HTMLElement).scrollIntoView({
+                    block: 'center',
+                    inline: 'nearest',
+                    behavior: 'smooth',
+                });
+            }
+        });
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(rafId);
+        };
+    }, [scrollTarget]);
 
     const rejectedEntries = useMemo(() => {
         return sortedActionEntries.filter(([id]) => rejectedActionIds.has(id));

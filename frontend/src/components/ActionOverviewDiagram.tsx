@@ -73,6 +73,11 @@ interface ActionOverviewDiagramProps {
     selectedActionIds?: Set<string>;
     /** Rejected-action set, for the popover's `isRejected` styling. */
     rejectedActionIds?: Set<string>;
+    /**
+     * Called when a pin is single-clicked (preview). The parent can
+     * use this to scroll the sidebar action feed to the matching card.
+     */
+    onPinPreview?: (actionId: string) => void;
     /** Current contingency (selected branch) — included in the auto-fit rectangle. */
     contingency: string | null;
     /** Overloaded lines in the N-1 state — included in the auto-fit rectangle. */
@@ -80,6 +85,26 @@ interface ActionOverviewDiagramProps {
     /** Searchable equipment ids for the inspect field. */
     inspectableItems: readonly string[];
     visible: boolean;
+    /**
+     * Called whenever the overview's `usePanZoom` instance changes
+     * (which happens on every viewBox update, since usePanZoom
+     * returns a new object identity via useMemo).  The parent stores
+     * the instance in React **state** so the tied-tabs sync hook
+     * sees the new viewBox in its dependency list and can propagate
+     * the change bidirectionally.
+     *
+     * A ref-based approach doesn't work here: writing to a ref
+     * doesn't trigger a re-render of App, so the sync hook's
+     * `actionVb` dep stays stale and detached→main mirroring
+     * never fires.
+     */
+    onPzChange?: (pz: ReturnType<typeof usePanZoom>) => void;
+    /** Whether the action tab is currently tied (zoom-sync with main window). */
+    isTied?: boolean;
+    /** Toggle the tied state for the action tab. */
+    onToggleTie?: () => void;
+    /** Whether the action tab is currently detached (controls Tie button visibility). */
+    isDetached?: boolean;
 }
 
 const ZOOM_STEP_IN = 0.8;
@@ -102,10 +127,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     onActionReject,
     selectedActionIds,
     rejectedActionIds,
+    onPinPreview,
     contingency,
     overloadedLines,
     inspectableItems,
     visible,
+    onPzChange,
+    isTied,
+    onToggleTie,
+    isDetached,
 }) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     // Pull the svg string into a local so the React Compiler can
@@ -256,6 +286,16 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     // doesn't steal wheel events from other tabs.
     const pz = usePanZoom(containerRef, initialViewBox, visible && svgReady);
 
+    // Notify the parent whenever the PZ instance changes.  Because
+    // `usePanZoom` returns a new object on every viewBox update
+    // (line 313 of usePanZoom.ts: `useMemo([viewBox, setViewBox])`),
+    // this fires on every pan/zoom — which is exactly what the
+    // tied-tabs sync hook needs to detect a change in the detached
+    // popup and mirror it to the main window.
+    useEffect(() => {
+        onPzChange?.(pz);
+    }, [pz, onPzChange]);
+
     // Asset-focus "consume once" tracking — declared up here so
     // `handleReset` (defined just below) can clear it.
     //
@@ -299,12 +339,16 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             screenY: screenPos.y,
             ...placement,
         });
+        // Scroll the sidebar action feed to the matching card so the
+        // operator can see both the popover on the diagram and the full
+        // card details side-by-side.
+        onPinPreview?.(actionId);
         // Measure will complete after React commits the state update.
         requestAnimationFrame(() => {
             performance.mark('aod:pinClick:end');
             perfMeasure('aod:pinClick', 'aod:pinClick:start', 'aod:pinClick:end');
         });
-    }, []);
+    }, [onPinPreview]);
 
     const handlePinDoubleClick = useCallback((actionId: string) => {
         interactionLogger.record('overview_pin_double_clicked', { action_id: actionId });
@@ -601,7 +645,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                 search. Rendered inside the overview's own flex
                 layout (not via renderTabOverlay) so they are
                 trivially shown/hidden with the overview itself. */}
-            {svgReady && (
+            {svgReady && visible && (
                 <div
                     data-testid="overview-controls"
                     style={{
@@ -616,6 +660,27 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                         pointerEvents: 'none',
                     }}
                 >
+                    {isDetached && onToggleTie && (
+                        <div style={{ pointerEvents: 'auto' }}>
+                            <button
+                                data-testid="overview-tie-button"
+                                onClick={onToggleTie}
+                                title={isTied
+                                    ? 'Untie: pan/zoom and asset focus no longer mirror between this window and the main window'
+                                    : 'Tie: pan/zoom and asset focus will be mirrored between this window and the main window\'s active tab'}
+                                style={{
+                                    ...controlButtonStyle,
+                                    padding: '4px 10px',
+                                    fontSize: 12,
+                                    border: `1px solid ${isTied ? '#2c7be5' : '#ccc'}`,
+                                    backgroundColor: isTied ? '#e8f0fe' : '#fff',
+                                    color: isTied ? '#2c7be5' : '#555',
+                                }}
+                            >
+                                {isTied ? '\u{1F517} Tied' : '\u{26D3} Tie'}
+                            </button>
+                        </div>
+                    )}
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center', pointerEvents: 'auto' }}>
                         <button
                             onClick={handleZoomIn}
@@ -629,7 +694,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                             title="Reset view to auto-fit (contingency + overloads + pins)"
                             style={{ ...controlButtonStyle, padding: '5px 14px', fontSize: 12 }}
                         >
-                            {'\uD83D\uDD0D Fit'}
+                            {'\uD83D\uDD0D Unzoom'}
                         </button>
                         <button
                             onClick={handleZoomOut}
