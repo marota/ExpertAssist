@@ -1598,5 +1598,797 @@
   "disco_T_way_81641090-400-380": {
     "description": "Disconnection of transformer 'VIGY - Ensdorf (DE) - Vigy (FR)'",
     "description_unitaire": "Ouverture du transformateur 'VIGY - Ensdorf (DE) - Vigy (FR)'"
+  },
+  "open_coupler_VL_virtual_relation_5952075_b_1-400": {
+    "description": "Opening coupling breaker in 'BOUTRL71P.ORG 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_relation_5952075_b_1-400_COUPL' dans le poste 'BOUTRL71P.ORG 400kV'",
+    "switches": {
+      "VL_virtual_relation_5952075_b_1-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_relation_5952075_b_1-400"
+  },
+  "open_coupler_VL_virtual_relation_6492540_a_1-400": {
+    "description": "Opening coupling breaker in 'BRAUDL72CUBNE 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_relation_6492540_a_1-400_COUPL' dans le poste 'BRAUDL72CUBNE 400kV'",
+    "switches": {
+      "VL_virtual_relation_6492540_a_1-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_relation_6492540_a_1-400"
+  },
+  "open_coupler_VL_virtual_relation_6492540_b_1-400": {
+    "description": "Opening coupling breaker in 'BRAUDL72CUBNE 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_relation_6492540_b_1-400_COUPL' dans le poste 'BRAUDL72CUBNE 400kV'",
+    "switches": {
+      "VL_virtual_relation_6492540_b_1-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_relation_6492540_b_1-400"
+  },
+  "open_coupler_VL_virtual_way_328017422_1-400": {
+    "description": "Opening coupling breaker in 'Liaison 400 kV n°2 Plessis-Gassot - Terrier 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_way_328017422_1-400_COUPL' dans le poste 'Liaison 400 kV n°2 Plessis-Gassot - Terrier 400kV'",
+    "switches": {
+      "VL_virtual_way_328017422_1-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_way_328017422_1-400"
+  },
+  "open_coupler_VL_virtual_way_85226749_1-400": {
+    "description": "Opening coupling breaker in 'virtual_way_85226749_1-400 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_way_85226749_1-400_COUPL' dans le poste 'virtual_way_85226749_1-400 400kV'",
+    "switches": {
+      "VL_virtual_way_85226749_1-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_way_85226749_1-400"
+  },
+  "open_coupler_VL_virtual_way_94524735_0-400": {
+    "description": "Opening coupling breaker in 'virtual_way_94524735_0-400 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_virtual_way_94524735_0-400_COUPL' dans le poste 'virtual_way_94524735_0-400 400kV'",
+    "switches": {
+      "VL_virtual_way_94524735_0-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_virtual_way_94524735_0-400"
+  },
+  "open_coupler_VL_way_105515586-400": {
+    "description": "Opening coupling breaker in 'BRAUD 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105515586-400_COUPL' dans le poste 'BRAUD 400kV'",
+    "switches": {
+      "VL_way_105515586-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105515586-400"
+  },
+  "open_coupler_VL_way_105571340-400": {
+    "description": "Opening coupling breaker in 'PREGUILLAC 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105571340-400_COUPL' dans le poste 'PREGUILLAC 400kV'",
+    "switches": {
+      "VL_way_105571340-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105571340-400"
+  },
+  "open_coupler_VL_way_105630888-400": {
+    "description": "Opening coupling breaker in 'GRANZAY 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105630888-400_COUPL' dans le poste 'GRANZAY 400kV'",
+    "switches": {
+      "VL_way_105630888-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105630888-400"
+  },
+  "open_coupler_VL_way_105690676-400": {
+    "description": "Opening coupling breaker in 'VALDIVIENNE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105690676-400_COUPL' dans le poste 'VALDIVIENNE 400kV'",
+    "switches": {
+      "VL_way_105690676-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105690676-400"
+  },
+  "open_coupler_VL_way_105783300-400": {
+    "description": "Opening coupling breaker in 'EGUZON 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105783300-400_COUPL' dans le poste 'EGUZON 400kV'",
+    "switches": {
+      "VL_way_105783300-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105783300-400"
+  },
+  "open_coupler_VL_way_105913465-400": {
+    "description": "Opening coupling breaker in 'DONZAC 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_105913465-400_COUPL' dans le poste 'DONZAC 400kV'",
+    "switches": {
+      "VL_way_105913465-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_105913465-400"
+  },
+  "open_coupler_VL_way_109817708-400": {
+    "description": "Opening coupling breaker in 'VERFEIL 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_109817708-400_COUPL' dans le poste 'VERFEIL 400kV'",
+    "switches": {
+      "VL_way_109817708-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_109817708-400"
+  },
+  "open_coupler_VL_way_109859712-400": {
+    "description": "Opening coupling breaker in 'ISSEL 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_109859712-400_COUPL' dans le poste 'ISSEL 400kV'",
+    "switches": {
+      "VL_way_109859712-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_109859712-400"
+  },
+  "open_coupler_VL_way_110086345-400": {
+    "description": "Opening coupling breaker in 'TAVEL 400kV' (13 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_110086345-400_COUPL' dans le poste 'TAVEL 400kV'",
+    "switches": {
+      "VL_way_110086345-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_110086345-400"
+  },
+  "open_coupler_VL_way_110443404-400": {
+    "description": "Opening coupling breaker in 'CAZARIL 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_110443404-400_COUPL' dans le poste 'CAZARIL 400kV'",
+    "switches": {
+      "VL_way_110443404-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_110443404-400"
+  },
+  "open_coupler_VL_way_110450456-400": {
+    "description": "Opening coupling breaker in 'JUMEAUX (LES) 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_110450456-400_COUPL' dans le poste 'JUMEAUX (LES) 400kV'",
+    "switches": {
+      "VL_way_110450456-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_110450456-400"
+  },
+  "open_coupler_VL_way_111456385-400": {
+    "description": "Opening coupling breaker in 'SAUCATS 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_111456385-400_COUPL' dans le poste 'SAUCATS 400kV'",
+    "switches": {
+      "VL_way_111456385-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_111456385-400"
+  },
+  "open_coupler_VL_way_112342683-400": {
+    "description": "Opening coupling breaker in 'CORDEMAIS-POSTE 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_112342683-400_COUPL' dans le poste 'CORDEMAIS-POSTE 400kV'",
+    "switches": {
+      "VL_way_112342683-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_112342683-400"
+  },
+  "open_coupler_VL_way_114355666-400": {
+    "description": "Opening coupling breaker in 'LOUISFERT 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_114355666-400_COUPL' dans le poste 'LOUISFERT 400kV'",
+    "switches": {
+      "VL_way_114355666-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_114355666-400"
+  },
+  "open_coupler_VL_way_117446403-400": {
+    "description": "Opening coupling breaker in 'AVOINE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_117446403-400_COUPL' dans le poste 'AVOINE 400kV'",
+    "switches": {
+      "VL_way_117446403-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_117446403-400"
+  },
+  "open_coupler_VL_way_117893799-400": {
+    "description": "Opening coupling breaker in 'GAVRELLE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_117893799-400_COUPL' dans le poste 'GAVRELLE 400kV'",
+    "switches": {
+      "VL_way_117893799-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_117893799-400"
+  },
+  "open_coupler_VL_way_118387083-400": {
+    "description": "Opening coupling breaker in 'BOCTOIS 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_118387083-400_COUPL' dans le poste 'BOCTOIS 400kV'",
+    "switches": {
+      "VL_way_118387083-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_118387083-400"
+  },
+  "open_coupler_VL_way_121297422-400": {
+    "description": "Opening coupling breaker in 'TRANS 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_121297422-400_COUPL' dans le poste 'TRANS 400kV'",
+    "switches": {
+      "VL_way_121297422-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_121297422-400"
+  },
+  "open_coupler_VL_way_121500497-400": {
+    "description": "Opening coupling breaker in 'BIANCON 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_121500497-400_COUPL' dans le poste 'BIANCON 400kV'",
+    "switches": {
+      "VL_way_121500497-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_121500497-400"
+  },
+  "open_coupler_VL_way_1271288345-400": {
+    "description": "Opening coupling breaker in 'MANDARINS 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_1271288345-400_COUPL' dans le poste 'MANDARINS 400kV'",
+    "switches": {
+      "VL_way_1271288345-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_1271288345-400"
+  },
+  "open_coupler_VL_way_1330896577-400": {
+    "description": "Opening coupling breaker in 'G.SOL 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_1330896577-400_COUPL' dans le poste 'G.SOL 400kV'",
+    "switches": {
+      "VL_way_1330896577-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_1330896577-400"
+  },
+  "open_coupler_VL_way_133299582-400": {
+    "description": "Opening coupling breaker in 'CATTENOM 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_133299582-400_COUPL' dans le poste 'CATTENOM 400kV'",
+    "switches": {
+      "VL_way_133299582-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_133299582-400"
+  },
+  "open_coupler_VL_way_166073883-400": {
+    "description": "Opening coupling breaker in 'VILLERBON 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_166073883-400_COUPL' dans le poste 'VILLERBON 400kV'",
+    "switches": {
+      "VL_way_166073883-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_166073883-400"
+  },
+  "open_coupler_VL_way_179260933-400": {
+    "description": "Opening coupling breaker in 'VIELMOULIN 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_179260933-400_COUPL' dans le poste 'VIELMOULIN 400kV'",
+    "switches": {
+      "VL_way_179260933-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_179260933-400"
+  },
+  "open_coupler_VL_way_222188543-400": {
+    "description": "Opening coupling breaker in 'TAUTE 400kV' (10 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_222188543-400_COUPL' dans le poste 'TAUTE 400kV'",
+    "switches": {
+      "VL_way_222188543-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_222188543-400"
+  },
+  "open_coupler_VL_way_225210595-400": {
+    "description": "Opening coupling breaker in 'MOULAINE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_225210595-400_COUPL' dans le poste 'MOULAINE 400kV'",
+    "switches": {
+      "VL_way_225210595-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_225210595-400"
+  },
+  "open_coupler_VL_way_23286313-400": {
+    "description": "Opening coupling breaker in 'MARMAGNE 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_23286313-400_COUPL' dans le poste 'MARMAGNE 400kV'",
+    "switches": {
+      "VL_way_23286313-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_23286313-400"
+  },
+  "open_coupler_VL_way_23287448-400": {
+    "description": "Opening coupling breaker in 'VILLEJUST 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_23287448-400_COUPL' dans le poste 'VILLEJUST 400kV'",
+    "switches": {
+      "VL_way_23287448-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_23287448-400"
+  },
+  "open_coupler_VL_way_235370803-400": {
+    "description": "Opening coupling breaker in 'CUBNEZAIS 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_235370803-400_COUPL' dans le poste 'CUBNEZAIS 400kV'",
+    "switches": {
+      "VL_way_235370803-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_235370803-400"
+  },
+  "open_coupler_VL_way_24020601-400": {
+    "description": "Opening coupling breaker in 'CHAFFARD (LE) 400kV' (15 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_24020601-400_COUPL' dans le poste 'CHAFFARD (LE) 400kV'",
+    "switches": {
+      "VL_way_24020601-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_24020601-400"
+  },
+  "open_coupler_VL_way_24849819-400": {
+    "description": "Opening coupling breaker in 'CIROLLIERS 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_24849819-400_COUPL' dans le poste 'CIROLLIERS 400kV'",
+    "switches": {
+      "VL_way_24849819-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_24849819-400"
+  },
+  "open_coupler_VL_way_26376870-400": {
+    "description": "Opening coupling breaker in 'TAMAREAU 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_26376870-400_COUPL' dans le poste 'TAMAREAU 400kV'",
+    "switches": {
+      "VL_way_26376870-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_26376870-400"
+  },
+  "open_coupler_VL_way_27259817-400": {
+    "description": "Opening coupling breaker in 'REALTOR 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_27259817-400_COUPL' dans le poste 'REALTOR 400kV'",
+    "switches": {
+      "VL_way_27259817-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_27259817-400"
+  },
+  "open_coupler_VL_way_27266058-400": {
+    "description": "Opening coupling breaker in 'MORBRAS 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_27266058-400_COUPL' dans le poste 'MORBRAS 400kV'",
+    "switches": {
+      "VL_way_27266058-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_27266058-400"
+  },
+  "open_coupler_VL_way_27951432-400": {
+    "description": "Opening coupling breaker in 'CHANCEAUX 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_27951432-400_COUPL' dans le poste 'CHANCEAUX 400kV'",
+    "switches": {
+      "VL_way_27951432-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_27951432-400"
+  },
+  "open_coupler_VL_way_29088787-400": {
+    "description": "Opening coupling breaker in 'VILLEVAUDE 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_29088787-400_COUPL' dans le poste 'VILLEVAUDE 400kV'",
+    "switches": {
+      "VL_way_29088787-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_29088787-400"
+  },
+  "open_coupler_VL_way_295403868-400": {
+    "description": "Opening coupling breaker in 'HOUDREVILLE 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_295403868-400_COUPL' dans le poste 'HOUDREVILLE 400kV'",
+    "switches": {
+      "VL_way_295403868-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_295403868-400"
+  },
+  "open_coupler_VL_way_299341285-400": {
+    "description": "Opening coupling breaker in 'PALUEL 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_299341285-400_COUPL' dans le poste 'PALUEL 400kV'",
+    "switches": {
+      "VL_way_299341285-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_299341285-400"
+  },
+  "open_coupler_VL_way_30292953-400": {
+    "description": "Opening coupling breaker in 'TILLEUL 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_30292953-400_COUPL' dans le poste 'TILLEUL 400kV'",
+    "switches": {
+      "VL_way_30292953-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_30292953-400"
+  },
+  "open_coupler_VL_way_32196554-400": {
+    "description": "Opening coupling breaker in 'MUHLBACH 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_32196554-400_COUPL' dans le poste 'MUHLBACH 400kV'",
+    "switches": {
+      "VL_way_32196554-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_32196554-400"
+  },
+  "open_coupler_VL_way_36805588-400": {
+    "description": "Opening coupling breaker in 'ARGOEUVES 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_36805588-400_COUPL' dans le poste 'ARGOEUVES 400kV'",
+    "switches": {
+      "VL_way_36805588-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_36805588-400"
+  },
+  "open_coupler_VL_way_432466512-400": {
+    "description": "Opening coupling breaker in 'OUDON 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_432466512-400_COUPL' dans le poste 'OUDON 400kV'",
+    "switches": {
+      "VL_way_432466512-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_432466512-400"
+  },
+  "open_coupler_VL_way_437091959-400": {
+    "description": "Opening coupling breaker in 'FLAMANVILLE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_437091959-400_COUPL' dans le poste 'FLAMANVILLE 400kV'",
+    "switches": {
+      "VL_way_437091959-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_437091959-400"
+  },
+  "open_coupler_VL_way_442651900-400": {
+    "description": "Opening coupling breaker in 'way_442651900-400 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_442651900-400_COUPL' dans le poste 'way_442651900-400 400kV'",
+    "switches": {
+      "VL_way_442651900-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_442651900-400"
+  },
+  "open_coupler_VL_way_448722478-400": {
+    "description": "Opening coupling breaker in 'CRUA5 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_448722478-400_COUPL' dans le poste 'CRUA5 400kV'",
+    "switches": {
+      "VL_way_448722478-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_448722478-400"
+  },
+  "open_coupler_VL_way_448722484-400": {
+    "description": "Opening coupling breaker in 'way_448722484-400 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_448722484-400_COUPL' dans le poste 'way_448722484-400 400kV'",
+    "switches": {
+      "VL_way_448722484-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_448722484-400"
+  },
+  "open_coupler_VL_way_44883864-400": {
+    "description": "Opening coupling breaker in 'LARCAY 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_44883864-400_COUPL' dans le poste 'LARCAY 400kV'",
+    "switches": {
+      "VL_way_44883864-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_44883864-400"
+  },
+  "open_coupler_VL_way_49049745-400": {
+    "description": "Opening coupling breaker in 'SIERENTZ 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_49049745-400_COUPL' dans le poste 'SIERENTZ 400kV'",
+    "switches": {
+      "VL_way_49049745-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_49049745-400"
+  },
+  "open_coupler_VL_way_56998024-400": {
+    "description": "Opening coupling breaker in 'ALBERTVILLE 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_56998024-400_COUPL' dans le poste 'ALBERTVILLE 400kV'",
+    "switches": {
+      "VL_way_56998024-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_56998024-400"
+  },
+  "open_coupler_VL_way_69813552-400": {
+    "description": "Opening coupling breaker in 'CHAMPAGNIER 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_69813552-400_COUPL' dans le poste 'CHAMPAGNIER 400kV'",
+    "switches": {
+      "VL_way_69813552-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_69813552-400"
+  },
+  "open_coupler_VL_way_71933086-400": {
+    "description": "Opening coupling breaker in 'BAYET 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_71933086-400_COUPL' dans le poste 'BAYET 400kV'",
+    "switches": {
+      "VL_way_71933086-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_71933086-400"
+  },
+  "open_coupler_VL_way_788298548-400": {
+    "description": "Opening coupling breaker in 'BOINVILLE-EN-MANTOIS 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_788298548-400_COUPL' dans le poste 'BOINVILLE-EN-MANTOIS 400kV'",
+    "switches": {
+      "VL_way_788298548-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_788298548-400"
+  },
+  "open_coupler_VL_way_79866837-400": {
+    "description": "Opening coupling breaker in 'CHESNOY (LE) 400kV' (11 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_79866837-400_COUPL' dans le poste 'CHESNOY (LE) 400kV'",
+    "switches": {
+      "VL_way_79866837-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_79866837-400"
+  },
+  "open_coupler_VL_way_81641090-400": {
+    "description": "Opening coupling breaker in 'VIGY 400kV' (10 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_81641090-400_COUPL' dans le poste 'VIGY 400kV'",
+    "switches": {
+      "VL_way_81641090-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_81641090-400"
+  },
+  "open_coupler_VL_way_81665271-400": {
+    "description": "Opening coupling breaker in 'BEZAUMONT 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_81665271-400_COUPL' dans le poste 'BEZAUMONT 400kV'",
+    "switches": {
+      "VL_way_81665271-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_81665271-400"
+  },
+  "open_coupler_VL_way_823662703-400": {
+    "description": "Opening coupling breaker in 'ST-VULBAS-EST 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_823662703-400_COUPL' dans le poste 'ST-VULBAS-EST 400kV'",
+    "switches": {
+      "VL_way_823662703-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_823662703-400"
+  },
+  "open_coupler_VL_way_823662705-400": {
+    "description": "Opening coupling breaker in 'EDITH 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_823662705-400_COUPL' dans le poste 'EDITH 400kV'",
+    "switches": {
+      "VL_way_823662705-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_823662705-400"
+  },
+  "open_coupler_VL_way_82599261-400": {
+    "description": "Opening coupling breaker in 'MERY-SUR-SEINE 400kV' (11 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82599261-400_COUPL' dans le poste 'MERY-SUR-SEINE 400kV'",
+    "switches": {
+      "VL_way_82599261-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82599261-400"
+  },
+  "open_coupler_VL_way_82741307-400": {
+    "description": "Opening coupling breaker in 'PLESSIS-GASSOT 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82741307-400_COUPL' dans le poste 'PLESSIS-GASSOT 400kV'",
+    "switches": {
+      "VL_way_82741307-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82741307-400"
+  },
+  "open_coupler_VL_way_82825438-400": {
+    "description": "Opening coupling breaker in 'LONNY 400kV' (11 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82825438-400_COUPL' dans le poste 'LONNY 400kV'",
+    "switches": {
+      "VL_way_82825438-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82825438-400"
+  },
+  "open_coupler_VL_way_82949228-400": {
+    "description": "Opening coupling breaker in 'MAZURES 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82949228-400_COUPL' dans le poste 'MAZURES 400kV'",
+    "switches": {
+      "VL_way_82949228-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82949228-400"
+  },
+  "open_coupler_VL_way_82949240-400": {
+    "description": "Opening coupling breaker in 'REVIN 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82949240-400_COUPL' dans le poste 'REVIN 400kV'",
+    "switches": {
+      "VL_way_82949240-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82949240-400"
+  },
+  "open_coupler_VL_way_82967739-400": {
+    "description": "Opening coupling breaker in 'MASTAING 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_82967739-400_COUPL' dans le poste 'MASTAING 400kV'",
+    "switches": {
+      "VL_way_82967739-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_82967739-400"
+  },
+  "open_coupler_VL_way_83293593-400": {
+    "description": "Opening coupling breaker in 'GENISSIAT-POSTE 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_83293593-400_COUPL' dans le poste 'GENISSIAT-POSTE 400kV'",
+    "switches": {
+      "VL_way_83293593-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_83293593-400"
+  },
+  "open_coupler_VL_way_83726363-400": {
+    "description": "Opening coupling breaker in 'RUEYRES 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_83726363-400_COUPL' dans le poste 'RUEYRES 400kV'",
+    "switches": {
+      "VL_way_83726363-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_83726363-400"
+  },
+  "open_coupler_VL_way_84153220-400": {
+    "description": "Opening coupling breaker in 'CREYS 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_84153220-400_COUPL' dans le poste 'CREYS 400kV'",
+    "switches": {
+      "VL_way_84153220-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_84153220-400"
+  },
+  "open_coupler_VL_way_84182609-400": {
+    "description": "Opening coupling breaker in 'G.ILE 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_84182609-400_COUPL' dans le poste 'G.ILE 400kV'",
+    "switches": {
+      "VL_way_84182609-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_84182609-400"
+  },
+  "open_coupler_VL_way_84452130-400": {
+    "description": "Opening coupling breaker in 'CHARPENAY 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_84452130-400_COUPL' dans le poste 'CHARPENAY 400kV'",
+    "switches": {
+      "VL_way_84452130-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_84452130-400"
+  },
+  "open_coupler_VL_way_84485792-400": {
+    "description": "Opening coupling breaker in 'PIVOZ-CORDIER 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_84485792-400_COUPL' dans le poste 'PIVOZ-CORDIER 400kV'",
+    "switches": {
+      "VL_way_84485792-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_84485792-400"
+  },
+  "open_coupler_VL_way_84490483-400": {
+    "description": "Opening coupling breaker in 'COULANGE 400kV' (12 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_84490483-400_COUPL' dans le poste 'COULANGE 400kV'",
+    "switches": {
+      "VL_way_84490483-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_84490483-400"
+  },
+  "open_coupler_VL_way_85047359-400": {
+    "description": "Opening coupling breaker in 'TERRIER 400kV' (12 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85047359-400_COUPL' dans le poste 'TERRIER 400kV'",
+    "switches": {
+      "VL_way_85047359-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85047359-400"
+  },
+  "open_coupler_VL_way_85203486-400": {
+    "description": "Opening coupling breaker in 'WARANDE 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85203486-400_COUPL' dans le poste 'WARANDE 400kV'",
+    "switches": {
+      "VL_way_85203486-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85203486-400"
+  },
+  "open_coupler_VL_way_85217416-400": {
+    "description": "Opening coupling breaker in 'CHEVALET 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85217416-400_COUPL' dans le poste 'CHEVALET 400kV'",
+    "switches": {
+      "VL_way_85217416-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85217416-400"
+  },
+  "open_coupler_VL_way_85273680-400": {
+    "description": "Opening coupling breaker in 'LATENA 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85273680-400_COUPL' dans le poste 'LATENA 400kV'",
+    "switches": {
+      "VL_way_85273680-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85273680-400"
+  },
+  "open_coupler_VL_way_85605950-400": {
+    "description": "Opening coupling breaker in 'AVELIN 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85605950-400_COUPL' dans le poste 'AVELIN 400kV'",
+    "switches": {
+      "VL_way_85605950-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85605950-400"
+  },
+  "open_coupler_VL_way_85710783-400": {
+    "description": "Opening coupling breaker in 'BARNABOS 400kV' (14 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85710783-400_COUPL' dans le poste 'BARNABOS 400kV'",
+    "switches": {
+      "VL_way_85710783-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85710783-400"
+  },
+  "open_coupler_VL_way_85821243-400": {
+    "description": "Opening coupling breaker in 'REMISE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85821243-400_COUPL' dans le poste 'REMISE 400kV'",
+    "switches": {
+      "VL_way_85821243-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85821243-400"
+  },
+  "open_coupler_VL_way_85827397-400": {
+    "description": "Opening coupling breaker in 'ROUGEMONTIER 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85827397-400_COUPL' dans le poste 'ROUGEMONTIER 400kV'",
+    "switches": {
+      "VL_way_85827397-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85827397-400"
+  },
+  "open_coupler_VL_way_85845085-400": {
+    "description": "Opening coupling breaker in 'MENUEL 400kV' (10 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85845085-400_COUPL' dans le poste 'MENUEL 400kV'",
+    "switches": {
+      "VL_way_85845085-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85845085-400"
+  },
+  "open_coupler_VL_way_85867971-400": {
+    "description": "Opening coupling breaker in 'TERRETTE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85867971-400_COUPL' dans le poste 'TERRETTE 400kV'",
+    "switches": {
+      "VL_way_85867971-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85867971-400"
+  },
+  "open_coupler_VL_way_85877326-400": {
+    "description": "Opening coupling breaker in 'LAUNAY 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85877326-400_COUPL' dans le poste 'LAUNAY 400kV'",
+    "switches": {
+      "VL_way_85877326-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85877326-400"
+  },
+  "open_coupler_VL_way_85895367-400": {
+    "description": "Opening coupling breaker in 'TOURBE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85895367-400_COUPL' dans le poste 'TOURBE 400kV'",
+    "switches": {
+      "VL_way_85895367-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85895367-400"
+  },
+  "open_coupler_VL_way_85995894-400": {
+    "description": "Opening coupling breaker in 'DOMLOUP 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_85995894-400_COUPL' dans le poste 'DOMLOUP 400kV'",
+    "switches": {
+      "VL_way_85995894-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_85995894-400"
+  },
+  "open_coupler_VL_way_86131984-400": {
+    "description": "Opening coupling breaker in 'QUINTES (LES) 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86131984-400_COUPL' dans le poste 'QUINTES (LES) 400kV'",
+    "switches": {
+      "VL_way_86131984-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86131984-400"
+  },
+  "open_coupler_VL_way_86260099-400": {
+    "description": "Opening coupling breaker in 'VERGER 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86260099-400_COUPL' dans le poste 'VERGER 400kV'",
+    "switches": {
+      "VL_way_86260099-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86260099-400"
+  },
+  "open_coupler_VL_way_86260748-400": {
+    "description": "Opening coupling breaker in 'DAMBRON 400kV' (5 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86260748-400_COUPL' dans le poste 'DAMBRON 400kV'",
+    "switches": {
+      "VL_way_86260748-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86260748-400"
+  },
+  "open_coupler_VL_way_86297273-400": {
+    "description": "Opening coupling breaker in 'GATINAIS 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86297273-400_COUPL' dans le poste 'GATINAIS 400kV'",
+    "switches": {
+      "VL_way_86297273-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86297273-400"
+  },
+  "open_coupler_VL_way_86342772-400": {
+    "description": "Opening coupling breaker in 'TABARDERIE 400kV' (9 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86342772-400_COUPL' dans le poste 'TABARDERIE 400kV'",
+    "switches": {
+      "VL_way_86342772-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86342772-400"
+  },
+  "open_coupler_VL_way_86344183-400": {
+    "description": "Opening coupling breaker in 'Poste électrique de Boismorand 400kV' (6 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_86344183-400_COUPL' dans le poste 'Poste électrique de Boismorand 400kV'",
+    "switches": {
+      "VL_way_86344183-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_86344183-400"
+  },
+  "open_coupler_VL_way_89022080-400": {
+    "description": "Opening coupling breaker in 'PORCHEVILLE 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_89022080-400_COUPL' dans le poste 'PORCHEVILLE 400kV'",
+    "switches": {
+      "VL_way_89022080-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_89022080-400"
+  },
+  "open_coupler_VL_way_93189928-400": {
+    "description": "Opening coupling breaker in 'NEOULES 400kV' (4 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_93189928-400_COUPL' dans le poste 'NEOULES 400kV'",
+    "switches": {
+      "VL_way_93189928-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_93189928-400"
+  },
+  "open_coupler_VL_way_98890904-400": {
+    "description": "Opening coupling breaker in 'GAUDIERE (LA) 400kV' (7 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_98890904-400_COUPL' dans le poste 'GAUDIERE (LA) 400kV'",
+    "switches": {
+      "VL_way_98890904-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_98890904-400"
+  },
+  "open_coupler_VL_way_99722046-400": {
+    "description": "Opening coupling breaker in 'DISTRE 400kV' (8 branches, split into 2 nodes)",
+    "description_unitaire": "Ouverture du couplage 'VL_way_99722046-400_COUPL' dans le poste 'DISTRE 400kV'",
+    "switches": {
+      "VL_way_99722046-400_COUPL": true
+    },
+    "VoltageLevelId": "VL_way_99722046-400"
   }
 }

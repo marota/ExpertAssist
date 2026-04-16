@@ -60,15 +60,18 @@ OUT_DIR = os.path.join(BASE_DIR, "data", "pypsa_eur_fr400")
 MIN_BRANCHES = 4  # Minimum branches for double-busbar topology
 
 # ---------------------------------------------------------------------------
-# Step 1: Run full pipeline up to limits
+# Step 1: Load the network (already has limits from convert_pypsa_to_xiidm.py)
 # ---------------------------------------------------------------------------
 log.info("=" * 70)
-log.info("Step 1 -- Running add_limits_and_overloads.py to get network with limits")
+log.info("Step 1 -- Loading network with calibrated limits")
 log.info("=" * 70)
 
 os.chdir(BASE_DIR)
-exec(open(os.path.join(BASE_DIR, "scripts", "add_limits_and_overloads.py")).read())
-# After exec, 'n' is the network with limits and geographic dispatch applied
+xiidm_path = os.path.join(OUT_DIR, "network.xiidm")
+n = pp.network.load(xiidm_path)
+log.info(f"  Loaded: {xiidm_path}")
+log.info(f"  {len(n.get_buses())} buses, {len(n.get_lines())} lines, "
+         f"{len(n.get_2_windings_transformers())} trafos, {len(n.get_switches())} switches")
 
 log.info("")
 log.info("=" * 70)
