@@ -183,12 +183,15 @@ Cumulative gains delivered by subsequent commits on the same branch
 | v7 | 21 174 ms | baseline | parallel XHRs + text-format |
 | v8 | 20 535 ms | −639 ms | NAD prefetch during `/api/config` |
 | v9 | 17 966 ms | −3 208 ms | mutualise `_base_network` ↔ `network_service.network` |
-| v10 | **17 384 ms** | **−3 790 ms (−18 %)** | share Network with grid2op backend (eliminate 3rd parse) |
+| v10 | 17 384 ms | −3 790 ms (−18 %) | share Network with grid2op backend (eliminate 3rd parse) |
 | v11 (attempt) | 19 071 ms | −2 103 ms | ⚠️ **REVERTED** — isolated Network per thread regressed by +1.7 s vs v10. See `docs/perf-isolated-nad-worker-rejected.md`. |
+| v12 (attempt) | 19 185 ms | −1 989 ms | ⚠️ **REVERTED** — deferred `detect_non_reconnectable_lines` to a background worker, but JVM contention inflated the 4 parallel XHRs by +2 s. See `docs/perf-deferred-non-reconnectable-detection-rejected.md` (pending). |
+| **v13 (expected)** | **~15.2 s** | **~−6 s (−28 %)** | **Fix broken fast path in upstream `detect_non_reconnectable_lines` (−2.2 s on env setup). See `docs/perf-detect-non-reconnectable-fast-path.md`.** |
 
-**Final optimised state: v10 = commit `65ea850`.**
+**Current optimised state: v13 pending trace (commit `0fb4e62f` upstream + Co-Study4Grid bump).**
 
 Critical path v6 → v10: **24.0 s → 17.4 s (−6.6 s / −28 %)**.
+Projected v6 → v13: **24.0 s → ~15.2 s (−8.8 s / −37 %)**.
 
 ## What this does NOT change
 
