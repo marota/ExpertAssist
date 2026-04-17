@@ -1194,6 +1194,8 @@ function App() {
               onOpenSettings={handleOpenSettings}
               onUpdateCombinedEstimation={handleUpdateCombinedEstimation}
               displayName={displayName}
+              onActionDiagramPrimed={diagrams.primeActionDiagram}
+              voltageLevelsLength={voltageLevels.length}
             />
           </div>
         </div>

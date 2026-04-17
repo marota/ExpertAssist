@@ -72,7 +72,11 @@ change does NOT save pypowsybl compute; the win is:
 mirrors the existing `runAnalysisStep2Stream` pattern (fetch with
 NDJSON response, caller reads with `TextDecoder` + `split('\n')`).
 
-`useDiagrams.handleActionSelect` keeps the two-tier strategy:
+The streamed endpoint is consumed from **two** call sites:
+
+### 1. `useDiagrams.handleActionSelect` fallback (initial commit `38614e1`)
+
+Two-tier strategy:
 
 1. **Fast path** — try `getActionVariantDiagram(actionId)` first. If
    the action is in `_last_result["prioritized_actions"]` (i.e. the
@@ -84,9 +88,47 @@ NDJSON response, caller reads with `TextDecoder` + `split('\n')`).
    soon as simulation completes; the diagram event updates the active
    tab's SVG when the NAD is ready.
 
-The old `api.simulateManualAction` is **kept** — other call sites may
-use it (e.g. interactive re-simulation with different `target_mw` /
-`target_tap` values) and removing it is out of scope.
+### 2. `ActionFeed` Add-action / re-simulate handlers (follow-up)
+
+The v6 trace showed a second common entry point: the user types/picks
+a manual action in the `+ Manual Selection` dropdown. Here the
+original flow was:
+
+- Add the action → `api.simulateManualAction` fires (3 s) → card shows rho
+- User clicks the card → `getActionVariantDiagram` fires (5 s) → SVG shows
+
+Two sequential user gestures, two sequential XHRs. On `ec51ecd` this
+flow didn't benefit from the new combined endpoint because `useDiagrams`
+only hits it in the fallback branch, and the fast path succeeded once
+simulate had stored the observation.
+
+The follow-up change wires a **diagram pre-fetch cache** in `useDiagrams`:
+
+- `useDiagrams` exposes `primeActionDiagram(actionId, diagram, vlLength)`
+  and an internal `Map<actionId, DiagramData>` ref that is cleared
+  whenever `selectedBranch` changes.
+- `ActionFeed` receives the primer and `voltageLevelsLength` as optional
+  props. When both are wired, its three simulate-firing handlers
+  (Add, target-MW re-sim, PST-tap re-sim) stream the combined endpoint
+  instead of firing `simulateManualAction`:
+  - `metrics` event → used as before to populate the sidebar card
+  - `diagram` event → handed to the primer callback, processed with
+    `processSvg`, cached
+- `useDiagrams.handleActionSelect` checks the cache before its fast
+  path; on hit, it paints the SVG instantly with no XHR and no server
+  pypowsybl work.
+
+Result: the click-after-add now lands on a **cache hit** if the user
+waited long enough for the server diagram event to arrive. On large
+grids this is ~5 s of wait after simulate completed; if the user takes
+at least that long to read the card before clicking, the click is
+effectively free.
+
+The legacy single-shot `api.simulateManualAction` is **kept** as the
+fallback when `onActionDiagramPrimed` is not wired (older tests and
+potential other call sites). `CombinedActionsModal` still uses it
+directly — combined-pair simulation is a separate UX surface with its
+own modal; out of scope for this change.
 
 ## Files changed
 
@@ -94,33 +136,40 @@ use it (e.g. interactive re-simulation with different `target_mw` /
 |---|---|
 | `expert_backend/main.py` | New `SimulateAndVariantDiagramRequest` model + `POST /api/simulate-and-variant-diagram` endpoint (StreamingResponse). |
 | `frontend/src/api.ts` | New `simulateAndVariantDiagramStream` helper. |
-| `frontend/src/hooks/useDiagrams.ts` | Fallback branch in `handleActionSelect` replaced with NDJSON stream reader. Fast path unchanged. |
+| `frontend/src/hooks/useDiagrams.ts` | Fallback branch in `handleActionSelect` replaced with NDJSON stream reader; new `actionDiagramCacheRef` + `primeActionDiagram` callback; `handleActionSelect` now checks cache before the fast path; cache auto-clears on `selectedBranch` change. |
 | `frontend/src/hooks/useDiagrams.test.ts` | Mock api now includes `simulateAndVariantDiagramStream`. |
-| `expert_backend/tests/test_api_endpoints.py` | New `TestSimulateAndVariantDiagramStream` (5 tests). |
+| `frontend/src/components/ActionFeed.tsx` | New optional props `onActionDiagramPrimed` + `voltageLevelsLength`. Three simulate-firing handlers (Add / target-MW / PST-tap) now stream the combined endpoint when the primer is wired; legacy `simulateManualAction` call kept as fallback with exact original arity. |
+| `frontend/src/components/ActionFeed.test.tsx` | Two new tests: streamed path fires combined endpoint + primes cache; fallback preserved when primer not wired. |
+| `frontend/src/App.tsx` | Wires `diagrams.primeActionDiagram` and `voltageLevels.length` into `<ActionFeed>`. |
+| `expert_backend/tests/test_api_endpoints.py` | `TestSimulateAndVariantDiagramStream` (5 tests). |
 
 ## Measured impact
 
-Not yet captured as a trace — the v3 action-path numbers are the
-baseline:
+Baseline (v6 traces, current branch tip before this follow-up):
 
-| XHR | v3 wall-clock |
+| XHR on Add → click sequence | v6 wall-clock |
 |---|---|
-| `/api/simulate-manual-action` | 3 412 ms |
-| `/api/action-variant-diagram` | 4 933 ms |
-| **Combined sequential** | **~8.3 s** |
+| `/api/simulate-manual-action` | 3 387 ms |
+| `/api/action-variant-diagram` | 5 515 ms |
+| **Total, two XHRs sequential** | **~8.9 s** |
 
-Expected after this change:
+After the pre-fetch change (expected, not yet traced):
 
-- Same total compute time (both service methods still run).
-- One XHR instead of two. Body: NDJSON stream.
-- Sidebar card metrics visible ~5 s earlier.
-- Wall-clock saving on the first `diagram` byte: limited to the
-  round-trip gap (10-50 ms localhost, 100-500 ms real deployment).
+| User timing | Click-to-diagram wait |
+|---|---|
+| User clicks IMMEDIATELY after Add completes (0 ms think time) | Still ~5.5 s — stream is mid-flight, handleActionSelect falls through to fast path and a second `getActionVariantDiagram` may race the stream's diagram event (server generates twice). Functionally correct, not faster. |
+| User clicks 5 s AFTER Add completes (typical pause to read card) | ~0 ms — cache hit, SVG paints instantly. |
+| User never clicks the card | Wasted server work: one NAD generated for nothing. |
 
-The end-to-end wall-clock for the full operation is essentially
-unchanged — the point of the change is **perceived latency**: the user
-sees meaningful UI feedback at ~3.4 s instead of ~8.3 s on the fallback
-path.
+The middle case is the realistic operator workflow and saves the full
+~5 s of post-action NAD regeneration on the click. Server compute for
+the Add itself is unchanged (grid2op + pypowsybl both still run; we
+just stream them in one HTTP response instead of two).
+
+For the fallback-path (session reload, or any click where
+`getActionVariantDiagram` 404's), the `38614e1` commit already saves
+one round-trip + streams metrics early. The cache-priming commit is
+additive: same endpoint, wider set of callers.
 
 ## What this does NOT change
 

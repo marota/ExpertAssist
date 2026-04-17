@@ -155,6 +155,12 @@ export interface DiagramsState {
 
   // Internal ref for SLD selectedBranch
   selectedBranchForSld: MutableRefObject<string>;
+
+  // Cache primer — ActionFeed calls this with the diagram event from the
+  // streamed simulate-and-variant-diagram endpoint. A subsequent click
+  // on the same action card is served from cache (no XHR, no pypowsybl).
+  // Cache is automatically cleared when `selectedBranch` changes.
+  primeActionDiagram: (actionId: string, diagram: DiagramData, voltageLevelsLength: number) => void;
 }
 
 export function useDiagrams(
@@ -245,6 +251,35 @@ export function useDiagrams(
   // Branch refs
   const committedBranchRef = useRef('');
   const restoringSessionRef = useRef(false);
+
+  // Action-variant diagram cache. Populated by ActionFeed when it adds or
+  // re-simulates a manual action through the streamed
+  // `simulateAndVariantDiagramStream` endpoint — the `{type:"diagram",...}`
+  // event yields a ready-to-render diagram while the user is still reading
+  // the sidebar card. If the user subsequently clicks that card,
+  // `handleActionSelect` reads the cache and paints the SVG instantly,
+  // saving the 5-7 s server-side pypowsybl NAD regeneration that the fast
+  // path (`getActionVariantDiagram`) would otherwise trigger.
+  //
+  // Keyed by action id. Values are ALREADY processed (processSvg ran, so
+  // the entry has `originalViewBox` and the scaled SVG). Cleared whenever
+  // the contingency changes so a stale post-action NAD from a previous
+  // N-1 can't leak through.
+  const actionDiagramCacheRef = useRef<Map<string, DiagramData>>(new Map());
+  useEffect(() => {
+    actionDiagramCacheRef.current.clear();
+  }, [selectedBranch]);
+
+  // Exposed to ActionFeed via App.tsx props: processes the raw NDJSON
+  // diagram event's SVG and stores it for later click-to-view.
+  const primeActionDiagram = useCallback((actionId: string, raw: DiagramData, voltageLevelsLength: number) => {
+    try {
+      const { svg, viewBox } = processSvg(raw.svg, voltageLevelsLength);
+      actionDiagramCacheRef.current.set(actionId, { ...raw, svg, originalViewBox: viewBox });
+    } catch (e) {
+      console.warn('[primeActionDiagram] processSvg failed for', actionId, e);
+    }
+  }, []);
 
   // Voltage filter
   const [nominalVoltageMap, setNominalVoltageMap] = useState<Record<string, number>>({});
@@ -349,6 +384,16 @@ export function useDiagrams(
     // existing render path.
     if (!isActionDetached) {
       setActiveTab('action');
+    }
+    // Fast path #0: ActionFeed may have already fetched and processed
+    // the post-action diagram while the user was still reading the
+    // sidebar card (via the streamed simulate-and-variant-diagram
+    // endpoint). If so, paint it instantly — no XHR, no extra pypowsybl.
+    const cached = actionDiagramCacheRef.current.get(actionId);
+    if (cached) {
+      setActionDiagram(cached);
+      setActionDiagramLoading(false);
+      return;
     }
     try {
       const res = await api.getActionVariantDiagram(actionId);
@@ -913,6 +958,7 @@ export function useDiagrams(
     zoomToElement,
     inspectableItems,
     selectedBranchForSld,
+    primeActionDiagram,
   }), [
     activeTab, nDiagram, n1Diagram, n1Loading,
     selectedActionId, actionDiagram, actionDiagramLoading, actionViewMode, handleViewModeChange,
@@ -926,5 +972,6 @@ export function useDiagrams(
     handleAssetClick, zoomToElement, inspectableItems,
     selectedBranchForSld, setVlOverlay,
     setInspectQueryForTab,
+    primeActionDiagram,
   ]);
 }
