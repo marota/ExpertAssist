@@ -830,10 +830,13 @@ class AnalysisMixin:
             raise e
 
     def run_analysis_step2(self, selected_overloads: list[str], all_overloads: list[str] = None, monitor_deselected: bool = False):
-        """Runs the second step of analysis: graph generation and action discovery."""
-        # Same guard as step1: any stray variant mutations from NAD prefetch
-        # or a prior suggestion run must be settled before we read obs.
-        self._ensure_n_state_ready()
+        """Runs the second step of analysis: graph generation and action discovery.
+
+        No `_ensure_*_state_ready` guard here: step2 inherits the
+        `_analysis_context` (observations, monitored lines, …) that
+        step1 has already positioned. The NAD prefetch worker was
+        already drained by step1's guard earlier in the same session.
+        """
         if not self._analysis_context:
             raise ValueError("Analysis context not found. Run step 1 first.")
         

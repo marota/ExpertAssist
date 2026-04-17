@@ -525,3 +525,54 @@ class TestVariantRestorationIsSafeOnException:
                 service._get_n1_variant("LINE_A")
 
         fake_net.set_working_variant.assert_any_call("InitialState")
+
+
+class TestEnsureN1StateReady:
+    """`_ensure_n1_state_ready(disconnected_element)` is used by
+    `simulate_manual_action` and `compute_superposition` — they operate
+    on top of a known contingency, so the natural entry state is N-1
+    (not N). The guard drains the NAD prefetch worker, then positions
+    the shared Network on the N-1 variant for the given contingency."""
+
+    def test_drains_prefetch_then_positions_n1_variant(self):
+        service = RecommenderService()
+        fake_net = MagicMock(name="shared_network")
+        service._base_network = fake_net
+
+        with patch.object(service, "_drain_pending_base_nad_prefetch") as drain, \
+             patch.object(service, "_get_n1_variant", return_value="N_1_state_LINE_A") as n1:
+            service._ensure_n1_state_ready("LINE_A")
+
+            drain.assert_called_once()
+            n1.assert_called_once_with("LINE_A")
+            fake_net.set_working_variant.assert_called_once_with("N_1_state_LINE_A")
+
+    def test_is_noop_before_any_network_is_loaded(self):
+        service = RecommenderService()
+        assert service._base_network is None
+        saved_env_path = getattr(config, "ENV_PATH", None)
+        try:
+            config.ENV_PATH = None
+            service._ensure_n1_state_ready("LINE_A")  # Must not raise.
+        finally:
+            config.ENV_PATH = saved_env_path
+
+    def test_drain_only_when_disconnected_element_is_empty(self):
+        """If the caller has no contingency in hand (e.g. an odd fallback
+        path), drain but don't attempt to position — there's no
+        meaningful N-1 to ask for."""
+        service = RecommenderService()
+        service._base_network = MagicMock(name="net")
+        with patch.object(service, "_drain_pending_base_nad_prefetch") as drain, \
+             patch.object(service, "_get_n1_variant") as n1:
+            service._ensure_n1_state_ready("")
+
+            drain.assert_called_once()
+            n1.assert_not_called()
+
+    def test_swallows_and_logs_variant_positioning_errors(self):
+        service = RecommenderService()
+        service._base_network = MagicMock(name="net")
+        with patch.object(service, "_drain_pending_base_nad_prefetch"), \
+             patch.object(service, "_get_n1_variant", side_effect=RuntimeError("LF diverged")):
+            service._ensure_n1_state_ready("LINE_A")  # Must not re-raise.

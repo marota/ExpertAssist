@@ -74,19 +74,21 @@ détenteurs :
 `SimulationEnvironment` reçoit une deep-copy. Coût ~500 ms vs ~3 s de
 parse frais — toujours un gain net si on doit y recourir un jour.
 
-## Garde « variant-state » (commit suivant)
+## Gardes « variant-state » (commit suivant)
 
 Le partage du Network introduit un risque théorique : si un endpoint
 d'analyse ou de simulation arrive pendant que le worker NAD est
 encore en train de modifier le variant (même brièvement), la
 lecture d'observation côté grid2op peut voir un état incohérent.
 Pour éliminer ce risque, chaque entrée d'analyse/simulation passe
-désormais par un garde :
+désormais par un garde **adapté à la sémantique de l'endpoint** :
+
+### `_ensure_n_state_ready()` — entrées qui démarrent en N
 
 ```python
 def _ensure_n_state_ready(self):
     """Drain the NAD prefetch worker and position the shared Network
-    on the N variant before the caller starts reading observations."""
+    on the N variant."""
     self._drain_pending_base_nad_prefetch()
     if self._base_network is None and config.ENV_PATH is None:
         return  # No study loaded yet; noop.
@@ -99,11 +101,41 @@ def _ensure_n_state_ready(self):
 
 Appelé au tout début de :
 
-- `run_analysis` (full analysis legacy)
-- `run_analysis_step1` (overload detection)
-- `run_analysis_step2` (action resolution)
-- `simulate_manual_action` (manual/combined action simulation)
-- `compute_superposition` (on-demand pair estimation)
+- `run_analysis` (full analysis legacy) — démarre en N, calcule le contingency.
+- `run_analysis_step1` (overload detection) — idem.
+
+### `_ensure_n1_state_ready(disconnected_element)` — entrées qui démarrent en N-1
+
+```python
+def _ensure_n1_state_ready(self, disconnected_element: str):
+    """Drain the NAD prefetch worker and position the shared Network
+    on the N-1 variant for `disconnected_element`."""
+    self._drain_pending_base_nad_prefetch()
+    if self._base_network is None and config.ENV_PATH is None:
+        return
+    if not disconnected_element:
+        return  # No contingency in hand — drain-only.
+    try:
+        n = self._get_base_network()
+        n.set_working_variant(self._get_n1_variant(disconnected_element))
+    except Exception as e:
+        logger.warning(f"Could not position N-1 variant for {disconnected_element!r}: {e}")
+```
+
+Appelé au tout début de :
+
+- `simulate_manual_action(raw_action_id, disconnected_element, …)` — simule
+  une action **sur** un contingency connu : l'état d'entrée naturel est N-1.
+- `compute_superposition(action1_id, action2_id, disconnected_element)` — idem.
+
+### Pas de garde
+
+- `run_analysis_step2` — hérite le `_analysis_context` positionné par step1
+  (observations déjà capturées, plus de lecture sur le réseau pypowsybl à
+  faire). Le worker NAD a déjà été drainé par la garde de step1 dans la
+  même session.
+
+### Sécurité anti-divergence LF
 
 Complément : `_get_n_variant` et `_get_n1_variant` encapsulent maintenant
 leur `set_working_variant` + AC load-flow dans un `try/finally` pour

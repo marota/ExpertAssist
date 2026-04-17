@@ -563,10 +563,12 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         """Guarantee the shared pypowsybl Network is positioned on the N
         variant with no background work still touching it.
 
-        Called at the entry of every analyze/suggest/simulate HTTP endpoint
-        so concurrent background work (specifically the NAD prefetch worker
-        spawned by `update_config`) cannot leave the shared Network on an
-        unexpected variant when the endpoint's first variant read executes.
+        Called at the entry of `run_analysis` and `run_analysis_step1`,
+        which start from a fresh N state before computing the
+        contingency. `simulate_manual_action` and `compute_superposition`
+        use `_ensure_n1_state_ready(disconnected_element)` instead —
+        they operate on top of an already-known contingency and the
+        natural entry state is N-1.
 
         Steps:
 
@@ -598,6 +600,40 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
             # loadable — log and let downstream code raise with a clearer
             # message.
             logger.warning(f"[_ensure_n_state_ready] Could not position N variant: {e}")
+
+    def _ensure_n1_state_ready(self, disconnected_element: str):
+        """Guarantee the shared pypowsybl Network is positioned on the
+        N-1 variant for `disconnected_element` with no background work
+        still touching it.
+
+        Called at the entry of `simulate_manual_action` and
+        `compute_superposition`, whose natural entry state is N-1:
+        they simulate actions ON TOP of a contingency that is already
+        the subject of the current analysis session.
+
+        Same drain-then-position pattern as `_ensure_n_state_ready`,
+        just with `_get_n1_variant(disconnected_element)` as the target.
+        Creating the N-1 variant on a cold cache triggers an AC load
+        flow (~2-5 s on large grids) — that's a one-off cost amortised
+        across every subsequent action simulation against this
+        contingency.
+        """
+        self._drain_pending_base_nad_prefetch()
+        if self._base_network is None and getattr(config, 'ENV_PATH', None) is None:
+            return
+        if not disconnected_element:
+            # Nothing to position on — simulation endpoints do pass a
+            # contingency; an empty string here means the caller
+            # skipped the analysis flow entirely. Drain-only, no
+            # variant assertion.
+            return
+        try:
+            n = self._get_base_network()
+            n1_variant = self._get_n1_variant(disconnected_element)
+            n.set_working_variant(n1_variant)
+        except Exception as e:
+            logger.warning(f"[_ensure_n1_state_ready] Could not position N-1 variant "
+                           f"for {disconnected_element!r}: {e}")
 
     def _get_simulation_env(self):
         """Return a SimulationEnvironment instance, caching it."""
