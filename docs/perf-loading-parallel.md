@@ -184,6 +184,9 @@ Cumulative gains delivered by subsequent commits on the same branch
 | v8 | 20 535 ms | −639 ms | NAD prefetch during `/api/config` |
 | v9 | 17 966 ms | −3 208 ms | mutualise `_base_network` ↔ `network_service.network` |
 | v10 | **17 384 ms** | **−3 790 ms (−18 %)** | share Network with grid2op backend (eliminate 3rd parse) |
+| v11 (attempt) | 19 071 ms | −2 103 ms | ⚠️ **REVERTED** — isolated Network per thread regressed by +1.7 s vs v10. See `docs/perf-isolated-nad-worker-rejected.md`. |
+
+**Final optimised state: v10 = commit `65ea850`.**
 
 Critical path v6 → v10: **24.0 s → 17.4 s (−6.6 s / −28 %)**.
 
