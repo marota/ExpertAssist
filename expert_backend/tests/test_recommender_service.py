@@ -423,8 +423,6 @@ class TestUpdateConfigSharesNetworkWithGrid2op:
             "expert_op4grid_recommender.environment_pypowsybl.setup_environment_configs_pypowsybl"
         ) as mock_setup, patch.object(
             service, "prefetch_base_nad_async"
-        ), patch.object(
-            service, "prefetch_non_reconnectable_lines_async"
         ):
             mock_setup.return_value = (
                 MagicMock(),  # env
@@ -445,10 +443,6 @@ class TestUpdateConfigSharesNetworkWithGrid2op:
             mock_setup.assert_called_once()
             call_kwargs = mock_setup.call_args.kwargs
             assert call_kwargs.get("network") is preloaded
-            # AND it MUST receive skip_non_reconnectable_detection=True —
-            # the topology walk now runs in a background thread spawned by
-            # `update_config`. See docs/perf-deferred-non-reconnectable-detection.md.
-            assert call_kwargs.get("skip_non_reconnectable_detection") is True
 
 
 
@@ -582,121 +576,3 @@ class TestEnsureN1StateReady:
         with patch.object(service, "_drain_pending_base_nad_prefetch"), \
              patch.object(service, "_get_n1_variant", side_effect=RuntimeError("LF diverged")):
             service._ensure_n1_state_ready("LINE_A")  # Must not re-raise.
-
-
-class TestPrefetchNonReconnectableLines:
-    """`prefetch_non_reconnectable_lines_async()` runs the ~2-10 s
-    topology walk (`env.network_manager.detect_non_reconnectable_lines()`)
-    in a background thread AFTER `/api/config` returns, invisible to
-    the user. The result is merged into
-    `_cached_env_context['lines_non_reconnectable']`. See
-    docs/perf-deferred-non-reconnectable-detection.md."""
-
-    def _make_env_context(self, detected, existing=None, raise_exc=None):
-        """Build a fake `_cached_env_context` whose `env.network_manager
-        .detect_non_reconnectable_lines()` returns `detected`."""
-        env = MagicMock(name="env")
-        if raise_exc is not None:
-            env.network_manager.detect_non_reconnectable_lines.side_effect = raise_exc
-        else:
-            env.network_manager.detect_non_reconnectable_lines.return_value = detected
-        return {
-            "env": env,
-            "lines_non_reconnectable": list(existing or []),
-            "lines_we_care_about": [],
-            "path_chronic": "/tmp",
-            "chronic_name": "chronic",
-            "custom_layout": None,
-        }
-
-    def test_noop_when_env_context_missing(self):
-        service = RecommenderService()
-        service._cached_env_context = None
-        service.prefetch_non_reconnectable_lines_async()
-        # No thread was started.
-        assert service._non_reconnectable_detection_thread is None
-
-    def test_worker_merges_detected_lines_into_context(self):
-        service = RecommenderService()
-        service._cached_env_context = self._make_env_context(
-            detected=["L_topo_1", "L_topo_2"],
-            existing=["L_csv_1"],
-        )
-
-        service.prefetch_non_reconnectable_lines_async()
-        service._drain_pending_non_reconnectable_detection(timeout=5)
-
-        merged = service._cached_env_context["lines_non_reconnectable"]
-        # CSV line preserved + topology-detected appended, no dupes.
-        assert "L_csv_1" in merged
-        assert "L_topo_1" in merged
-        assert "L_topo_2" in merged
-        assert len(merged) == 3
-
-    def test_worker_is_idempotent_on_duplicate_detection(self):
-        """If the topology detection returns a line already in the CSV
-        list, it MUST NOT be duplicated."""
-        service = RecommenderService()
-        service._cached_env_context = self._make_env_context(
-            detected=["L_shared"],
-            existing=["L_shared"],
-        )
-
-        service.prefetch_non_reconnectable_lines_async()
-        service._drain_pending_non_reconnectable_detection(timeout=5)
-
-        merged = service._cached_env_context["lines_non_reconnectable"]
-        assert merged.count("L_shared") == 1
-
-    def test_worker_swallows_exceptions_and_keeps_csv_list(self):
-        """If `detect_non_reconnectable_lines()` raises, the worker must
-        NOT propagate — the CSV-loaded list stays intact so downstream
-        analysis can proceed with slightly degraded non-reco coverage."""
-        service = RecommenderService()
-        service._cached_env_context = self._make_env_context(
-            detected=None,
-            existing=["L_csv_only"],
-            raise_exc=RuntimeError("topology walk crashed"),
-        )
-
-        # Must not raise.
-        service.prefetch_non_reconnectable_lines_async()
-        service._drain_pending_non_reconnectable_detection(timeout=5)
-
-        # CSV list preserved; nothing appended.
-        assert service._cached_env_context["lines_non_reconnectable"] == ["L_csv_only"]
-
-    def test_ensure_n_state_ready_drains_the_worker(self):
-        """The variant-state guard MUST drain the deferred detection
-        worker so `run_analysis_step1` sees the merged list."""
-        service = RecommenderService()
-        service._cached_env_context = self._make_env_context(
-            detected=["L_topo"], existing=[],
-        )
-        service._base_network = MagicMock()
-
-        service.prefetch_non_reconnectable_lines_async()
-
-        # Calling the guard must block until the worker is done.
-        with patch.object(service, "_get_n_variant", return_value="N_state_cached"):
-            service._ensure_n_state_ready()
-
-        thread = service._non_reconnectable_detection_thread
-        assert thread is None or not thread.is_alive()
-        merged = service._cached_env_context["lines_non_reconnectable"]
-        assert "L_topo" in merged
-
-    def test_reset_drains_the_worker_before_clearing_state(self):
-        """A dangling worker that finishes after reset() would write its
-        detected lines into the NEXT study's context. reset() must
-        join it first."""
-        service = RecommenderService()
-        service._cached_env_context = self._make_env_context(
-            detected=["L_topo"], existing=[],
-        )
-
-        service.prefetch_non_reconnectable_lines_async()
-        service.reset()
-
-        assert service._non_reconnectable_detection_thread is None
-        assert service._non_reconnectable_detection_event is None

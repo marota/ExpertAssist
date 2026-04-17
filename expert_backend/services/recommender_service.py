@@ -82,20 +82,14 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         self._prefetched_base_nad_error = None  # Exception if the prefetch thread failed
         self._prefetched_base_nad_event = None  # threading.Event signalling completion
         self._prefetched_base_nad_thread = None # threading.Thread handle (join on reset)
-        # Deferred non-reconnectable-lines detection (populated by
-        # `prefetch_non_reconnectable_lines_async` AFTER `/api/config` returns,
-        # consumed by the first `run_analysis_step1`). See
-        # docs/perf-deferred-non-reconnectable-detection.md.
-        self._non_reconnectable_detection_event = None   # threading.Event signalling completion
-        self._non_reconnectable_detection_thread = None  # threading.Thread handle (join on reset)
 
     def reset(self):
         """Clear all cached analysis state. Called when loading a new study."""
-        # Drain any in-flight background threads BEFORE we tear down the
-        # state they write into. A dangling thread that finishes after
-        # reset() would leak its result into the next study.
+        # Drain any in-flight NAD prefetch thread BEFORE we tear down the
+        # network it depends on. A dangling thread that finishes after
+        # reset() would write into the next study's `_prefetched_base_nad`
+        # and serve stale SVG.
         self._drain_pending_base_nad_prefetch()
-        self._drain_pending_non_reconnectable_detection()
 
         self._last_result = None
         self._is_running = False
@@ -118,9 +112,6 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         self._prefetched_base_nad_error = None
         self._prefetched_base_nad_event = None
         self._prefetched_base_nad_thread = None
-
-        self._non_reconnectable_detection_event = None
-        self._non_reconnectable_detection_thread = None
 
     # ------------------------------------------------------------------
     # Base-NAD prefetch (concurrent with update_config's env-setup phase)
@@ -222,101 +213,6 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         if self._prefetched_base_nad_error is not None:
             raise self._prefetched_base_nad_error
         return self._prefetched_base_nad
-
-    # ------------------------------------------------------------------
-    # Deferred non-reconnectable-lines detection
-    # ------------------------------------------------------------------
-    #
-    # `env.network_manager.detect_non_reconnectable_lines()` is a topology-only
-    # walk that takes ~2-10 s on large grids (France 400 kV). Historically it
-    # ran INSIDE `setup_environment_configs_pypowsybl()` which inflated
-    # `/api/config` wall-clock by the same amount.
-    #
-    # Observation: the detection is only needed by `run_analysis_step1` (used
-    # to decide which lines CAN be reconnected as remedial actions). Between
-    # `/api/config` response and the first `step1` call, the user spends
-    # typically 5-15 s rendering the diagram + inspecting contingencies —
-    # idle server time in which the detection can run invisibly.
-    #
-    # Pattern:
-    #   1. `update_config` passes `skip_non_reconnectable_detection=True` to
-    #      the upstream helper → returns the CSV-loaded list only (fast).
-    #   2. Immediately after `update_config` returns, spawn a background
-    #      worker that calls `env.network_manager.detect_non_reconnectable_lines()`
-    #      and appends the result to `_cached_env_context['lines_non_reconnectable']`.
-    #   3. `_ensure_n_state_ready()` (the guard at the start of
-    #      `run_analysis` / `run_analysis_step1`) drains the worker before
-    #      the analysis reads the list. Worst case: user is faster than
-    #      the worker and waits a few seconds — same wall-clock as before
-    #      the deferral. Best case (typical): worker is done well before,
-    #      zero-cost win of ~2-10 s on `/api/config`.
-    #
-    # See docs/perf-deferred-non-reconnectable-detection.md.
-
-    def _drain_pending_non_reconnectable_detection(self, timeout=60):
-        """Wait for the deferred non-reconnectable-detection worker to finish.
-        Called by `reset()` and by the variant-state guards.
-
-        Safe to call when no worker is running (noop).
-        """
-        thread = self._non_reconnectable_detection_thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=timeout)
-
-    def prefetch_non_reconnectable_lines_async(self):
-        """Run `env.network_manager.detect_non_reconnectable_lines()` in a
-        background thread. Results are appended to
-        `self._cached_env_context['lines_non_reconnectable']` when ready.
-
-        Designed to be called by `update_config` RIGHT AFTER the env setup
-        returns. The user sees the `/api/config` response immediately while
-        this thread runs during client-side render + user inspection.
-
-        Noop if `_cached_env_context` is None or does not contain an env.
-        """
-        import threading
-
-        self._drain_pending_non_reconnectable_detection()
-
-        env_context = self._cached_env_context
-        if env_context is None or env_context.get('env') is None:
-            return
-
-        event = threading.Event()
-        self._non_reconnectable_detection_event = event
-
-        def _worker():
-            try:
-                env = env_context['env']
-                detected = env.network_manager.detect_non_reconnectable_lines()
-                if detected:
-                    # Re-read the list from the context (it may have been
-                    # mutated elsewhere) and merge without duplicates.
-                    existing = env_context.get('lines_non_reconnectable', []) or []
-                    merged = list(existing)
-                    for line in detected:
-                        if line not in merged:
-                            merged.append(line)
-                    env_context['lines_non_reconnectable'] = merged
-                    logger.info(
-                        f"[non_reconnectable_detection] Merged {len(detected)} "
-                        f"topology-detected lines into env context (was "
-                        f"{len(existing)}, now {len(merged)})."
-                    )
-            except Exception as e:
-                # Non-fatal: the CSV-loaded list remains intact. Downstream
-                # analysis will proceed with slightly degraded non-reco
-                # coverage rather than fail.
-                logger.warning(
-                    f"[non_reconnectable_detection] Worker failed: {e}. "
-                    f"Proceeding with CSV-only non-reconnectable list."
-                )
-            finally:
-                event.set()
-
-        t = threading.Thread(target=_worker, name="NonReconDetect", daemon=True)
-        self._non_reconnectable_detection_thread = t
-        t.start()
 
     def restore_analysis_context(self, lines_we_care_about, disconnected_element=None, lines_overloaded=None, computed_pairs=None):
         """Restore analysis context from a saved session.
@@ -481,17 +377,8 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         # See docs/perf-grid2op-shared-network.md.
         try:
             from expert_op4grid_recommender.environment_pypowsybl import setup_environment_configs_pypowsybl
-            # `skip_non_reconnectable_detection=True` tells the upstream
-            # helper to SKIP the ~2-10 s topology walk inside the env setup.
-            # We run that detection in a background thread immediately below
-            # — it finishes during client render / user inspection, invisible
-            # to the user. See docs/perf-deferred-non-reconnectable-detection.md.
-            # Requires expert_op4grid_recommender >= 0.2.0.post2.
             env, _obs, env_path, chronic_name, custom_layout, _raw_dict, lines_non_reconnectable, lines_we_care_about = \
-                setup_environment_configs_pypowsybl(
-                    network=self._base_network,
-                    skip_non_reconnectable_detection=True,
-                )
+                setup_environment_configs_pypowsybl(network=self._base_network)
             self._cached_env_context = {
                 'env': env,
                 'path_chronic': env_path,
@@ -501,11 +388,6 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
                 'lines_we_care_about': lines_we_care_about,
             }
             logger.info("[RecommenderService] SimulationEnvironment pre-built and cached.")
-            # Kick off the deferred topology detection. The worker appends
-            # its result into `_cached_env_context['lines_non_reconnectable']`
-            # when done; the guards at the start of analysis endpoints drain
-            # this worker before reading the list.
-            self.prefetch_non_reconnectable_lines_async()
         except Exception as e:
             logger.warning(f"[RecommenderService] Warning: Failed to pre-build SimulationEnvironment: {e}")
             self._cached_env_context = None
@@ -703,11 +585,6 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         clear error.
         """
         self._drain_pending_base_nad_prefetch()
-        # Also drain the deferred non-reconnectable-lines detection worker:
-        # `run_analysis_step1` reads `_cached_env_context['lines_non_reconnectable']`
-        # and must see the complete merged list (CSV + topology-detected).
-        # See docs/perf-deferred-non-reconnectable-detection.md.
-        self._drain_pending_non_reconnectable_detection()
         # If /api/config was never called (e.g. a test that bypasses it,
         # or an HTTP call before the first study is loaded), `_base_network`
         # is None and there is nothing meaningful to guard. Let the caller
@@ -742,11 +619,6 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         contingency.
         """
         self._drain_pending_base_nad_prefetch()
-        # simulate/compute_superposition are called AFTER analysis has
-        # already run once, so the deferred-detection worker is typically
-        # long finished. Draining here keeps the "no background work after
-        # the guard" invariant uniform across all entry points.
-        self._drain_pending_non_reconnectable_detection()
         if self._base_network is None and getattr(config, 'ENV_PATH', None) is None:
             return
         if not disconnected_element:
