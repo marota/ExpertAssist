@@ -892,7 +892,27 @@ class AnalysisMixin:
             enriched_actions = {aid: data for aid, data in enriched_actions.items() if "+" not in aid}
 
             # Compute MW at start for score tables
-            action_scores = self._compute_mw_start_for_scores(results.get("action_scores", {}))
+            action_scores = results.get("action_scores", {})
+            # Debug: log disco scores for diagnosis
+            _disco_scores = action_scores.get("line_disconnection", {}).get("scores", {})
+            _disco_params = action_scores.get("line_disconnection", {}).get("params", {})
+            logger.info(f"[DEBUG step2] line_disconnection scores: {len(_disco_scores)} entries, params={_disco_params}")
+            for _aid, _s in list(_disco_scores.items())[:10]:
+                logger.info(f"[DEBUG step2]   {_aid}: {_s}")
+            if not _disco_scores:
+                logger.info("[DEBUG step2] No disco scores found — checking overflow graph edges…")
+                try:
+                    import networkx as _nx
+                    _g = results.get("_g_overflow_debug")
+                    if _g is None:
+                        logger.info("[DEBUG step2] No overflow graph in results (expected)")
+                except Exception:
+                    pass
+            # Log all action score types and counts
+            for _type, _data in action_scores.items():
+                _cnt = len(_data.get("scores", {})) if isinstance(_data, dict) else 0
+                logger.info(f"[DEBUG step2] action_scores[{_type}]: {_cnt} entries")
+            action_scores = self._compute_mw_start_for_scores(action_scores)
 
             logger.info(f"[Step 2] Yielding final result event with {len(enriched_actions)} enriched actions")
             # Yield result
@@ -1033,6 +1053,12 @@ class AnalysisMixin:
             lines_overloaded = result.get("lines_overloaded_names", [])
             prioritized = result.get("prioritized_actions", {})
             action_scores = sanitize_for_json(result.get("action_scores", {}))
+            # Debug: log disco scores for diagnosis
+            _disco_scores = action_scores.get("line_disconnection", {}).get("scores", {})
+            _disco_params = action_scores.get("line_disconnection", {}).get("params", {})
+            logger.info(f"[DEBUG] line_disconnection scores: {len(_disco_scores)} entries, params={_disco_params}")
+            for _aid, _s in list(_disco_scores.items())[:5]:
+                logger.info(f"[DEBUG]   {_aid}: {_s}")
             action_scores = self._compute_mw_start_for_scores(action_scores)
 
             enriched_actions = self._enrich_actions(

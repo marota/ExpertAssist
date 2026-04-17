@@ -141,9 +141,26 @@ def _bus_name(bus_id: str) -> str:
     return bus_display_names.get(bus_id, safe_id(bus_id))
 
 
-def _line_name(line_id: str) -> str:
-    """Get a human-readable name for a line/circuit."""
-    return line_display_names.get(line_id, str(line_id))
+def _line_name(line_id: str, bus0: str = "", bus1: str = "") -> str:
+    """Get a human-readable name for a line/circuit.
+
+    Falls back to a composite name built from bus endpoint names when
+    no OSM name is available, so that the pypowsybl ``name`` field
+    always contains something human-readable (e.g. "CHARPENAY — ST-VULBAS-EST").
+    """
+    osm = line_display_names.get(line_id)
+    if osm:
+        return osm
+    # Build composite name from bus endpoints
+    n0 = bus_display_names.get(bus0, "")
+    n1 = bus_display_names.get(bus1, "")
+    if n0 and n1 and n0 != n1:
+        return f"{n0} \u2014 {n1}"
+    if n0:
+        return n0
+    if n1:
+        return n1
+    return str(line_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -436,7 +453,7 @@ for line_id, row in lines.iterrows():
         line_data["b2"].append(b / 2)
         line_data["g1"].append(0.0)
         line_data["g2"].append(0.0)
-        line_data["name"].append(_line_name(line_id))
+        line_data["name"].append(_line_name(line_id, row["bus0"], row["bus1"]))
 
         # Track current limit: i_nom (kA in CSV) * circuits → Amperes
         i_nom_ka = float(row.get("i_nom", 0) or 0)
