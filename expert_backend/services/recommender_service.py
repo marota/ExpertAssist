@@ -377,8 +377,18 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         # See docs/perf-grid2op-shared-network.md.
         try:
             from expert_op4grid_recommender.environment_pypowsybl import setup_environment_configs_pypowsybl
+            # `skip_initial_obs=True`: we discard `_obs` below anyway, and
+            # `_cached_env_context` does not store it. Upstream's
+            # `env.get_obs()` call on large grids is ~3-5 s of pypowsybl
+            # reads that we simply waste. When `run_analysis_step1` later
+            # needs an observation, it calls `env.get_obs()` itself.
+            # Requires expert_op4grid_recommender >= 0.2.0.post3.
+            # See docs/perf-skip-initial-obs.md.
             env, _obs, env_path, chronic_name, custom_layout, _raw_dict, lines_non_reconnectable, lines_we_care_about = \
-                setup_environment_configs_pypowsybl(network=self._base_network)
+                setup_environment_configs_pypowsybl(
+                    network=self._base_network,
+                    skip_initial_obs=True,
+                )
             self._cached_env_context = {
                 'env': env,
                 'path_chronic': env_path,

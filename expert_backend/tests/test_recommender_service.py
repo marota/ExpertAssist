@@ -443,6 +443,12 @@ class TestUpdateConfigSharesNetworkWithGrid2op:
             mock_setup.assert_called_once()
             call_kwargs = mock_setup.call_args.kwargs
             assert call_kwargs.get("network") is preloaded
+            # AND `skip_initial_obs=True` — the obs returned by upstream
+            # is discarded below (we never store it in `_cached_env_context`),
+            # so computing it wastes ~3-5 s on a large grid. Requires
+            # expert_op4grid_recommender >= 0.2.0.post3.
+            # See docs/perf-skip-initial-obs.md.
+            assert call_kwargs.get("skip_initial_obs") is True
 
 
 
