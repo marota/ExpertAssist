@@ -126,6 +126,13 @@ export interface DiagramsState {
 
   // Handlers
   fetchBaseDiagram: (vlCount: number) => void;
+  /**
+   * Consume a pre-fetched base-diagram payload (processSvg + state set).
+   * Used by callers that fire `api.getNetworkDiagram()` themselves in
+   * parallel with `branches`/`voltage-levels`/`nominal-voltages` to
+   * shave the serial-dependency gap off the initial load.
+   */
+  ingestBaseDiagram: (raw: DiagramData, vlCount: number) => void;
   handleActionSelect: (
     actionId: string | null,
     result: AnalysisResult | null,
@@ -321,6 +328,17 @@ export function useDiagrams(
       console.error('Failed to fetch diagram:', err);
       throw err; // Re-throw so App.tsx can handle it
     }
+  }, []);
+
+  // Consume a pre-fetched base-diagram payload. Split from `fetchBaseDiagram`
+  // so callers can fire `api.getNetworkDiagram()` in parallel with
+  // branches/voltage-levels/nominal-voltages (serveur NAD ~6.6s dwarfs the
+  // other three calls — parallelising shaves the ~0.8s branches gap off
+  // the critical path of the initial load).
+  const ingestBaseDiagram = useCallback((raw: DiagramData, vlCount: number) => {
+    const { svg, viewBox } = processSvg(raw.svg, vlCount || 0);
+    if (viewBox) setOriginalViewBox(viewBox);
+    setNDiagram({ ...raw, svg, originalViewBox: viewBox });
   }, []);
 
   // ===== Action Select =====
@@ -947,6 +965,7 @@ export function useDiagrams(
     committedBranchRef, restoringSessionRef,
     lastZoomState, actionSyncSourceRef,
     fetchBaseDiagram,
+    ingestBaseDiagram,
     handleActionSelect,
     handleManualZoomIn,
     handleManualZoomOut,
@@ -966,7 +985,7 @@ export function useDiagrams(
     nPZ, n1PZ, actionPZ,
     nMetaIndex, n1MetaIndex, actionMetaIndex,
     nominalVoltageMap, uniqueVoltages, voltageRange,
-    vlOverlay, fetchBaseDiagram, handleActionSelect,
+    vlOverlay, fetchBaseDiagram, ingestBaseDiagram, handleActionSelect,
     handleManualZoomIn, handleManualZoomOut, handleManualReset,
     handleVlDoubleClick, handleOverlaySldTabChange, handleOverlayClose,
     handleAssetClick, zoomToElement, inspectableItems,

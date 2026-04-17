@@ -19,6 +19,7 @@ const mockUpdateConfig = vi.fn();
 const mockGetBranches = vi.fn();
 const mockGetVoltageLevels = vi.fn();
 const mockGetNominalVoltages = vi.fn();
+const mockGetNetworkDiagram = vi.fn().mockResolvedValue({ svg: '<svg/>', metadata: null });
 
 vi.mock('../api', () => ({
     api: {
@@ -29,6 +30,7 @@ vi.mock('../api', () => ({
         getBranches: (...args: unknown[]) => mockGetBranches(...args),
         getVoltageLevels: (...args: unknown[]) => mockGetVoltageLevels(...args),
         getNominalVoltages: (...args: unknown[]) => mockGetNominalVoltages(...args),
+        getNetworkDiagram: (...args: unknown[]) => mockGetNetworkDiagram(...args),
         restoreAnalysisContext: vi.fn().mockResolvedValue({}),
     },
 }));
@@ -244,6 +246,7 @@ describe('useSession — handleRestoreSession', () => {
         setUniqueVoltages: vi.fn(),
         setVoltageRange: vi.fn(),
         fetchBaseDiagram: vi.fn(),
+        ingestBaseDiagram: vi.fn(),
         setMonitorDeselected: vi.fn(),
         setSelectedOverloads: vi.fn(),
         setResult: vi.fn(),

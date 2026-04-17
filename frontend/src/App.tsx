@@ -473,6 +473,7 @@ function App() {
     setNominalVoltageMap: diagrams.setNominalVoltageMap,
     setUniqueVoltages: diagrams.setUniqueVoltages,
     fetchBaseDiagram: diagrams.fetchBaseDiagram,
+    ingestBaseDiagram: diagrams.ingestBaseDiagram,
     setVoltageRange: diagrams.setVoltageRange,
   }), [
     outputFolderPath,
@@ -552,10 +553,16 @@ function App() {
       const configRes = await api.updateConfig(buildConfigRequest());
       applyConfigResponse(configRes as Record<string, unknown>);
 
-      const [branchRes, vlRes, nomVRes] = await Promise.all([
+      // Fire the 4 post-config XHRs in parallel. The base-diagram call is
+      // the slowest (~6-7s pypowsybl NAD on large grids) and previously
+      // only started after branches resolved — wasting the ~0.8s branches
+      // gap off the critical path of the initial load.
+      // See docs/perf-loading-parallel.md.
+      const [branchRes, vlRes, nomVRes, diagramRaw] = await Promise.all([
         api.getBranches(),
         api.getVoltageLevels(),
         api.getNominalVoltages(),
+        api.getNetworkDiagram(),
       ]);
 
       setBranches(branchRes.branches);
@@ -570,7 +577,7 @@ function App() {
         diagrams.setVoltageRange([nomVRes.unique_kv[0], nomVRes.unique_kv[nomVRes.unique_kv.length - 1]]);
       }
 
-      diagrams.fetchBaseDiagram(vlRes.voltage_levels.length);
+      diagrams.ingestBaseDiagram(diagramRaw, vlRes.voltage_levels.length);
 
       committedNetworkPathRef.current = networkPath;
       interactionLogger.record('config_loaded', buildConfigInteractionDetails());
@@ -610,10 +617,14 @@ function App() {
       const configRes = await api.updateConfig(buildConfigRequest());
       applyConfigResponse(configRes as Record<string, unknown>);
 
-      const [branchRes, vlRes, nomVRes] = await Promise.all([
+      // See the sibling call site in `applySettingsImmediate` for context:
+      // fire 4 XHRs in parallel so the slow base-diagram call overlaps
+      // with branches/voltage-levels/nominal-voltages.
+      const [branchRes, vlRes, nomVRes, diagramRaw] = await Promise.all([
         api.getBranches(),
         api.getVoltageLevels(),
         api.getNominalVoltages(),
+        api.getNetworkDiagram(),
       ]);
 
       setBranches(branchRes.branches);
@@ -627,7 +638,7 @@ function App() {
         diagrams.setVoltageRange([nomVRes.unique_kv[0], nomVRes.unique_kv[nomVRes.unique_kv.length - 1]]);
       }
 
-      diagrams.fetchBaseDiagram(vlRes.voltage_levels.length);
+      diagrams.ingestBaseDiagram(diagramRaw, vlRes.voltage_levels.length);
       committedNetworkPathRef.current = networkPath;
       interactionLogger.record('config_loaded', buildConfigInteractionDetails());
     } catch (err: unknown) {

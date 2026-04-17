@@ -44,6 +44,51 @@ _GZIP_MIN_BYTES = 10_000  # don't bother for small payloads
 _GZIP_LEVEL = 5            # ~same ratio as level 9 on repetitive SVG, ~3× faster
 
 
+def _maybe_gzip_svg_text(diagram: dict, request: Request) -> Response:
+    """Serialize a diagram payload as a small JSON preamble + raw SVG body.
+
+    Saves ~400-500 ms of `JSON.parse` on the client for large (≥10 MB)
+    SVG strings: embedding the SVG inside JSON forces the browser to
+    escape-scan every byte of the string and allocate a second buffer
+    during parse. Here the SVG bytes are the response body verbatim —
+    only the small metadata dict (lines_overloaded, rho, flow_deltas, …)
+    is JSON-encoded on the first line.
+
+    Wire format::
+
+        {"metadata":...,"lines_overloaded":[...],"lines_overloaded_rho":[...]}\\n
+        <svg ...>...</svg>
+
+    The client reads the body as text, splits on the first `\\n`,
+    JSON.parses the first line, and treats the rest as the SVG string.
+
+    Response is still gzipped on the wire (same Content-Encoding gate
+    as `_maybe_gzip_json`).
+    """
+    diagram = dict(diagram)  # don't mutate caller
+    svg = diagram.pop("svg", "")
+    meta_line = json_module.dumps(
+        jsonable_encoder(diagram), separators=(",", ":"), ensure_ascii=False
+    )
+    body = (meta_line + "\n" + svg).encode("utf-8")
+    accept = request.headers.get("accept-encoding", "")
+    if len(body) < _GZIP_MIN_BYTES or "gzip" not in accept.lower():
+        return Response(
+            content=body,
+            media_type="text/plain; charset=utf-8",
+            headers={"Vary": "Accept-Encoding"},
+        )
+    compressed = gzip.compress(body, compresslevel=_GZIP_LEVEL)
+    return Response(
+        content=compressed,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Encoding": "gzip",
+            "Vary": "Accept-Encoding",
+        },
+    )
+
+
 def _maybe_gzip_json(payload, request: Request) -> Response:
     """Serialize `payload` to JSON and, if the client signals `Accept-Encoding: gzip`
     AND the encoded body is large enough, return a gzip-compressed Response.
@@ -561,9 +606,19 @@ async def run_analysis_step2(request: AnalysisStep2Request):
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
 @app.get("/api/network-diagram")
-def get_network_diagram(http_request: Request):
+def get_network_diagram(http_request: Request, format: str = Query("json")):
+    """Base-state NAD for the loaded network.
+
+    `format=text` returns the raw SVG body prefixed by a single-line
+    JSON header (see `_maybe_gzip_svg_text`), saving ~500 ms of client
+    `JSON.parse` on large grids where the SVG is 20-25 MB. The default
+    `format=json` keeps the legacy `{"svg": "...", ...}` shape so
+    external callers and standalone_interface.html keep working.
+    """
     try:
         diagram = recommender_service.get_network_diagram()
+        if format == "text":
+            return _maybe_gzip_svg_text(diagram, http_request)
         return _maybe_gzip_json(diagram, http_request)
     except Exception as e:
         import traceback

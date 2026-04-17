@@ -67,8 +67,28 @@ export const api = {
         return response.data;
     },
     getNetworkDiagram: async (): Promise<DiagramData> => {
-        const response = await axios.get<DiagramData>(`${API_BASE_URL}/api/network-diagram`);
-        return response.data;
+        // Fetch in `format=text` mode: the server returns a small JSON
+        // header on the first line, then the raw SVG body verbatim. This
+        // avoids `JSON.parse` having to escape-scan and copy the ~25 MB
+        // SVG string, saving ~500 ms of main-thread parse time on large
+        // grids. See docs/perf-loading-parallel.md (#4). We use `fetch`
+        // instead of axios so the browser's native gzip decoder runs
+        // without axios trying to JSON-parse the body.
+        const res = await fetch(`${API_BASE_URL}/api/network-diagram?format=text`);
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            const err = new Error(`HTTP ${res.status}: ${detail || res.statusText}`) as Error & { response?: unknown };
+            err.response = { status: res.status, data: { detail } };
+            throw err;
+        }
+        const body = await res.text();
+        const nl = body.indexOf('\n');
+        if (nl < 0) {
+            throw new Error('Invalid /api/network-diagram response: missing header/body separator');
+        }
+        const header = JSON.parse(body.slice(0, nl)) as Omit<DiagramData, 'svg'>;
+        const svg = body.slice(nl + 1);
+        return { ...header, svg } as DiagramData;
     },
     getN1Diagram: async (disconnectedElement: string): Promise<DiagramData> => {
         const response = await axios.post<DiagramData>(

@@ -112,6 +112,60 @@ class TestGetNetworkDiagram:
         response = client.get("/api/network-diagram")
         assert response.status_code == 400
 
+    def test_text_format_returns_header_plus_svg(self, client, mock_services):
+        """format=text returns a small JSON header on the first line,
+        then the raw SVG as the rest of the body. The SVG must NOT be
+        JSON-escaped (savings = no 25 MB JSON.parse on the client)."""
+        import json as json_module
+
+        _, mock_rs = mock_services
+        mock_rs.get_network_diagram.return_value = {
+            "svg": "<svg>diagram</svg>",
+            "metadata": '{"nodes":[]}',
+            "lines_overloaded": ["L1"],
+            "lines_overloaded_rho": [1.05],
+        }
+
+        response = client.get("/api/network-diagram?format=text")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        body = response.text
+        nl = body.index("\n")
+        header = json_module.loads(body[:nl])
+        svg = body[nl + 1:]
+        assert svg == "<svg>diagram</svg>"
+        assert "svg" not in header  # must be stripped from the JSON header
+        assert header["lines_overloaded"] == ["L1"]
+        assert header["lines_overloaded_rho"] == [1.05]
+        assert header["metadata"] == '{"nodes":[]}'
+
+    def test_text_format_gzip(self, client, mock_services):
+        """Large text-format responses are gzip-compressed on the wire
+        when the client signals Accept-Encoding: gzip."""
+        import gzip as gzip_module
+
+        _, mock_rs = mock_services
+        big_svg = "<svg>" + ("x" * 20_000) + "</svg>"
+        mock_rs.get_network_diagram.return_value = {
+            "svg": big_svg,
+            "metadata": None,
+        }
+
+        response = client.get(
+            "/api/network-diagram?format=text",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert response.status_code == 200
+        # TestClient auto-decodes gzip, so check the header explicitly.
+        assert response.headers.get("content-encoding") == "gzip"
+        body = response.text  # auto-decoded
+        nl = body.index("\n")
+        assert body[nl + 1:] == big_svg
+        # Sanity: compressed body is much smaller than raw
+        raw_len = len(big_svg) + 100
+        # Re-encode to confirm compression ratio is credible
+        assert len(gzip_module.compress(body.encode("utf-8"))) < raw_len
+
 
 class TestGetN1Diagram:
     def test_success(self, client, mock_services):
