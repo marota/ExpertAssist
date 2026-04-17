@@ -681,3 +681,127 @@ class TestSimulateManualActionWithContext:
         call_kwargs = mock_rs.simulate_manual_action.call_args
         assert call_kwargs[1].get("lines_overloaded") == ["LINE_A", "LINE_C"] or \
                (len(call_kwargs[0]) >= 4 and call_kwargs[0][3] == ["LINE_A", "LINE_C"])
+
+
+class TestDiagramGzipCompression:
+    """Per-endpoint gzip on the 3 large SVG + 1 actions endpoints.
+
+    We deliberately do NOT use Starlette's global `GZipMiddleware` because it
+    buffers `StreamingResponse` bodies (NDJSON on /api/run-analysis(-step2)),
+    which was the rollback cause in commits 8c15de7 -> 26bc49d. These tests
+    lock in the per-endpoint behaviour so that future refactors can't
+    silently regress back to the global middleware.
+    """
+
+    # A large-enough SVG body to cross the _GZIP_MIN_BYTES threshold.
+    _BIG_SVG = "<svg>" + ("<g><path d='M0 0 L1 1'/></g>" * 1000) + "</svg>"
+
+    def _assert_gzip(self, response):
+        assert response.status_code == 200
+        # httpx decodes Content-Encoding transparently, but exposes the header
+        # value as seen on the wire — so we can still verify it was gzipped.
+        assert response.headers.get("content-encoding") == "gzip"
+        assert "accept-encoding" in response.headers.get("vary", "").lower()
+        # Response body is still valid JSON after transparent decompression.
+        data = response.json()
+        assert "svg" in data or "actions" in data
+
+    def _assert_no_gzip(self, response):
+        assert response.status_code == 200
+        assert response.headers.get("content-encoding") != "gzip"
+        assert "accept-encoding" in response.headers.get("vary", "").lower()
+        assert response.json()
+
+    def test_network_diagram_gzip_when_accepted(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.get_network_diagram.return_value = {
+            "svg": self._BIG_SVG,
+            "metadata": "{}",
+        }
+        response = client.get(
+            "/api/network-diagram",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        self._assert_gzip(response)
+
+    def test_network_diagram_no_gzip_when_not_accepted(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.get_network_diagram.return_value = {
+            "svg": self._BIG_SVG,
+            "metadata": "{}",
+        }
+        response = client.get(
+            "/api/network-diagram",
+            headers={"Accept-Encoding": "identity"},
+        )
+        self._assert_no_gzip(response)
+
+    def test_n1_diagram_gzip_when_accepted(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.get_n1_diagram.return_value = {
+            "svg": self._BIG_SVG,
+            "metadata": "{}",
+            "lf_converged": True,
+        }
+        response = client.post(
+            "/api/n1-diagram",
+            json={"disconnected_element": "LINE_A"},
+            headers={"Accept-Encoding": "gzip"},
+        )
+        self._assert_gzip(response)
+        assert response.json()["lf_converged"] is True
+
+    def test_action_variant_diagram_gzip_when_accepted(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.get_action_variant_diagram.return_value = {
+            "svg": self._BIG_SVG,
+            "metadata": "{}",
+        }
+        response = client.post(
+            "/api/action-variant-diagram",
+            json={"action_id": "action_1"},
+            headers={"Accept-Encoding": "gzip"},
+        )
+        self._assert_gzip(response)
+
+    def test_small_payload_below_threshold_is_not_compressed(self, client, mock_services):
+        _, mock_rs = mock_services
+        # Tiny SVG — well below _GZIP_MIN_BYTES (10 kB).
+        mock_rs.get_network_diagram.return_value = {
+            "svg": "<svg/>",
+            "metadata": "{}",
+        }
+        response = client.get(
+            "/api/network-diagram",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert response.status_code == 200
+        assert response.headers.get("content-encoding") != "gzip"
+        assert response.json()["svg"] == "<svg/>"
+
+    def test_streaming_analysis_is_not_affected(self, client, mock_services):
+        """/api/run-analysis-step2 MUST keep streaming NDJSON one event per line
+        (the overflow PDF event must reach the browser before the result
+        event). The per-endpoint gzip helper must not be wrapped around it.
+        """
+        _, mock_rs = mock_services
+
+        def fake_step2(*args, **kwargs):
+            yield {"type": "pdf", "pdf_path": "/tmp/graph.pdf"}
+            yield {"type": "result", "analysis_result": {"actions": []}}
+
+        mock_rs.run_analysis_step2.side_effect = fake_step2
+
+        response = client.post(
+            "/api/run-analysis-step2",
+            json={"selected_overloads": ["LINE_A"]},
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert response.status_code == 200
+        # NDJSON streaming response — never gzip-wrapped by the helper.
+        assert response.headers.get("content-encoding") != "gzip"
+        assert response.headers.get("content-type", "").startswith("application/x-ndjson")
+        lines = [ln for ln in response.text.splitlines() if ln.strip()]
+        assert len(lines) == 2
+        assert json.loads(lines[0])["type"] == "pdf"
+        assert json.loads(lines[1])["type"] == "result"

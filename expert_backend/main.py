@@ -5,11 +5,14 @@
 # SPDX-License-Identifier: MPL-2.0
 # This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-from fastapi import FastAPI, HTTPException, Body, Query
+from fastapi import FastAPI, HTTPException, Body, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import gzip
 import os
 import json as json_module
 import shutil
@@ -20,6 +23,54 @@ from expert_backend.services.network_service import network_service
 from expert_backend.services.recommender_service import recommender_service
 
 app = FastAPI()
+
+
+# --- Per-endpoint JSON gzip helper ---
+#
+# Large SVG diagram payloads are ~25–28 MB of JSON-wrapped XML on big grids
+# (PyPSA-EUR France 400 kV). SVG/JSON compresses ~10× with gzip, so enabling
+# compression on these specific endpoints cuts wire time and browser parse
+# time substantially.
+#
+# We deliberately do NOT re-enable Starlette's global `GZipMiddleware` — it
+# wraps EVERY response, including the `StreamingResponse` returned by
+# `/api/run-analysis` and `/api/run-analysis-step2`, which buffers their
+# NDJSON events until a gzip flush and delays the early-PDF-event that the
+# frontend relies on to render the Overflow PDF ahead of the action results.
+# That buffering was the root cause behind the rollback in commits
+# 8c15de7 → 26bc49d. Scoping compression to individual non-streaming
+# endpoints via this helper sidesteps that completely.
+_GZIP_MIN_BYTES = 10_000  # don't bother for small payloads
+_GZIP_LEVEL = 5            # ~same ratio as level 9 on repetitive SVG, ~3× faster
+
+
+def _maybe_gzip_json(payload, request: Request) -> Response:
+    """Serialize `payload` to JSON and, if the client signals `Accept-Encoding: gzip`
+    AND the encoded body is large enough, return a gzip-compressed Response.
+    Otherwise return an uncompressed Response.
+
+    Applied per-endpoint on diagram/SLD/actions responses. Streaming
+    endpoints keep using FastAPI's default response flow so NDJSON events
+    continue to flush one-at-a-time to the client.
+    """
+    data = jsonable_encoder(payload)
+    body = json_module.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    accept = request.headers.get("accept-encoding", "")
+    if len(body) < _GZIP_MIN_BYTES or "gzip" not in accept.lower():
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"Vary": "Accept-Encoding"},
+        )
+    compressed = gzip.compress(body, compresslevel=_GZIP_LEVEL)
+    return Response(
+        content=compressed,
+        media_type="application/json",
+        headers={
+            "Content-Encoding": "gzip",
+            "Vary": "Accept-Encoding",
+        },
+    )
 
 # --- User config file management ---
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -510,27 +561,27 @@ async def run_analysis_step2(request: AnalysisStep2Request):
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 
 @app.get("/api/network-diagram")
-def get_network_diagram():
+def get_network_diagram(http_request: Request):
     try:
         diagram = recommender_service.get_network_diagram()
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/n1-diagram")
-def get_n1_diagram(request: AnalysisRequest):
+def get_n1_diagram(request: AnalysisRequest, http_request: Request):
     try:
         diagram = recommender_service.get_n1_diagram(request.disconnected_element)
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/action-variant-diagram")
-def get_action_variant_diagram(request: ActionVariantRequest):
+def get_action_variant_diagram(request: ActionVariantRequest, http_request: Request):
     """Generate a NAD for the network state after applying a remedial action.
 
     Requires a prior call to /api/run-analysis so the observation is available.
@@ -539,7 +590,7 @@ def get_action_variant_diagram(request: ActionVariantRequest):
         diagram = recommender_service.get_action_variant_diagram(
             request.action_id, mode=request.mode
         )
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -554,7 +605,7 @@ def get_element_voltage_levels(element_id: str = Query(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 @app.post("/api/focused-diagram")
-def get_focused_diagram(request: FocusedDiagramRequest):
+def get_focused_diagram(request: FocusedDiagramRequest, http_request: Request):
     """Generate a NAD focused on a specific element's voltage levels.
 
     If disconnected_element is provided, generates the N-1 state.
@@ -578,7 +629,7 @@ def get_focused_diagram(request: FocusedDiagramRequest):
             )
         diagram["voltage_level_ids"] = vl_ids
         diagram["depth"] = request.depth
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except HTTPException:
         raise
     except Exception as e:
@@ -592,7 +643,7 @@ class ActionVariantFocusedRequest(BaseModel):
     depth: int = 1
 
 @app.post("/api/action-variant-focused-diagram")
-def get_action_variant_focused_diagram(request: ActionVariantFocusedRequest):
+def get_action_variant_focused_diagram(request: ActionVariantFocusedRequest, http_request: Request):
     """Generate a focused NAD for a specific VL in the post-action network state."""
     try:
         vl_ids = network_service.get_element_voltage_levels(request.element_id)
@@ -604,7 +655,7 @@ def get_action_variant_focused_diagram(request: ActionVariantFocusedRequest):
             depth=request.depth,
         )
         diagram["voltage_level_ids"] = vl_ids
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except HTTPException:
         raise
     except Exception as e:
@@ -617,14 +668,14 @@ class ActionVariantSldRequest(BaseModel):
     voltage_level_id: str
 
 @app.post("/api/action-variant-sld")
-def get_action_variant_sld(request: ActionVariantSldRequest):
+def get_action_variant_sld(request: ActionVariantSldRequest, http_request: Request):
     """Generate a Single Line Diagram (SLD) for a voltage level in the post-action network state."""
     try:
         diagram = recommender_service.get_action_variant_sld(
             request.action_id,
             request.voltage_level_id,
         )
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except HTTPException:
         raise
     except Exception as e:
@@ -636,11 +687,11 @@ class NSldRequest(BaseModel):
     voltage_level_id: str
 
 @app.post("/api/n-sld")
-def get_n_sld(request: NSldRequest):
+def get_n_sld(request: NSldRequest, http_request: Request):
     """Generate a Single Line Diagram (SLD) for a voltage level in the base network state."""
     try:
         diagram = recommender_service.get_n_sld(request.voltage_level_id)
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except HTTPException:
         raise
     except Exception as e:
@@ -653,14 +704,14 @@ class N1SldRequest(BaseModel):
     voltage_level_id: str
 
 @app.post("/api/n1-sld")
-def get_n1_sld(request: N1SldRequest):
+def get_n1_sld(request: N1SldRequest, http_request: Request):
     """Generate a Single Line Diagram (SLD) for a voltage level in the N-1 network state."""
     try:
         diagram = recommender_service.get_n1_sld(
             request.disconnected_element,
             request.voltage_level_id,
         )
-        return diagram
+        return _maybe_gzip_json(diagram, http_request)
     except HTTPException:
         raise
     except Exception as e:
@@ -669,11 +720,11 @@ def get_n1_sld(request: N1SldRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/actions")
-def get_actions():
+def get_actions(http_request: Request):
     """Return all available action IDs and descriptions from the loaded dictionary."""
     try:
         actions = recommender_service.get_all_action_ids()
-        return {"actions": actions}
+        return _maybe_gzip_json({"actions": actions}, http_request)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
