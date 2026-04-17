@@ -117,18 +117,60 @@ Baseline (v6 trace, current main tip before this change):
 | XHRLoad (`JSON.parse`) | 618 ms |
 | **Load Study total** | **~24.0 s** |
 
-Expected after this change (to be confirmed on the next trace):
+### v7 trace — after this change
 
-| Segment | Expected |
-|---|---|
-| `/api/config` | 14 103 ms (unchanged) |
-| MAX(branches, nomV, vl, diagram) | ~6 645 ms |
-| `XHRLoad` (header + raw SVG) | ~100-200 ms |
-| **Load Study total** | **~20.9 s** (-12 %) |
+#### Waterfall (XHRs)
 
-The two wins combine naturally: parallel XHRs remove the branches gap
-(0.8 s), text-format response removes most of the JSON-parse cost
-(~400-500 ms). Server wall-clock is unchanged.
+| XHR | v6 timing | v7 timing | Δ |
+|---|---|---|---|
+| `/api/config` | 0 → 14 103 | 0 → 14 790 | +687 ms (server variance) |
+| `/api/branches` | 14 101 → 14 876 | 14 788 → **15 553** | now runs **in parallel** with diagram |
+| `/api/voltage-levels` | 14 102 → 14 428 | 14 788 → 15 158 | parallel |
+| `/api/nominal-voltages` | 14 102 → 14 410 | 14 789 → 15 136 | parallel |
+| `/api/network-diagram` | **start 14 875** (after branches) | **start 14 789** (parallel) | start −86 ms |
+| `/api/network-diagram` | end 21 520 | end 21 174 | **−346 ms end** |
+| `/api/network-diagram` server-side | 6 645 ms | 6 385 ms | −260 ms (body size same, likely encoding CPU saved) |
+
+✅ Parallelisation confirmed: the base-diagram XHR now starts at the
+same timestamp as `branches` / `voltage-levels` / `nominal-voltages`.
+
+#### Render window (3 s post-diagram-XHR, matched between traces)
+
+| Metric | v6 | v7 | Δ |
+|---|---|---|---|
+| `RasterTask` | 1 610 ms | 1 411 ms | −199 ms |
+| `Paint` | 749 ms | 855 ms | +106 ms (variance) |
+| `UpdateLayoutTree` | 340 ms | 357 ms | +17 ms |
+| `Layout` | 285 ms | 292 ms | +7 ms |
+| `Layerize` | 131 ms | 102 ms | −29 ms |
+| `PrePaint` | 160 ms | 87 ms | −73 ms |
+| **`ParseHTML`** | **414 ms** | **293 ms** | **−121 ms** ✅ |
+| **Long tasks cumulés (fenêtre 3 s)** | **4 818 ms** | **2 405 ms** | **−2 413 ms (−50 %)** 🎯 |
+
+✅ Text-format confirmed: `ParseHTML` drops by 121 ms because the SVG
+bytes go straight to Blink's HTML parser instead of being unwrapped
+from a JSON-encoded string first. `RasterTask`, `PrePaint`, and
+`Layerize` all drop slightly — indirect benefit of less string
+allocation pressure during the render.
+
+#### Critical-path summary
+
+| | v6 | v7 | Δ |
+|---|---|---|---|
+| config end → diagram XHR end | 7 417 ms | **6 384 ms** | **−1 033 ms (−14 %)** |
+| Full Load Study wall-clock | ~24.0 s | **~21.2 s** | **−2.8 s (−12 %)** |
+
+The ~1 s saved on the XHR critical path is the sum of (a) parallelising
+the branches gap, (b) shaving JSON encoding server-side because the SVG
+bypasses JSON serialisation in `format=text` mode. The ~2 s saved post-XHR
+is pure client-side rendering budget (less `ParseHTML`, less GC pressure,
+less allocation thrash on the 25 MB string).
+
+Expected before the change:
+
+> Load Study total: ~24.0 s → ~20.9 s (−12 %).
+
+Measured: ~24.0 s → **~21.2 s** (−12 %). On target.
 
 ## What this does NOT change
 
