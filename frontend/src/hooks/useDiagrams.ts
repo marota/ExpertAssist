@@ -342,14 +342,14 @@ export function useDiagrams(
       interactionLogger.record('action_deselected', { action_id: actionId });
       setSelectedActionId(null);
       setActionDiagram(null);
-      // Only fall back to the N-1 tab in the main window when the
-      // action tab is currently inline (i.e. the user was actually
-      // looking at the action tab in the main window). When the
-      // action tab is detached into a popup, the main window is
-      // already showing N or N-1 and must not be force-switched.
-      if (!isActionDetached) {
-        setActiveTab('n-1');
-      }
+      // Stay on the current tab. When the user was on the action tab,
+      // clearing `selectedActionId` naturally falls back to the
+      // ActionOverviewDiagram (pin view) — same UX as clicking the
+      // ✕ chip on the action tab header, which also just nulls the
+      // selection without switching tabs. We used to force-switch to
+      // N-1 here, which was surprising: it erased the pin overview
+      // the user had just returned to. See VisualizationPanel tab
+      // label for the matching ✕-chip path.
       return;
     }
 
