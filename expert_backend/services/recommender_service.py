@@ -403,9 +403,48 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         return lf.run_ac(network, parameters=params)
 
     def _get_base_network(self):
-        """Load and return the base pypowsybl network from config path, caching it."""
+        """Return the base pypowsybl network, caching it on the service.
+
+        **Mutualises `network_service.network`** when it is available, so the
+        same .xiidm file is not re-parsed twice by pypowsybl. On large grids
+        the XML parse alone is ~3-5 s — previously we paid it twice because
+        `network_service` and `recommender_service` each called
+        `pp.network.load()` on the same path.
+
+        Sharing is safe:
+          - `network_service` only READS the network (get_lines,
+            get_voltage_levels, …), never switches variants.
+          - `recommender_service` switches variants inside
+            `_get_n_variant` / `_get_n1_variant` but always restores the
+            original variant in a try/finally, so `network_service` reads
+            see a consistent state.
+
+        Falls back to `pp.network.load(config.ENV_PATH)` when
+        `network_service.network` is None — preserves the behaviour for
+        unit tests that construct a `RecommenderService` directly without
+        going through `/api/config`.
+        """
         if self._base_network is not None:
             return self._base_network
+
+        # Prefer the Network instance already loaded by network_service.
+        # See docstring for the safety argument.
+        try:
+            from expert_backend.services.network_service import network_service
+            if network_service.network is not None:
+                n = network_service.network
+                # Convenience method not in pypowsybl API: return line IDs as a list.
+                # Idempotent: re-attaching on an already-monkey-patched network
+                # is a no-op since it's the same lambda shape.
+                n.get_line_ids = lambda: n.get_lines().index.tolist()
+                self._base_network = n
+                # PST tap snapshot must still run (recommender-specific state).
+                self._capture_initial_pst_taps(n)
+                return self._base_network
+        except Exception as e:
+            # Fall through to the standalone load — don't let a network_service
+            # import error break the recommender's own path.
+            logger.warning(f"[_get_base_network] network_service unavailable, loading standalone: {e}")
 
         import pypowsybl as pp
 
@@ -424,7 +463,7 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
 
         if not network_file.exists():
             raise FileNotFoundError(f"Network file not found: {network_file}")
-        
+
         n = pp.network.load(str(network_file))
         # Convenience method not in pypowsybl API: return line IDs as a list
         n.get_line_ids = lambda: n.get_lines().index.tolist()

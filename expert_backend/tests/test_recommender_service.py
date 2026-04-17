@@ -233,6 +233,61 @@ class TestGetMonitoringParametersWithContext:
         assert lines == ["L1", "L2", "L3"]
 
 
+class TestGetBaseNetworkMutualisation:
+    """`_get_base_network` must reuse `network_service.network` when available
+    to avoid re-parsing the same .xiidm file twice (~3-5 s of wasted pypowsybl
+    work on large grids). See docs/perf-shared-network.md."""
+
+    def test_reuses_network_service_network_when_available(self):
+        from expert_backend.services.network_service import network_service
+
+        service = RecommenderService()
+        sentinel = MagicMock(name="shared_pypowsybl_network")
+        # `_capture_initial_pst_taps` touches pypowsybl tap-changer APIs —
+        # stub it out so the test doesn't need a real pp object.
+        saved = network_service.network
+        network_service.network = sentinel
+        try:
+            with patch.object(service, "_capture_initial_pst_taps"), \
+                 patch("pypowsybl.network.load") as mock_load:
+                n = service._get_base_network()
+                # Mutualisation: no fresh pp.network.load() was issued.
+                mock_load.assert_not_called()
+                assert n is sentinel
+                # Convenience method installed.
+                assert callable(getattr(n, "get_line_ids", None))
+                # Cache populated so the next call is a no-op.
+                assert service._base_network is sentinel
+        finally:
+            network_service.network = saved
+
+    def test_falls_back_to_standalone_load_when_network_service_empty(self):
+        """Preserves direct-instantiation path for unit tests and callers
+        that bypass `/api/config` (and therefore don't populate
+        `network_service.network`)."""
+        from expert_backend.services.network_service import network_service
+
+        service = RecommenderService()
+        loaded = MagicMock(name="freshly_loaded")
+
+        saved = network_service.network
+        network_service.network = None
+        try:
+            env_path = MagicMock()
+            env_path.is_dir.return_value = False
+            env_path.exists.return_value = True
+            env_path.__str__ = lambda self: "/fake/grid.xiidm"  # type: ignore[assignment]
+
+            with patch.object(config, "ENV_PATH", env_path), \
+                 patch.object(service, "_capture_initial_pst_taps"), \
+                 patch("pypowsybl.network.load", return_value=loaded) as mock_load:
+                n = service._get_base_network()
+                mock_load.assert_called_once()
+                assert n is loaded
+        finally:
+            network_service.network = saved
+
+
 class TestPrefetchBaseNad:
     """Tests for the base-NAD prefetch (perf #2 — see docs/perf-nad-prefetch.md).
 
