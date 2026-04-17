@@ -48,12 +48,27 @@ _RE_TRAILING_ZEROS = re.compile(r'(?<=\d)\.(\d*?)0+(?=[,\s)"])')
 # Inline-style fold: three variants to cover every order-of-attribute
 # combination pypowsybl is known to emit. Each variant merges the
 # text-anchor style into the element's class list rather than replacing
-# an existing class attribute (which would be malformed XML).
+# an existing class attribute (which would be malformed XML:
+# "Attribute class redefined").
+#
+# The BEFORE / AFTER variants tolerate ANY intervening attributes between
+# class="..." and style="text-anchor:end" as long as both live inside the
+# SAME element start tag. The `[^<>]*?` group excludes `<` and `>` so it
+# cannot span tag boundaries, and the leading `\s+` anchors the match to
+# an attribute boundary (not a style substring inside text content). The
+# STANDALONE fallback is only safe when BOTH previous regexes have
+# already consumed every class-adjacent occurrence on the same tag —
+# otherwise it would blindly add a second `class="..."` attribute to an
+# element that already has one.
 _TE_CLASS = 'nad-te'
 _TE_CSS_RULE = f'.{_TE_CLASS}{{text-anchor:end}}'
-_RE_TE_CLASS_BEFORE = re.compile(r'class="([^"]*)"\s+style="text-anchor:end"')
-_RE_TE_CLASS_AFTER = re.compile(r'style="text-anchor:end"\s+class="([^"]*)"')
-_RE_TE_STANDALONE = re.compile(r'style="text-anchor:end"')
+_RE_TE_CLASS_BEFORE = re.compile(
+    r'class="([^"]*)"([^<>]*?)\s+style="text-anchor:end"'
+)
+_RE_TE_CLASS_AFTER = re.compile(
+    r'\s+style="text-anchor:end"([^<>]*?)class="([^"]*)"'
+)
+_RE_TE_STANDALONE = re.compile(r'\s+style="text-anchor:end"')
 
 # Style-block closer; the fold's CSS rule is injected immediately before
 # `</style>` so it sits inside any `<![CDATA[...]]>` wrapper without us
@@ -79,12 +94,23 @@ def slim_svg(svg: str) -> str:
     # skip the fold entirely — converting inline styles to a class
     # without the class definition would change visual output.
     if _RE_STYLE_CLOSE.search(out):
-        def _append_class(m: re.Match[str]) -> str:
-            return f'class="{m.group(1)} {_TE_CLASS}"'
 
-        out, n1 = _RE_TE_CLASS_BEFORE.subn(_append_class, out)
-        out, n2 = _RE_TE_CLASS_AFTER.subn(_append_class, out)
-        out, n3 = _RE_TE_STANDALONE.subn(f'class="{_TE_CLASS}"', out)
+        def _append_before(m: re.Match[str]) -> str:
+            # class="X" ...attrs... style="text-anchor:end"
+            #   -> class="X nad-te" ...attrs...
+            return f'class="{m.group(1)} {_TE_CLASS}"{m.group(2)}'
+
+        def _append_after(m: re.Match[str]) -> str:
+            # " style="text-anchor:end" ...attrs... class="X""
+            #   -> " ...attrs... class="X nad-te""
+            return f'{m.group(1)}class="{m.group(2)} {_TE_CLASS}"'
+
+        out, n1 = _RE_TE_CLASS_BEFORE.subn(_append_before, out)
+        out, n2 = _RE_TE_CLASS_AFTER.subn(_append_after, out)
+        # Remaining standalone occurrences: we've already consumed every
+        # class-adjacent case, so anything left has no class attribute in
+        # the same tag and it's safe to synthesize one.
+        out, n3 = _RE_TE_STANDALONE.subn(f' class="{_TE_CLASS}"', out)
 
         # Inject the CSS rule exactly once, right before `</style>`.
         # Done after the folds so the total count of folds tells us

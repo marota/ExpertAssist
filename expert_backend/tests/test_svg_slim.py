@@ -81,6 +81,35 @@ class TestTextAnchorFold:
         assert 'class="c16 nad-te"' in out
         assert 'style="text-anchor:end"' not in out
 
+    def test_class_and_style_separated_by_other_attrs(self):
+        """Regression test for the `Attribute class redefined` bug.
+
+        When pypowsybl emits `class="..."` and `style="text-anchor:end"`
+        with OTHER attributes between them in the same element start
+        tag, the slimmer must still merge them into a single class
+        attribute — not produce a second `class="..."` attribute
+        (which makes the browser refuse to render the SVG).
+        """
+        # Attributes between class and style, in both orders.
+        inp = (self._STYLE_HEADER
+               + '<text class="c16" x="10" y="20" style="text-anchor:end">a</text>'
+               + '<text style="text-anchor:end" fill="red" class="c40">b</text>'
+               + '</svg>')
+        out = slim_svg(inp)
+        # No duplicate class="..." anywhere.
+        assert 'class="nad-te"' not in out  # would duplicate existing class
+        assert 'style="text-anchor:end"' not in out
+        # Both elements retain their original extra attrs and have the
+        # nad-te class appended in-place.
+        assert 'class="c16 nad-te"' in out
+        assert 'x="10" y="20"' in out
+        assert 'class="c40 nad-te"' in out
+        assert 'fill="red"' in out
+        # No tag carries two class= attributes (the parse failure mode).
+        import re
+        for tag in re.finditer(r'<\w[^>]*>', out):
+            assert tag.group(0).count('class="') <= 1, tag.group(0)
+
     def test_css_rule_injected_only_once_for_many_occurrences(self):
         body = ''.join(
             f'<text class="c16" style="text-anchor:end">{i}</text>'
