@@ -213,7 +213,76 @@ offender — is now ~44 % faster on the main thread.
 ## Remaining ceiling
 
 Paint is still ~5.3 s on action, ~2.6 s on N-1. This is bounded by the
-~200 k-node SVG that's in the active tab. That floor is the target of
-**step 4 — server-side SVG slimming** (round coordinates, drop unused
-`<title>`/`<desc>`, fold inline styles). Step 4 benefits all three paths
-including load study, and compounds with the gzip ratio above.
+~200 k-node SVG that's in the active tab.
+
+## Why "step 4 — server-side SVG slimming" was attempted, measured, and reverted
+
+An attempt was made to attack that floor by rewriting the SVG string
+before it was sent:
+
+1. **Fold the ~10 k inline `style="text-anchor:end"` attributes** into a
+   single `.nad-te` CSS class rule injected into the existing `<style>`
+   block. Tried in commit `3cceab6`. v4 traces measured the result:
+
+   | Scenario | Paint total v3 | Paint total v4 | Δ |
+   |---|---|---|---|
+   | N-1 | 2 588 ms | 4 140 ms | **+60 %** |
+   | Manual action | 5 335 ms | 10 201 ms | **+91 %** |
+
+   Root cause: replacing 10 000+ local inline styles with a single
+   CSS-class rule forced Blink into full selector matching — every
+   text element tested against every rule in the `<style>` block on
+   every style recalc. That cost (scaling as `elements × rules`)
+   dominated Paint. The wire-byte win was ~10 KB on a 2.8 MB gzipped
+   payload — dwarfed by the browser-side cost. Reverted in `ec51ecd`.
+
+2. **Strip trailing zeros from decimal fractions** (`321345.0` → `321345`).
+   Kept after the fold revert. v5 traces measured:
+
+   | Scenario | Paint total v3 | Paint total v5 | Δ |
+   |---|---|---|---|
+   | N-1 | 2 588 ms | 3 937 ms | +52 % |
+   | Manual action | 5 335 ms | 9 382 ms | +76 % |
+   | Load study | 1 139 ms | 1 602 ms | +41 % |
+
+   v5 was modestly better than v4 but did NOT recover to v3 levels.
+   Even loading — where neither slim transform has any meaningful effect
+   — was 41 % worse on Paint. This ruled out a clean causal link, but
+   also meant the step couldn't be defended as a measured improvement.
+
+   Wire-byte win: **27 KB out of 2.8 MB gzipped (< 1 %)**. Not worth
+   holding onto given the measurement noise / possible unmeasured cost.
+   Reverted after the v5 traces confirmed it wasn't pulling its weight.
+
+### Lessons learned
+
+- **Always measure on the full client-side pipeline, not just payload
+  size**. The fold's byte savings were real; the Paint cost was only
+  visible after profiling. The trailing-zero strip had tiny byte savings
+  and no clear client-side benefit either.
+- **Gzip already captures most of the repetition** — any server-side
+  rewrite that targets "repeated patterns" is competing with deflate on
+  a level where deflate usually wins.
+- **Chrome Perf traces have meaningful run-to-run variance** (~10-30 %
+  on Paint totals). Three-way diffs (v1 baseline / vX intermediate /
+  latest) are more reliable than single before/after snapshots.
+
+## What shipped on this branch
+
+| Step | What | Measured impact |
+|---|---|---|
+| 1 | `display:none` inactive SVG tabs (`274ae09`) | N-1 -27 %, Action -36 % long-task time |
+| 2 | Per-endpoint gzip on 9 SVG/JSON endpoints (`01f0587`) | Load study -14 %, N-1 -19 %, Action -13 % additional long-task time |
+| 4 | Server-side SVG slimming — **reverted** | Not shipped. See section above for why. |
+
+**Cumulative measured effect (v1 → v3, steps 1+2 only)**:
+
+| Scenario | Long tasks v1 | Long tasks v3 | Δ |
+|---|---|---|---|
+| Load study | 6 782 ms | 6 125 ms | **-10 %** |
+| N-1 contingency | 15 984 ms | 9 404 ms | **-41 %** |
+| Manual action | 24 938 ms | 13 957 ms | **-44 %** |
+
+The manual-action path, previously the worst offender, is the biggest
+winner at ~44 % faster main-thread work. These are the numbers the
+branch currently delivers.
