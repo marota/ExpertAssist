@@ -21,6 +21,7 @@ from expert_op4grid_recommender.environment import load_interesting_lines
 from expert_op4grid_recommender.utils.make_env_utils import create_olf_rte_parameter
 
 from expert_backend.services.sanitize import sanitize_for_json
+from expert_backend.services.svg_slim import slim_svg
 
 logger = logging.getLogger(__name__)
 
@@ -93,22 +94,39 @@ class DiagramMixin:
                 from lxml import etree
                 parser = etree.XMLParser(recover=True, huge_tree=True)
                 root = etree.fromstring(svg.encode('utf-8'), parser=parser)
-                
+
                 # Find all elements that have at least one attribute containing "NaN"
                 to_remove = []
                 for el in root.iter():
                     if any("NaN" in str(val) for val in el.attrib.values()):
                         to_remove.append(el)
-                
+
                 for el in to_remove:
                     parent = el.getparent()
                     if parent is not None:
                         parent.remove(el)
-                
+
                 svg = etree.tostring(root, encoding='unicode')
                 logger.info(f"[RECO] NaN-stripping complete: removed {len(to_remove)} elements.")
             except Exception as e:
                 logger.warning(f"Warning: Failed to strip NaN from SVG: {e}")
+
+        # Lossless size reduction: fold repeating inline `text-anchor:end`
+        # into a single CSS class + strip trailing zeros from numeric
+        # fractions. On representative 9.7 MB French 400 kV N-1 NADs this
+        # saves ~7-8 % raw bytes; combined with the gzip middleware on the
+        # diagram endpoints it further reduces wire time and client-side
+        # parse / paint cost. See expert_backend/services/svg_slim.py for
+        # the per-transform rationale and safety arguments.
+        slim_t0 = time.time()
+        pre_len = len(svg)
+        svg = slim_svg(svg)
+        if pre_len and pre_len != len(svg):
+            logger.info(
+                f"[RECO] SVG slimmed: {pre_len} -> {len(svg)} bytes "
+                f"(-{100 * (pre_len - len(svg)) / pre_len:.1f}%, "
+                f"{time.time() - slim_t0:.2f}s)"
+            )
 
         return {
             "svg": svg,
