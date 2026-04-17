@@ -683,6 +683,149 @@ class TestSimulateManualActionWithContext:
                (len(call_kwargs[0]) >= 4 and call_kwargs[0][3] == ["LINE_A", "LINE_C"])
 
 
+class TestSimulateAndVariantDiagramStream:
+    """Combined `POST /api/simulate-and-variant-diagram` NDJSON endpoint.
+
+    Replaces the legacy two-shot
+    `simulateManualAction -> getActionVariantDiagram` fallback path with a
+    single streamed response so the action card's rho numbers can paint
+    as soon as the grid2op simulation completes without waiting for the
+    (expensive) post-action NAD regeneration.
+
+    These tests lock in:
+      - the two-event ordering (`metrics` first, then `diagram`);
+      - the streaming content-type (`application/x-ndjson`);
+      - the no-gzip invariant on streamed responses — wrapping this endpoint
+        in `_maybe_gzip_json` or the global `GZipMiddleware` would break
+        early-event delivery, which was the root cause of the step-2 rollback
+        (see docs/perf-per-endpoint-gzip.md).
+    """
+
+    _SIM_RESULT = {
+        "action_id": "act_1",
+        "description_unitaire": "Open LINE_A",
+        "rho_before": [0.95, 1.02],
+        "rho_after": [0.80, 0.70],
+        "max_rho": 0.80,
+        "max_rho_line": "LINE_A",
+        "is_rho_reduction": True,
+        "non_convergence": None,
+        "lines_overloaded": ["LINE_A"],
+    }
+    _DIAG_RESULT = {
+        "svg": "<svg>post-action</svg>",
+        "metadata": "{}",
+        "action_id": "act_1",
+        "lf_converged": True,
+        "lf_status": "CONVERGED",
+        "non_convergence": None,
+    }
+
+    def test_streams_metrics_then_diagram(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.simulate_manual_action.return_value = self._SIM_RESULT
+        mock_rs.get_action_variant_diagram.return_value = self._DIAG_RESULT
+
+        response = client.post(
+            "/api/simulate-and-variant-diagram",
+            json={
+                "action_id": "act_1",
+                "disconnected_element": "LINE_B",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith(
+            "application/x-ndjson"
+        )
+        # Must NOT be gzipped — see class docstring.
+        assert response.headers.get("content-encoding") != "gzip"
+
+        lines = [ln for ln in response.text.splitlines() if ln.strip()]
+        assert len(lines) == 2
+        metrics = json.loads(lines[0])
+        diagram = json.loads(lines[1])
+        assert metrics["type"] == "metrics"
+        assert metrics["description_unitaire"] == "Open LINE_A"
+        assert metrics["rho_after"] == [0.80, 0.70]
+        assert diagram["type"] == "diagram"
+        assert diagram["svg"] == "<svg>post-action</svg>"
+        assert diagram["lf_converged"] is True
+
+    def test_ignores_accept_encoding_gzip(self, client, mock_services):
+        """Client-sent `Accept-Encoding: gzip` must not cause the stream to be
+        wrapped — the frontend reads NDJSON with TextDecoder and needs each
+        event to arrive as soon as the server yields it.
+        """
+        _, mock_rs = mock_services
+        mock_rs.simulate_manual_action.return_value = self._SIM_RESULT
+        mock_rs.get_action_variant_diagram.return_value = self._DIAG_RESULT
+
+        response = client.post(
+            "/api/simulate-and-variant-diagram",
+            json={"action_id": "act_1", "disconnected_element": "LINE_B"},
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert response.status_code == 200
+        assert response.headers.get("content-encoding") != "gzip"
+
+    def test_error_on_simulate_is_reported_and_closes_stream(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.simulate_manual_action.side_effect = ValueError("no dict loaded")
+
+        response = client.post(
+            "/api/simulate-and-variant-diagram",
+            json={"action_id": "act_1", "disconnected_element": "LINE_B"},
+        )
+        assert response.status_code == 200
+        lines = [ln for ln in response.text.splitlines() if ln.strip()]
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["type"] == "error"
+        assert "no dict loaded" in event["message"]
+        mock_rs.get_action_variant_diagram.assert_not_called()
+
+    def test_error_on_diagram_after_successful_metrics(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.simulate_manual_action.return_value = self._SIM_RESULT
+        mock_rs.get_action_variant_diagram.side_effect = ValueError("no observation")
+
+        response = client.post(
+            "/api/simulate-and-variant-diagram",
+            json={"action_id": "act_1", "disconnected_element": "LINE_B"},
+        )
+        assert response.status_code == 200
+        lines = [ln for ln in response.text.splitlines() if ln.strip()]
+        # Metrics event still arrives — the UI can at least update the sidebar.
+        assert len(lines) == 2
+        assert json.loads(lines[0])["type"] == "metrics"
+        assert json.loads(lines[1])["type"] == "error"
+
+    def test_passes_optional_params_through(self, client, mock_services):
+        _, mock_rs = mock_services
+        mock_rs.simulate_manual_action.return_value = self._SIM_RESULT
+        mock_rs.get_action_variant_diagram.return_value = self._DIAG_RESULT
+
+        client.post(
+            "/api/simulate-and-variant-diagram",
+            json={
+                "action_id": "act_1",
+                "disconnected_element": "LINE_B",
+                "action_content": {"switches": {"sw1": True}},
+                "lines_overloaded": ["LINE_A", "LINE_C"],
+                "target_mw": 42.5,
+                "target_tap": 3,
+                "mode": "delta",
+            },
+        )
+        call = mock_rs.simulate_manual_action.call_args
+        assert call.kwargs["action_content"] == {"switches": {"sw1": True}}
+        assert call.kwargs["lines_overloaded"] == ["LINE_A", "LINE_C"]
+        assert call.kwargs["target_mw"] == 42.5
+        assert call.kwargs["target_tap"] == 3
+        diag_call = mock_rs.get_action_variant_diagram.call_args
+        assert diag_call.kwargs["mode"] == "delta"
+
+
 class TestDiagramGzipCompression:
     """Per-endpoint gzip on the 3 large SVG + 1 actions endpoints.
 

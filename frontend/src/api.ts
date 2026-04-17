@@ -202,4 +202,42 @@ export const api = {
         }
         return response;
     },
+    /**
+     * Combined manual-action simulation + post-action NAD generation, returned as an
+     * NDJSON stream of two events:
+     *   { type: "metrics", ... }   — simulate_manual_action result (rho_before/after, ...)
+     *   { type: "diagram", ... }   — get_action_variant_diagram result (svg, metadata, ...)
+     *
+     * Replaces the previous "simulateManualAction then getActionVariantDiagram" fallback
+     * pattern (one round-trip + earlier sidebar update instead of two sequential
+     * request/response cycles). Caller reads the stream with the same
+     * TextDecoder + split('\n') loop used for `runAnalysisStep2Stream`.
+     */
+    simulateAndVariantDiagramStream: async (params: {
+        action_id: string;
+        disconnected_element: string;
+        action_content?: Record<string, unknown> | null;
+        lines_overloaded?: string[] | null;
+        target_mw?: number | null;
+        target_tap?: number | null;
+        mode?: 'network' | 'delta';
+    }): Promise<Response> => {
+        const response = await fetch(`${API_BASE_URL}/api/simulate-and-variant-diagram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action_id: params.action_id,
+                disconnected_element: params.disconnected_element,
+                action_content: params.action_content ?? null,
+                lines_overloaded: params.lines_overloaded ?? null,
+                target_mw: params.target_mw ?? null,
+                target_tap: params.target_tap ?? null,
+                mode: params.mode ?? 'network',
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`Simulate-and-variant-diagram failed: ${response.statusText}`);
+        }
+        return response;
+    },
 };

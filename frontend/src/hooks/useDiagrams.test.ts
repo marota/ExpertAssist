@@ -29,6 +29,9 @@ vi.mock('../api', () => ({
         getN1Diagram: vi.fn().mockResolvedValue({ svg: '<svg></svg>', metadata: null }),
         getActionVariantDiagram: vi.fn().mockResolvedValue({ svg: '<svg></svg>', metadata: null }),
         simulateManualAction: vi.fn().mockResolvedValue({}),
+        simulateAndVariantDiagramStream: vi.fn().mockResolvedValue({
+            body: { getReader: () => ({ read: async () => ({ done: true, value: undefined }) }) },
+        }),
         getNSld: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
         getN1Sld: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
         getActionVariantSld: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),

@@ -745,6 +745,70 @@ def simulate_manual_action(request: ManualActionRequest):
         traceback.print_exc()
         raise HTTPException(status_code=400, detail=str(e))
 
+
+class SimulateAndVariantDiagramRequest(BaseModel):
+    # Simulation parameters — same as ManualActionRequest
+    action_id: str
+    disconnected_element: str
+    action_content: dict | None = None
+    lines_overloaded: list[str] | None = None
+    target_mw: float | None = None
+    target_tap: int | None = None
+    # Diagram parameter — same as ActionVariantRequest
+    mode: str = "network"  # "network" or "delta"
+
+
+@app.post("/api/simulate-and-variant-diagram")
+async def simulate_and_variant_diagram(request: SimulateAndVariantDiagramRequest):
+    """Simulate a manual action and return its post-action NAD in one streamed call.
+
+    NDJSON stream with two events (in order):
+      { "type": "metrics", ... }   — grid2op simulate_manual_action result:
+                                     rho_before / rho_after / max_rho / non_convergence / ...
+                                     emitted as soon as the simulation completes so the
+                                     sidebar action card can update before the diagram is ready.
+      { "type": "diagram", ... }   — get_action_variant_diagram result:
+                                     svg / metadata / flow_deltas / asset_deltas / lf_converged / ...
+
+    On error at either step a single { "type": "error", "message": str } event is emitted
+    and the stream closes.
+
+    This replaces the frontend's fallback "simulate then getActionVariantDiagram" pattern
+    (one round-trip instead of two) and lets the UI paint the action card's rho numbers
+    ~5 s ahead of the post-action SVG on large grids, where the NAD regeneration is the
+    expensive step.
+
+    Like /api/run-analysis-step2 this uses StreamingResponse with `application/x-ndjson`.
+    It is deliberately NOT routed through `_maybe_gzip_json` — the per-endpoint gzip
+    helper is for non-streaming responses only, and wrapping an NDJSON stream in gzip is
+    exactly what the previous `GZipMiddleware` attempt broke (see `perf-per-endpoint-gzip.md`).
+    """
+    def event_generator():
+        try:
+            # Step 1: simulate. `simulate_manual_action` stores the resulting observation
+            # in `self._last_result["prioritized_actions"][action_id]`, which is what the
+            # subsequent `get_action_variant_diagram` reads to pick the post-action variant.
+            sim_result = recommender_service.simulate_manual_action(
+                request.action_id, request.disconnected_element,
+                action_content=request.action_content,
+                lines_overloaded=request.lines_overloaded,
+                target_mw=request.target_mw,
+                target_tap=request.target_tap,
+            )
+            yield json.dumps({"type": "metrics", **sim_result}) + "\n"
+
+            # Step 2: diagram. Uses the freshly-stored observation, no redundant compute.
+            diagram = recommender_service.get_action_variant_diagram(
+                request.action_id, mode=request.mode,
+            )
+            yield json.dumps({"type": "diagram", **diagram}) + "\n"
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
 @app.post("/api/compute-superposition")
 def compute_superposition(request: ComputeSuperpositionRequest):
     """Compute the combined effect of two actions using the superposition theorem."""

@@ -356,6 +356,13 @@ export function useDiagrams(
       setActionDiagram({ ...res, svg, originalViewBox: viewBox });
     } catch {
       if (selectedBranch) {
+        // Fallback path: action isn't in the recommender's prioritised list yet
+        // so the backend has no post-action observation cached. Previously this
+        // was a two-shot HTTP call (simulateManualAction then getActionVariantDiagram),
+        // which serialised the grid2op simulation and the pypowsybl NAD
+        // generation across two round-trips. We now use the combined streamed
+        // endpoint: the action card's rho numbers update as soon as the
+        // simulation completes (≈5 s earlier than the diagram on large grids).
         try {
           let actionContent: Record<string, unknown> | null = null;
           if (actionId.includes('+')) {
@@ -371,34 +378,80 @@ export function useDiagrams(
             actionContent = (detail?.action_topology as unknown as Record<string, unknown>) ?? null;
           }
           const linesOvl = result?.lines_overloaded?.length ? result.lines_overloaded : null;
-          const simRes = await api.simulateManualAction(actionId, selectedBranch, actionContent, linesOvl);
-          setResult(prev => {
-            if (!prev) return prev;
-            const existing = prev.actions[actionId] || {} as Partial<ActionDetail>;
-            const hasRho = (existing.rho_before?.length ?? 0) > 0;
-            return {
-              ...prev,
-              actions: {
-                ...prev.actions,
-                [actionId]: {
-                  ...existing,
-                  description_unitaire: existing.description_unitaire || simRes.description_unitaire,
-                  rho_before: hasRho ? existing.rho_before : simRes.rho_before,
-                  rho_after: hasRho ? existing.rho_after : simRes.rho_after,
-                  max_rho: hasRho ? existing.max_rho : simRes.max_rho,
-                  max_rho_line: hasRho ? existing.max_rho_line : simRes.max_rho_line,
-                  is_rho_reduction: hasRho ? existing.is_rho_reduction : simRes.is_rho_reduction,
-                  non_convergence: simRes.non_convergence,
-                  is_islanded: simRes.is_islanded,
-                  n_components: simRes.n_components,
-                  disconnected_mw: simRes.disconnected_mw,
-                } as ActionDetail,
-              },
-            };
+
+          const response = await api.simulateAndVariantDiagramStream({
+            action_id: actionId,
+            disconnected_element: selectedBranch,
+            action_content: actionContent,
+            lines_overloaded: linesOvl,
           });
-          const res = await api.getActionVariantDiagram(actionId);
-          const { svg, viewBox } = processSvg(res.svg, voltageLevelsLength);
-          setActionDiagram({ ...res, svg, originalViewBox: viewBox });
+          const reader = response.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let streamErr: string | null = null;
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop()!;
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let event: Record<string, unknown>;
+              try {
+                event = JSON.parse(line);
+              } catch {
+                continue; // incomplete row
+              }
+              if (event.type === 'metrics') {
+                const simRes = event as unknown as {
+                  description_unitaire: string;
+                  rho_before: number[] | null;
+                  rho_after: number[] | null;
+                  max_rho: number | null;
+                  max_rho_line: string;
+                  is_rho_reduction: boolean;
+                  non_convergence: string | null;
+                  is_islanded?: boolean;
+                  n_components?: number;
+                  disconnected_mw?: number;
+                };
+                setResult(prev => {
+                  if (!prev) return prev;
+                  const existing = prev.actions[actionId] || {} as Partial<ActionDetail>;
+                  const hasRho = (existing.rho_before?.length ?? 0) > 0;
+                  return {
+                    ...prev,
+                    actions: {
+                      ...prev.actions,
+                      [actionId]: {
+                        ...existing,
+                        description_unitaire: existing.description_unitaire || simRes.description_unitaire,
+                        rho_before: hasRho ? existing.rho_before : simRes.rho_before,
+                        rho_after: hasRho ? existing.rho_after : simRes.rho_after,
+                        max_rho: hasRho ? existing.max_rho : simRes.max_rho,
+                        max_rho_line: hasRho ? existing.max_rho_line : simRes.max_rho_line,
+                        is_rho_reduction: hasRho ? existing.is_rho_reduction : simRes.is_rho_reduction,
+                        non_convergence: simRes.non_convergence,
+                        is_islanded: simRes.is_islanded,
+                        n_components: simRes.n_components,
+                        disconnected_mw: simRes.disconnected_mw,
+                      } as ActionDetail,
+                    },
+                  };
+                });
+              } else if (event.type === 'diagram') {
+                const diag = event as unknown as DiagramData;
+                const { svg, viewBox } = processSvg(diag.svg, voltageLevelsLength);
+                setActionDiagram({ ...diag, svg, originalViewBox: viewBox });
+              } else if (event.type === 'error') {
+                streamErr = (event.message as string) || 'stream error';
+              }
+            }
+          }
+          if (streamErr) {
+            throw new Error(streamErr);
+          }
         } catch (simErr) {
           console.error('Failed to simulate and fetch diagram for', actionId, simErr);
           setError('Failed to load action diagram for ' + actionId);
