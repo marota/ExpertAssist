@@ -7,24 +7,36 @@
 
 """Lossless SVG size reduction for large pypowsybl NAD outputs.
 
-Two pure string rewrites, each verified on representative 9.7 MB French
-400 kV N-1 NADs to preserve visual output:
+Currently a single pure string rewrite verified on representative 9.7 MB
+French 400 kV N-1 NADs to preserve visual output:
 
-1. Fold the ~10 k inline `style="text-anchor:end"` attributes (~2.5 %
-   of the raw file on large grids) into a single CSS class
-   `nad-te` rule injected into the existing `<style>` block. When the
-   element already has a `class="..."` attribute, we append to it rather
-   than emitting a duplicate attribute.
+- Strip trailing zeros from decimal fractions in numeric literals
+  (e.g. `321345.0` -> `321345`, `120.50` -> `120.5`). pypowsybl emits
+  coordinates at ~1/1.6M of the viewport width for the grids we target,
+  so these tokens are already sub-pixel and the value is unchanged.
+  Only the serialized representation shrinks.
 
-2. Strip trailing zeros from decimal fractions in numeric literals
-   (e.g. `321345.0` -> `321345`, `120.50` -> `120.5`). pypowsybl emits
-   coordinates at ~1/1.6M of the viewport width for the grids we target,
-   so these tokens are already sub-pixel and the value is unchanged. Only
-   the serialized representation shrinks.
+## Rejected: folding `style="text-anchor:end"` into a CSS class
 
-Combined savings on a representative 9.7 MB N-1 NAD: ~7-8 % raw bytes,
-compounding with the existing per-endpoint gzip to give a further
-reduction on the wire and in client-side parse / paint time.
+An earlier version of this file also folded the ~10 k inline
+`style="text-anchor:end"` attributes on `<text>` nodes into a shared
+`.nad-te` class injected into the existing `<style>` block. That saved
+about 2 % additional raw bytes on the reference 9.7 MB NAD.
+
+In practice the fold was a NET LOSS in browser-side work: replacing
+10 000+ local inline styles with a single CSS-class rule forced Blink
+to do full CSS-selector matching for each text element against every
+rule in the NAD's `<style>` block on every style recalc. On the
+reference French 400 kV grid this increased:
+
+  - Paint total     +60 %  (N-1)   /  +91 %  (action variant)
+  - Layerize total  +41 %  (N-1)   /  +46 %  (action variant)
+  - Long tasks      +41 %  (N-1)   /  +40 %  (action variant)
+
+The byte win (~176 KB raw, ~10 KB after gzip) is dwarfed by the
+browser-side cost. See the "v3 -> v4" rows in `docs/perf-svg-slimming.md`
+for the measured regression; the fold was removed in favour of keeping
+the pypowsybl inline styles as-is.
 """
 
 from __future__ import annotations
@@ -45,86 +57,22 @@ import re
 # the captured portion are consumed by the `0+` quantifier.
 _RE_TRAILING_ZEROS = re.compile(r'(?<=\d)\.(\d*?)0+(?=[,\s)"])')
 
-# Inline-style fold: three variants to cover every order-of-attribute
-# combination pypowsybl is known to emit. Each variant merges the
-# text-anchor style into the element's class list rather than replacing
-# an existing class attribute (which would be malformed XML:
-# "Attribute class redefined").
-#
-# The BEFORE / AFTER variants tolerate ANY intervening attributes between
-# class="..." and style="text-anchor:end" as long as both live inside the
-# SAME element start tag. The `[^<>]*?` group excludes `<` and `>` so it
-# cannot span tag boundaries, and the leading `\s+` anchors the match to
-# an attribute boundary (not a style substring inside text content). The
-# STANDALONE fallback is only safe when BOTH previous regexes have
-# already consumed every class-adjacent occurrence on the same tag —
-# otherwise it would blindly add a second `class="..."` attribute to an
-# element that already has one.
-_TE_CLASS = 'nad-te'
-_TE_CSS_RULE = f'.{_TE_CLASS}{{text-anchor:end}}'
-_RE_TE_CLASS_BEFORE = re.compile(
-    r'class="([^"]*)"([^<>]*?)\s+style="text-anchor:end"'
-)
-_RE_TE_CLASS_AFTER = re.compile(
-    r'\s+style="text-anchor:end"([^<>]*?)class="([^"]*)"'
-)
-_RE_TE_STANDALONE = re.compile(r'\s+style="text-anchor:end"')
-
-# Style-block closer; the fold's CSS rule is injected immediately before
-# `</style>` so it sits inside any `<![CDATA[...]]>` wrapper without us
-# needing to know whether one is present.
-_RE_STYLE_CLOSE = re.compile(r'</style>')
-
-
 def slim_svg(svg: str) -> str:
     """Return a byte-reduced but visually identical copy of ``svg``.
 
     Safe for empty / non-SVG strings (they are returned unchanged).
-    Callers should treat this as best-effort: if any transform fails
+    Callers should treat this as best-effort: if the transform fails
     mid-string the remainder of the file is still well-formed because
     each rewrite is a local substitution.
     """
     if not svg:
         return svg
 
-    out = svg
-
-    # 1. Fold inline `text-anchor:end` only when we can also inject the
-    # matching CSS rule. If there's no `</style>` tag in the document we
-    # skip the fold entirely — converting inline styles to a class
-    # without the class definition would change visual output.
-    if _RE_STYLE_CLOSE.search(out):
-
-        def _append_before(m: re.Match[str]) -> str:
-            # class="X" ...attrs... style="text-anchor:end"
-            #   -> class="X nad-te" ...attrs...
-            return f'class="{m.group(1)} {_TE_CLASS}"{m.group(2)}'
-
-        def _append_after(m: re.Match[str]) -> str:
-            # " style="text-anchor:end" ...attrs... class="X""
-            #   -> " ...attrs... class="X nad-te""
-            return f'{m.group(1)}class="{m.group(2)} {_TE_CLASS}"'
-
-        out, n1 = _RE_TE_CLASS_BEFORE.subn(_append_before, out)
-        out, n2 = _RE_TE_CLASS_AFTER.subn(_append_after, out)
-        # Remaining standalone occurrences: we've already consumed every
-        # class-adjacent case, so anything left has no class attribute in
-        # the same tag and it's safe to synthesize one.
-        out, n3 = _RE_TE_STANDALONE.subn(f' class="{_TE_CLASS}"', out)
-
-        # Inject the CSS rule exactly once, right before `</style>`.
-        # Done after the folds so the total count of folds tells us
-        # whether the rule is worth injecting at all.
-        if (n1 + n2 + n3) > 0 and _TE_CSS_RULE not in out:
-            out = _RE_STYLE_CLOSE.sub(_TE_CSS_RULE + '</style>', out, count=1)
-
-    # 2. Trim trailing zeros from decimal fractions inside numeric
-    # tokens. `.0` / `.00` etc. become '' (dot stripped with zeros);
+    # Trim trailing zeros from decimal fractions inside numeric tokens.
+    # `.0` / `.00` etc. become '' (dot stripped with zeros);
     # `.50` becomes `.5`; `.5` is left alone (no trailing zeros).
     def _trim(m: re.Match[str]) -> str:
         frac = m.group(1)
         return ('.' + frac) if frac else ''
 
-    out = _RE_TRAILING_ZEROS.sub(_trim, out)
-
-    return out
+    return _RE_TRAILING_ZEROS.sub(_trim, svg)

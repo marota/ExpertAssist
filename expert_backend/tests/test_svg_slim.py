@@ -7,6 +7,8 @@
 
 """Unit tests for the lossless SVG slimmer applied to large NADs."""
 
+import re
+
 import pytest
 
 from expert_backend.services.svg_slim import slim_svg
@@ -53,93 +55,56 @@ class TestTrailingZeroStripping:
         assert slim_svg(inp2) == inp2
 
 
-class TestTextAnchorFold:
-    """Fold `style="text-anchor:end"` into a `.nad-te` class."""
+class TestTextAnchorStylesArePreserved:
+    """Inline `style="text-anchor:end"` must NOT be folded into a CSS class.
 
-    _STYLE_HEADER = '<svg xmlns="http://www.w3.org/2000/svg"><style>.c16 {fill: #546e7a}</style>'
+    An earlier version of the slimmer folded the ~10 k pypowsybl inline
+    `text-anchor:end` styles into a single `.nad-te` CSS class + rule.
+    On the reference French 400 kV N-1 NAD this caused Blink to do full
+    CSS-selector matching on every `<text>` node on every style recalc,
+    regressing Paint by +60 % on N-1 and +91 % on the action variant
+    (see docs/perf-svg-slimming.md "v3 -> v4"). The fold was reverted;
+    these tests guard against it being reintroduced.
+    """
 
-    def test_standalone_inline_style_folded(self):
+    _STYLE_HEADER = (
+        '<svg xmlns="http://www.w3.org/2000/svg">'
+        '<style>.c16 {fill: #546e7a}</style>'
+    )
+
+    def test_standalone_inline_style_kept(self):
         inp = self._STYLE_HEADER + '<text style="text-anchor:end">x</text></svg>'
         out = slim_svg(inp)
-        assert 'style="text-anchor:end"' not in out
-        assert '<text class="nad-te">x</text>' in out
-        assert '.nad-te{text-anchor:end}</style>' in out
+        # Inline style preserved verbatim; no class synthesized;
+        # no CSS rule injected into the style block.
+        assert 'style="text-anchor:end"' in out
+        assert 'nad-te' not in out
+        assert out == inp
 
-    def test_merged_into_existing_class_before(self):
+    def test_class_and_style_both_preserved(self):
         inp = (self._STYLE_HEADER
                + '<text class="c16" style="text-anchor:end">x</text></svg>')
         out = slim_svg(inp)
-        assert 'class="c16 nad-te"' in out
-        assert 'style="text-anchor:end"' not in out
-        # Existing class attribute is not duplicated.
-        assert out.count('class=') == out.count('class="c16 nad-te"') + 0
+        assert 'class="c16"' in out
+        assert 'style="text-anchor:end"' in out
+        assert 'nad-te' not in out
+        assert out == inp
 
-    def test_merged_into_existing_class_after(self):
-        inp = (self._STYLE_HEADER
-               + '<text style="text-anchor:end" class="c16">x</text></svg>')
-        out = slim_svg(inp)
-        assert 'class="c16 nad-te"' in out
-        assert 'style="text-anchor:end"' not in out
-
-    def test_class_and_style_separated_by_other_attrs(self):
-        """Regression test for the `Attribute class redefined` bug.
-
-        When pypowsybl emits `class="..."` and `style="text-anchor:end"`
-        with OTHER attributes between them in the same element start
-        tag, the slimmer must still merge them into a single class
-        attribute — not produce a second `class="..."` attribute
-        (which makes the browser refuse to render the SVG).
+    def test_no_duplicate_class_attribute_on_any_tag(self):
+        """Even if a future change re-introduces a text-anchor fold,
+        it must never produce two `class="..."` attributes on the same
+        element — that makes the browser refuse to render the SVG. The
+        current implementation cannot produce this output (it never
+        touches class= or style=), so the check is vacuous today, but
+        it remains as a live guard against regressions.
         """
-        # Attributes between class and style, in both orders.
         inp = (self._STYLE_HEADER
                + '<text class="c16" x="10" y="20" style="text-anchor:end">a</text>'
                + '<text style="text-anchor:end" fill="red" class="c40">b</text>'
                + '</svg>')
         out = slim_svg(inp)
-        # No duplicate class="..." anywhere.
-        assert 'class="nad-te"' not in out  # would duplicate existing class
-        assert 'style="text-anchor:end"' not in out
-        # Both elements retain their original extra attrs and have the
-        # nad-te class appended in-place.
-        assert 'class="c16 nad-te"' in out
-        assert 'x="10" y="20"' in out
-        assert 'class="c40 nad-te"' in out
-        assert 'fill="red"' in out
-        # No tag carries two class= attributes (the parse failure mode).
-        import re
         for tag in re.finditer(r'<\w[^>]*>', out):
             assert tag.group(0).count('class="') <= 1, tag.group(0)
-
-    def test_css_rule_injected_only_once_for_many_occurrences(self):
-        body = ''.join(
-            f'<text class="c16" style="text-anchor:end">{i}</text>'
-            for i in range(5)
-        )
-        inp = self._STYLE_HEADER + body + '</svg>'
-        out = slim_svg(inp)
-        # All occurrences folded.
-        assert 'style="text-anchor:end"' not in out
-        # Only one CSS rule copy injected, regardless of how many elements folded.
-        assert out.count('.nad-te{text-anchor:end}') == 1
-
-    def test_fold_skipped_when_no_style_block(self):
-        # Without a `<style>...</style>` block we have nowhere to put the
-        # CSS rule, so the fold is a no-op (converting inline styles to a
-        # class without the class definition would change rendering).
-        inp = '<svg xmlns="http://www.w3.org/2000/svg"><text style="text-anchor:end">x</text></svg>'
-        out = slim_svg(inp)
-        assert out == inp
-
-    def test_existing_nad_te_not_re_injected(self):
-        inp = (self._STYLE_HEADER.replace(
-                   '</style>', '.nad-te{text-anchor:end}</style>')
-               + '<text style="text-anchor:end">x</text></svg>')
-        out = slim_svg(inp)
-        # Inline styles still folded…
-        assert 'style="text-anchor:end"' not in out
-        assert 'class="nad-te"' in out
-        # …and the existing CSS rule is left alone, not duplicated.
-        assert out.count('.nad-te{text-anchor:end}') == 1
 
 
 class TestEdgeCases:
@@ -154,8 +119,9 @@ class TestEdgeCases:
         assert slim_svg('plain text') == 'plain text'
 
     def test_idempotent(self):
-        # Running the slimmer twice yields the same output: no transform
-        # produces a pattern that itself matches again.
+        # Running the slimmer twice yields the same output: the
+        # trailing-zero transform cannot produce a pattern that itself
+        # matches again.
         inp = (
             '<svg xmlns="http://www.w3.org/2000/svg"><style>.c16 {fill: #546e7a}</style>'
             '<text class="c16" style="text-anchor:end">x</text>'
@@ -170,8 +136,9 @@ class TestCombinedRealisticSnippet:
     def test_representative_nad_fragment(self):
         """A snippet shaped like real pypowsybl NAD output.
 
-        Verifies the two transforms compose (text-anchor fold + decimal
-        strip) and that the result is well-formed XML.
+        Verifies that the trailing-zero strip is applied to every
+        numeric context (viewBox, transform, cx/cy/r, points) while
+        inline styles and class attributes are left entirely untouched.
         """
         inp = (
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-137870.0 -2916920.0 1643872.0 1304459.0">'
@@ -186,17 +153,19 @@ class TestCombinedRealisticSnippet:
         )
         out = slim_svg(inp)
 
-        # text-anchor styles gone, folded into class.
-        assert 'style="text-anchor:end"' not in out
-        assert 'class="c16 nad-te"' in out
-        assert '<text class="nad-te">VL_B</text>' in out
-        # CSS rule injected exactly once inside the style block.
-        assert out.count('.nad-te{text-anchor:end}') == 1
-
-        # Numeric tokens slimmed.
+        # Numeric tokens slimmed across every kind of attribute that
+        # carries coordinates.
+        assert 'viewBox="-137870 -2916920 1643872 1304459"' in out
         assert 'translate(321362.1,-1734282.3)' in out
         assert 'cx="0" cy="0" r="12"' in out
         assert 'points="321345.9,-1734260 315064.5,-1725622.1"' in out
+
+        # Inline text-anchor styles and class attributes are preserved
+        # byte-for-byte; no CSS rule was injected into the style block.
+        assert 'class="c16"' in out
+        assert '<text class="c16" style="text-anchor:end">VL_A</text>' in out
+        assert '<text style="text-anchor:end">VL_B</text>' in out
+        assert 'nad-te' not in out
 
         # Size strictly shrinks on this snippet.
         assert len(out) < len(inp)
