@@ -172,25 +172,35 @@ Expected before the change:
 
 Measured: ~24.0 s → **~21.2 s** (−12 %). On target.
 
-### v8-v10 follow-up: NAD prefetch + network mutualisation (separate commits)
+### v8-v17 follow-up: NAD prefetch, network mutualisation & vectorisation
 
 Cumulative gains delivered by subsequent commits on the same branch
 (documented in their own files — `docs/perf-nad-prefetch.md`,
-`docs/perf-shared-network.md`, `docs/perf-grid2op-shared-network.md`):
+`docs/perf-shared-network.md`, `docs/perf-grid2op-shared-network.md`,
+`docs/perf-vectorize-topology-cache.md`,
+`docs/perf-topology-cache-iter2.md`,
+`docs/perf-nad-prefetch-earlier-spawn.md`,
+`docs/perf-initial-lf-dc-init.md`,
+`docs/perf-narrow-voltage-level-queries.md`):
 
 | Trace | Last XHR end | Δ vs v7 | Key change |
 |---|---|---|---|
 | v7 | 21 174 ms | baseline | parallel XHRs + text-format |
 | v8 | 20 535 ms | −639 ms | NAD prefetch during `/api/config` |
 | v9 | 17 966 ms | −3 208 ms | mutualise `_base_network` ↔ `network_service.network` |
-| v10 | **17 384 ms** | **−3 790 ms (−18 %)** | share Network with grid2op backend (eliminate 3rd parse) |
+| v10 | 17 384 ms | −3 790 ms | share Network with grid2op backend (eliminate 3rd parse) |
 | v11 (attempt) | 19 071 ms | −2 103 ms | ⚠️ **REVERTED** — isolated Network per thread regressed by +1.7 s vs v10. See `docs/perf-isolated-nad-worker-rejected.md`. |
 | v12 (attempt) | 19 185 ms | −1 989 ms | ⚠️ **REVERTED** — deferred `detect_non_reconnectable_lines` to a background worker, but JVM contention inflated the 4 parallel XHRs by +2 s. |
-| v13 | 21 804 ms | +630 ms | ⚠️ No measurable gain — initial 4× bench was a JIT cold-start artifact. Upstream patch KEPT as defensive dead-code fix (correct behaviour matching docstring) but NOT counted as perf improvement. Regression here is system-load variance. See `docs/perf-detect-non-reconnectable-fast-path.md`. |
+| v13 | 21 804 ms | +630 ms | ⚠️ No measurable gain — initial 4× bench was a JIT cold-start artifact. Upstream patch KEPT as defensive dead-code fix. See `docs/perf-detect-non-reconnectable-fast-path.md`. |
+| v14 | 11 723 ms | **−9 451 ms** | skip initial `env.get_obs()` (0.2.0.post3) + vectorise `NetworkTopologyCache` (0.2.0.post4) |
+| v15 | 10 190 ms | −10 984 ms | NAD prefetch spawned earlier in `update_config` (`docs/perf-nad-prefetch-earlier-spawn.md`) |
+| v16 | 9 578 ms | −11 596 ms | `NetworkTopologyCache` iter 2: `groupby→raw loop` + narrow attrs (0.2.0.post5/post6) |
+| v17 | 8 945 ms | −12 229 ms | initial LF `DC_VALUES` init (0.2.0.post7) + GEOGRAPHICAL NAD layout |
+| **v18** | **~8.8 s** (projected) | **−12 374 ms (−58 %)** | narrow voltage-level queries + drop unused `kind` attr (**this commit**) — `/api/nominal-voltages` 144 → 5.7 ms (~25×), `/api/voltage-levels` 7.5 → 4.5 ms, `_get_switches_with_topology` 174 → 141 ms |
 
-**Final optimised state: v10 = commit `65ea850`.**
+**Current optimised state: v18 ≈ 8.8 s.**
 
-Critical path v6 → v10: **24.0 s → 17.4 s (−6.6 s / −28 %)**.
+Critical path v6 → v18: **24.0 s → ~8.8 s (−15.2 s / −63 %)**. 🎯
 
 ## What this does NOT change
 
