@@ -1554,6 +1554,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const containerRef = React.useRef(null);
             const backdropSvgRef = React.useRef(null);
             const pinSvgRef = React.useRef(null);
+            const overlayWrapperRef = React.useRef(null);
+            const [overlayRect, setOverlayRect] = React.useState({ width: 0, height: 0 });
             const [popoverPin, setPopoverPin] = React.useState(null);
             const [inspectQuery, setInspectQuery] = React.useState('');
             const clickTimerRef = React.useRef(null);
@@ -1802,17 +1804,56 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 }
             };
 
+            // Track the overlay wrapper's pixel size — ResizeObserver
+            // is the cheap way to keep pin positions fresh as the
+            // window / sidebar is resized.  We also initialise once
+            // via getBoundingClientRect so the first frame has valid
+            // coordinates (ResizeObserver only fires AFTER the first
+            // layout).
+            React.useEffect(() => {
+                if (!visible || !overlayWrapperRef.current) return;
+                const el = overlayWrapperRef.current;
+                const apply = () => {
+                    const r = el.getBoundingClientRect();
+                    setOverlayRect({ width: r.width, height: r.height });
+                };
+                apply();
+                const ro = new ResizeObserver(apply);
+                ro.observe(el);
+                return () => ro.disconnect();
+            }, [visible]);
+
             if (!visible) return null;
 
-            // Pin radius in SVG units, scaled to the CURRENT zoom
-            // level so the pin stays roughly constant in screen-px
-            // as the user zooms.  (A fully screen-constant sizing
-            // like the React app's MutationObserver + rescale
-            // approach would require cross-browser observer
-            // plumbing that isn't justified at this port's scope.)
             const vbForPins = overviewVb || n1Diagram?.originalViewBox || { x: 0, y: 0, w: 1000, h: 1000 };
             const viewBoxAttr = `${vbForPins.x} ${vbForPins.y} ${vbForPins.w} ${vbForPins.h}`;
-            const pinR = Math.max(Math.min(vbForPins.w, vbForPins.h) * 0.012, 8);
+
+            // Project SVG-local (pin.x, pin.y) → screen-px (relative to
+            // the overlay wrapper) using `preserveAspectRatio="xMidYMid
+            // meet"` which is what the pin SVG declares.  Matches the
+            // backdrop's projection exactly so pins stay anchored to
+            // their asset positions through pan + zoom.
+            const projectSvgPoint = (sx, sy) => {
+                if (!overlayRect.width || !overlayRect.height) return { screenX: 0, screenY: 0 };
+                const vbAspect = vbForPins.w / vbForPins.h;
+                const boxAspect = overlayRect.width / overlayRect.height;
+                let scale, offsetX, offsetY;
+                if (boxAspect > vbAspect) {
+                    // Container wider than viewBox — letterboxed on X.
+                    scale = overlayRect.height / vbForPins.h;
+                    offsetX = (overlayRect.width - vbForPins.w * scale) / 2;
+                    offsetY = 0;
+                } else {
+                    scale = overlayRect.width / vbForPins.w;
+                    offsetX = 0;
+                    offsetY = (overlayRect.height - vbForPins.h * scale) / 2;
+                }
+                return {
+                    screenX: offsetX + (sx - vbForPins.x) * scale,
+                    screenY: offsetY + (sy - vbForPins.y) * scale,
+                };
+            };
+            const pinsScreen = pins.map((p) => ({ ...p, ...projectSvgPoint(p.x, p.y) }));
 
             return (
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
@@ -1829,8 +1870,21 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         <span><span style={{ color: '#dc3545' }}>●</span> overloaded</span>
                         <span style={{ marginLeft: 'auto' }}>{pins.length} pin{pins.length === 1 ? '' : 's'}</span>
                     </div>
-                    {/* Diagram + pin layer */}
-                    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                    {/* Diagram + pin layer.  Two stacked layers:
+                        1. backdrop SVG (the cloned N-1 diagram) that
+                           scales with viewBox;
+                        2. SVG that captures wheel/drag for pan-zoom
+                           using the same viewBox as the backdrop so
+                           coordinates match;
+                        3. HTML pin layer rendered in SCREEN-px space
+                           via the overlayRect + vbForPins projection.
+                           Pins keep a constant CSS size across zoom
+                           levels — React's teardrop-with-MutationObserver
+                           approach collapses neatly to "just position
+                           absolutely" when we're happy to pay a React
+                           re-render on every viewBox change (cheap
+                           here, pins count is small). */}
+                    <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }} ref={overlayWrapperRef}>
                         <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
                         <svg
                             ref={pinSvgRef}
@@ -1842,21 +1896,66 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                             onMouseUp={handleMouseUp}
                             onMouseLeave={handleMouseUp}
                             style={{ position: 'absolute', inset: 0, pointerEvents: 'auto', cursor: panRef.current.isDragging ? 'grabbing' : 'grab' }}
-                        >
-                            {pins.map((pin) => (
-                                <g
+                        />
+                        {/* Pins in screen-px space.  Each pin is an
+                            absolutely-positioned <div> at the projected
+                            screen coordinate of its SVG anchor.  The
+                            teardrop itself is an inline SVG with the
+                            tip at (0, 48) so `translate(-50%, -100%)`
+                            on the wrapper plants the tip exactly on
+                            the asset.  Google-Maps-style glyph with a
+                            drop shadow and a white ring; loading
+                            percentage is rendered inside the circular
+                            head. */}
+                        {pinsScreen.map((pin) => {
+                            const label = Number.isFinite(pin.rho)
+                                ? `${Math.round(pin.rho * 100)}%`
+                                : String(pin.rank);
+                            const isSelected = selectedActionId === pin.id;
+                            return (
+                                <div
                                     key={pin.id}
                                     data-overview-pin
-                                    transform={`translate(${pin.x}, ${pin.y})`}
-                                    style={{ cursor: 'pointer' }}
+                                    title={`${pin.id} — ${pin.description || ''} (max ρ ${(pin.rho * 100).toFixed(1)}% on ${pin.max_rho_line})`}
                                     onClick={(e) => handlePinClick(pin, e)}
-                                    onDoubleClick={() => handlePinDoubleClick(pin)}
+                                    onDoubleClick={(e) => { e.stopPropagation(); handlePinDoubleClick(pin); }}
+                                    style={{
+                                        position: 'absolute',
+                                        left: pin.screenX,
+                                        top: pin.screenY,
+                                        transform: 'translate(-50%, -100%)',
+                                        width: 36,
+                                        height: 48,
+                                        cursor: 'pointer',
+                                        pointerEvents: 'auto',
+                                        userSelect: 'none',
+                                        filter: isSelected
+                                            ? 'drop-shadow(0 0 4px rgba(52,152,219,0.9))'
+                                            : 'drop-shadow(0 2px 3px rgba(0,0,0,0.4))',
+                                    }}
                                 >
-                                    <circle r={pinR} fill={pin.color} stroke="#fff" strokeWidth={pinR * 0.15} opacity={selectedActionId === pin.id ? 1 : 0.9} />
-                                    <text textAnchor="middle" dy={pinR * 0.4} fontSize={pinR * 1.1} fontWeight="700" fill="#fff">{pin.rank}</text>
-                                </g>
-                            ))}
-                        </svg>
+                                    <svg viewBox="0 0 36 48" width="36" height="48" style={{ display: 'block' }}>
+                                        {/* Teardrop body */}
+                                        <path
+                                            d="M18 0 C8 0 0 8 0 18 C0 28 18 48 18 48 C18 48 36 28 36 18 C36 8 28 0 18 0 Z"
+                                            fill={pin.color}
+                                            stroke="#fff"
+                                            strokeWidth={2}
+                                        />
+                                        {/* Label disc for contrast against the coloured body */}
+                                        <circle cx={18} cy={18} r={11} fill="#fff" />
+                                        <text
+                                            x={18} y={18}
+                                            textAnchor="middle"
+                                            dominantBaseline="central"
+                                            fontSize={label.length > 3 ? 8 : 10}
+                                            fontWeight={700}
+                                            fill={pin.color}
+                                        >{label}</text>
+                                    </svg>
+                                </div>
+                            );
+                        })}
                     </div>
                     {/* Controls: zoom + inspect */}
                     <div style={{
@@ -2208,11 +2307,22 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         }
                     }
 
-                    // Fetch study-related data (branches, nominal voltages etc.)
-                    const [branchesRes, vlRes, nomVRes] = await Promise.all([
+                    // Fetch study-related data in parallel with the
+                    // base NAD.  /api/network-diagram is the slowest XHR
+                    // (~5-6 s pypowsybl regeneration on big grids);
+                    // previously it only started AFTER branches +
+                    // voltage-levels + nominal-voltages had resolved,
+                    // wasting ~1 s off the critical path.  Matches
+                    // `frontend/src/App.tsx` applySettingsImmediate.
+                    const [branchesRes, vlRes, nomVRes, nadRaw] = await Promise.all([
                         axios.get(`${API_BASE}/api/branches?t=${Date.now()}`),
                         axios.get(`${API_BASE}/api/voltage-levels?t=${Date.now()}`),
-                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`)
+                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`),
+                        _fetchNetworkDiagramTextFormat().catch(async (textErr) => {
+                            console.warn('[network-diagram] text-format fetch failed, falling back:', textErr);
+                            const r = await axios.get(`${API_BASE}/api/network-diagram?t=${Date.now()}`);
+                            return r.data;
+                        }),
                     ]);
 
                     setBranches(branchesRes.data.branches);
@@ -2228,7 +2338,13 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
                     }
 
-                    fetchBaseDiagram(vlRes.data.voltage_levels.length);
+                    // Consume the already-fetched NAD instead of firing
+                    // another XHR.
+                    try {
+                        const { svg, viewBox } = processSvg(nadRaw.svg, vlRes.data.voltage_levels.length);
+                        if (viewBox) setOriginalViewBox(viewBox);
+                        setNDiagram({ ...nadRaw, svg, originalViewBox: viewBox });
+                    } catch (err) { console.error('Failed to process diagram:', err); }
 
                     setSettingsBackup({
                         networkPath,
@@ -2851,10 +2967,19 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     if (configRes.data?.action_dict_file_name) { setActionDictFileName(configRes.data.action_dict_file_name); setShowActionDictWarning(true); }
                     if (configRes.data?.action_dict_stats) setActionDictStats(configRes.data.action_dict_stats);
 
-                    const [branchesRes, vlRes, nomVRes] = await Promise.all([
+                    // 4-way parallel fetch, same as applySettingsImmediate
+                    // above.  /api/network-diagram is the slowest XHR so
+                    // overlapping it with the metadata calls is the
+                    // single biggest loading-time win.
+                    const [branchesRes, vlRes, nomVRes, nadRaw] = await Promise.all([
                         axios.get(`${API_BASE}/api/branches?t=${Date.now()}`),
                         axios.get(`${API_BASE}/api/voltage-levels?t=${Date.now()}`),
-                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`)
+                        axios.get(`${API_BASE}/api/nominal-voltages?t=${Date.now()}`),
+                        _fetchNetworkDiagramTextFormat().catch(async (textErr) => {
+                            console.warn('[network-diagram] text-format fetch failed, falling back:', textErr);
+                            const r = await axios.get(`${API_BASE}/api/network-diagram?t=${Date.now()}`);
+                            return r.data;
+                        }),
                     ]);
 
                     setBranches(branchesRes.data.branches);
@@ -2869,7 +2994,11 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         setVoltageRange([uniqueKv[0], uniqueKv[uniqueKv.length - 1]]);
                     }
 
-                    fetchBaseDiagram(vlRes.data.voltage_levels.length);
+                    try {
+                        const { svg, viewBox } = processSvg(nadRaw.svg, vlRes.data.voltage_levels.length);
+                        if (viewBox) setOriginalViewBox(viewBox);
+                        setNDiagram({ ...nadRaw, svg, originalViewBox: viewBox });
+                    } catch (err) { console.error('Failed to process diagram:', err); }
                 } catch (err) {
                     setError('Failed to load config: ' + (err.response?.data?.detail || err.message));
                 } finally { setConfigLoading(false); }
@@ -2950,12 +3079,36 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 }
             };
 
+            // Fetch the base NAD using the `format=text` endpoint — the
+            // backend returns a one-line JSON header + raw SVG body
+            // instead of embedding the multi-MB SVG inside JSON.  Lets
+            // us skip `JSON.parse` on the big SVG string (~500 ms
+            // main-thread block on the PyPSA-EUR France grid).  Matches
+            // `frontend/src/api.ts::getNetworkDiagram`.  Falls back to
+            // plain JSON if the backend pre-dates the text format.
+            const _fetchNetworkDiagramTextFormat = async () => {
+                const res = await fetch(`${API_BASE}/api/network-diagram?format=text&t=${Date.now()}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                const body = await res.text();
+                const nl = body.indexOf('\n');
+                if (nl < 0) throw new Error('Invalid /api/network-diagram response: missing header/body separator');
+                const header = JSON.parse(body.slice(0, nl));
+                const svg = body.slice(nl + 1);
+                return { ...header, svg };
+            };
             const fetchBaseDiagram = async (vlCount) => {
                 try {
-                    const res = await axios.get(`${API_BASE}/api/network-diagram?t=${Date.now()}`);
-                    const { svg, viewBox } = processSvg(res.data.svg, vlCount || 0);
+                    let raw;
+                    try {
+                        raw = await _fetchNetworkDiagramTextFormat();
+                    } catch (textErr) {
+                        console.warn('[network-diagram] text-format fetch failed, falling back to JSON:', textErr);
+                        const res = await axios.get(`${API_BASE}/api/network-diagram?t=${Date.now()}`);
+                        raw = res.data;
+                    }
+                    const { svg, viewBox } = processSvg(raw.svg, vlCount || 0);
                     if (viewBox) setOriginalViewBox(viewBox);
-                    setNDiagram({ ...res.data, svg, originalViewBox: viewBox });
+                    setNDiagram({ ...raw, svg, originalViewBox: viewBox });
                 } catch (err) { console.error('Failed to fetch diagram:', err); }
             };
 
@@ -3672,15 +3825,14 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const handleActionSelect = async (actionId, force = false) => {
 
                 if (!force && actionId === selectedActionId) {
-                    // Deselect — return to previous diagram tab.  Force
-                    // path (used after a fresh re-simulation) skips
-                    // this toggle so the variant diagram re-fetches
-                    // with the updated network state and the auto-zoom
-                    // effect recenters on the new max_rho_line.
+                    // Deselect — stay on the Remedial-Action tab so the
+                    // ActionOverviewDiagram takes over and the operator
+                    // lands back on the pin map. React switched this to
+                    // overview-stay in PR #93 (docs/action-overview-
+                    // diagram.md); the standalone needs to follow.
                     interactionLogger.record('action_deselected', { previous_action_id: selectedActionId || '' });
                     setSelectedActionId(null);
                     setActionDiagram(null);
-                    setActiveTab('n-1');
                     return;
                 }
                 if (actionId !== null) {
@@ -4766,6 +4918,15 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     setSearchOpen(false);
                     setSearchQuery('');
 
+                    // Release the sidebar / combine-modal Simulate buttons
+                    // the moment the action CARD is ready — don't keep the
+                    // operator waiting on the (expensive) variant-diagram
+                    // fetch that follows. Previously the button stayed on
+                    // the disabled / spinner state for the whole diagram
+                    // round-trip, which looks like the app is stuck when
+                    // the NAD takes several seconds on big grids.
+                    setSimulatingActionId(null);
+
                     // Fetch the action diagram AFTER simulation completes (ensures post-action state is ready)
                     try {
                         const diagRes = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: actionId });
@@ -4785,7 +4946,6 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 } catch (err) {
                     console.error('Simulation failed:', err);
                     setSearchError(err?.response?.data?.detail || 'Simulation failed');
-                } finally {
                     setSimulatingActionId(null);
                 }
             };
@@ -5177,6 +5337,14 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                         };
                     });
 
+                    // Release the Simulate Combined / sidebar / modal
+                    // Simulate buttons the moment the combined action
+                    // lands — the diagram fetch below continues
+                    // asynchronously. See the matching comment in
+                    // handleAddManualAction for the rationale.
+                    setSimulatingActionId(null);
+                    setIsSimulatingCombined(false);
+
                     // Fetch the action diagram AFTER simulation completes (ensures post-action state is ready)
                     try {
                         const diagRes = await axios.post(API_BASE + '/api/action-variant-diagram', { action_id: combinedId });
@@ -5190,7 +5358,6 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                     }
                 } catch (err) {
                     setError('Failed to simulate combined action: ' + (err.response?.data?.detail || err.message));
-                } finally {
                     setSimulatingActionId(null);
                     setIsSimulatingCombined(false);
                 }
