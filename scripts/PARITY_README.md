@@ -9,32 +9,65 @@ See the root `CLAUDE.md` § "Standalone Interface Parity Audit" for
 the gap list these scripts feed; `docs/interaction-logging.md` is
 the canonical replay-contract spec they check against.
 
-## Three layers
-
-The checks are split into three layers by cost and concern:
+## Layers
 
 | Layer | Script | Runs in | Gates CI | What it catches |
 |---|---|---|---|---|
 | **1. Static inventory** | `check_standalone_parity.py` | <5 s, no backend | yes | Event-type coverage, `details` schema drift (three-way diff vs spec), missing API paths, `SettingsState` fields |
-| **2. Session fidelity** | `check_session_fidelity.py` | <2 s, no backend | yes | Fields saved to `session.json` that are silently dropped on reload (e.g. PR #83's `lines_overloaded_after`) |
-| **3. Behavioural E2E** | `e2e_parity.spec.ts` (planned) | 60–90 s, backend + Playwright | nightly / on-label | Identical gesture sequence against both UIs, diff of resulting `interaction_log.json` / `session.json` |
+| **2. Session fidelity** | `check_session_fidelity.py` | <2 s, no backend | yes | Fields saved to `session.json` that are silently dropped on reload (e.g. the PR #83 `lines_overloaded_after` regression) |
+| **3a. Gesture sequence** (static proxy) | `check_gesture_sequence.py` | <2 s, no backend | yes | Canonical 11-step gesture sequence: each gesture's handler emits the required event types in the documented order |
+| **3b. Behavioural E2E** (runtime) | `parity_e2e/e2e_parity.spec.ts` | 60–90 s, needs Playwright browser | nightly / on-label | Same gesture sequence driven through real DOM against BOTH UIs; diffs resulting `interaction_log.json` + `session.json` at runtime |
 
-Layers 1 and 2 are implemented today and exit non-zero on any
-FAIL-level finding — wire them into a GitHub Action on every PR.
-Layer 3 is a sketch, not an implementation; see the design section
-below.
+Layers 1, 2, and 3a need only Python and finish in under 10 s total
+— wire them into a GitHub Action on every PR. Layer 3b needs a
+browser installed via `npx playwright install` and is designed for
+nightly CI or on-label runs (see cost discussion below).
 
-## Running Layer 1 & 2
+### Why both a 3a and a 3b
+
+Layer-3b (real Playwright) is the strongest check — it exercises
+both UIs through actual DOM events and captures the runtime
+interaction log. But it requires a browser download that isn't
+always available (sandboxed CI, restricted network environments)
+and takes ~90 s per run.
+
+Layer-3a (static) walks the source of both codebases, locates the
+handler body for each canonical gesture, and verifies the expected
+`interactionLogger.record(...)` / `recordCompletion(...)` calls
+appear in the right order. It can't catch runtime ordering races
+— if two code paths within one handler fire events in different
+orders depending on state, 3a sees both paths and signals pass.
+That's a genuine limitation, but it's strictly cheaper than 3b and
+it catches the most common regression class: "gesture G should
+emit event E but no code path emits E from its handler", in a
+sequence-aware way that Layer-1's set-based diff misses.
+
+Keep both: 3a is the always-on fast proxy, 3b is the nightly
+authoritative check.
+
+## Running the checks
 
 ```bash
 # Layer 1 — static parity (events, API paths, settings, spec diff)
-python scripts/check_standalone_parity.py               # human text
-python scripts/check_standalone_parity.py --json        # machine
+python scripts/check_standalone_parity.py                # human text
+python scripts/check_standalone_parity.py --json         # machine
 python scripts/check_standalone_parity.py --emit-markdown  # paste into CLAUDE.md
 
 # Layer 2 — session-reload fidelity (save-vs-restore symmetry)
-python scripts/check_session_fidelity.py                # human text
-python scripts/check_session_fidelity.py --json         # machine
+python scripts/check_session_fidelity.py                 # human text
+python scripts/check_session_fidelity.py --json          # machine
+
+# Layer 3a — gesture-sequence static proxy
+python scripts/check_gesture_sequence.py                 # human text
+python scripts/check_gesture_sequence.py --json          # machine
+
+# Layer 3b — behavioural E2E with Playwright
+cd scripts/parity_e2e
+npm install
+npx playwright install chromium     # one-off browser download
+cd ../../frontend && npm run build  # prereq: React /dist produced
+cd ../scripts/parity_e2e
+npx playwright test
 ```
 
 Each script exits 1 on any FAIL; suitable as a CI gate. They share
@@ -63,85 +96,40 @@ same PR — the script's three-way diff (spec vs FE, spec vs SA)
 relies on it to attribute each finding to the side that owns the
 fix.
 
-## Layer 3 design (not implemented)
+## Layer-3b design notes
 
-Behavioural E2E parity is the strongest possible check — it runs an
-identical user-gesture script against both codebases and diffs the
-resulting artefacts. It requires:
+The spec in `parity_e2e/e2e_parity.spec.ts` drives the canonical
+11-step gesture sequence against both UIs. It is written to be
+**backend-free** — all `/api/*` calls are intercepted by
+`page.route()` and fulfilled with canned JSON. That means the run
+only needs:
 
-1. A live FastAPI backend (`uvicorn expert_backend.main:app`).
-2. Two servable UIs:
-   - React dev server (`cd frontend && npm run dev`).
-   - Standalone HTML served via `python -m http.server` (or equivalent)
-     so `fetch` can hit `127.0.0.1:8000`.
-3. Playwright installed (`npm install -D @playwright/test`).
-4. A known grid fixture (e.g. `data/bare_env_small_grid_test`) so
-   the gesture script has stable targets.
+1. A built React app (`frontend/dist/`) served via `vite preview`
+   (`playwright.config.ts` does this automatically).
+2. `standalone_interface.html` loaded via `file://`.
+3. A Playwright-compatible browser (Chromium).
 
-### Gesture script
+The spec captures three artefacts from each run:
 
-The canonical session a Layer-3 spec drives:
+- Ordered list of `interactionLogger.record(...)` events.
+- `details` keys per event (order-insensitive).
+- `session.json` field paths (the payload the Save Results button
+  POSTs to `/api/save-session`).
 
-```
-1. Load Study (small_grid_test)
-2. Select contingency LINE_A
-3. Run step1 (detect overloads)
-4. Toggle one overload off
-5. Run step2 (resolve)
-6. Star action disco_3
-7. Reject action reco_1
-8. Simulate a manual action
-9. Re-simulate it with edited target_mw
-10. Open SLD on VL_X
-11. Switch SLD sub-tab to action
-12. Save session → folder
-```
+It asserts equality across all three between the React run and the
+standalone run. Divergence → test fail with a per-event diff.
 
-Both runs produce a `session.json` + `interaction_log.json`. The
-spec then asserts:
+### Why Layer 3b is not on every PR
 
-- **Identical event sequence** (order-sensitive `type` values).
-  Divergence here means one UI emits an event the other doesn't.
-- **Identical `details` keys per event** (order-insensitive).
-  Divergence catches schema drift that Layer-1's regex missed.
-- **Identical `session.json` shape** (not values — timestamps and
-  durations will differ). Divergence catches save-side omissions
-  that Layer-2's grep missed.
+- **Cost**: ~90 s including browser launch + both UI runs on
+  a small grid.
+- **Flakiness**: ordering races between async XHRs and React
+  re-renders are real; timeouts need tuning per gesture.
+- **Maintenance**: Playwright selectors drift faster than Python
+  regex patterns as the UI changes.
 
-### Implementation sketch
-
-```typescript
-// scripts/e2e_parity.spec.ts  (planned)
-import { test, expect } from '@playwright/test';
-import { runCanonicalSession } from './e2e_helpers';
-import { deepDiff } from './e2e_diff';
-
-test('frontend and standalone produce identical session artefacts', async ({ browser }) => {
-  const reactArtefacts = await runCanonicalSession(browser, 'http://localhost:5173');
-  const standaloneArtefacts = await runCanonicalSession(browser, 'file:///.../standalone_interface.html');
-
-  // Drop noise (timestamps, UUIDs, durations) before comparing.
-  const fe = normalise(reactArtefacts);
-  const sa = normalise(standaloneArtefacts);
-
-  expect(deepDiff(fe.eventSequence, sa.eventSequence)).toEqual([]);
-  expect(deepDiff(fe.detailsKeysPerEvent, sa.detailsKeysPerEvent)).toEqual([]);
-  expect(deepDiff(fe.sessionShape, sa.sessionShape)).toEqual([]);
-});
-```
-
-### Why Layer 3 is deferred
-
-- **Cost**: needs the backend + pypowsybl + a fixture grid. Not every
-  CI environment has that wired.
-- **Flakiness budget**: NAD regeneration on large grids is ~5-6 s
-  per call; with ~12 gestures per run and two UIs, wall-clock is
-  ~2 minutes per PR — too slow for per-commit gating.
-- **Maintenance**: Playwright specs drift faster than Python scripts
-  as UI selectors change.
-
-The recommended path is to gate Layers 1 + 2 per-PR and run Layer 3
-nightly or behind an `e2e` label. A Playwright spec is the right
-long-term home; in the short term, Layer 1 + 2 catch the most
-common regression classes (schema drift, silent save/restore
-asymmetries) with no runtime cost.
+Recommended cadence: run 1, 2, 3a per-PR (fast, deterministic);
+run 3b nightly or behind an `e2e` label on PRs that touch
+`standalone_interface.html`, `frontend/src/hooks/useAnalysis.ts`,
+`frontend/src/utils/sessionUtils.ts`, or
+`frontend/src/utils/interactionLogger.ts`.

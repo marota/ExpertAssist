@@ -615,6 +615,59 @@ fields checked; 25/30 round-trip on React, 28/30 on standalone.
 |---|---|
 | `n_overloads_rho`, `n1_overloads_rho` | The sticky-header rho arrays (PR #88). The React app intentionally saves-only (live state re-derives from a fresh N-1 diagram on reload). The standalone doesn't save them either — fine for live UX, but replay agents and offline inspection tools lose the percentages. |
 
+#### Layer 3a — Gesture-sequence static proxy (`scripts/check_gesture_sequence.py`)
+
+_Generated from the gesture-sequence script on 2026-04-19._
+Canonical 11-step gesture sequence: **22/22** gesture-side parity
+checks pass. For each gesture the script resolves the handler body
+in both codebases and verifies the expected ordered list of
+`interactionLogger.record(...)` + `recordCompletion(...)` calls is
+present. Complements Layers 1 + 2 with sequence-awareness.
+
+Limitations worth being aware of when a `22/22` pass lands:
+
+- The walker sees **all** event-emission code paths in a handler,
+  not just the one taken at runtime. `handleActionSelect` has both
+  `action_selected` and `action_deselected` call sites (early-return
+  on toggle), and Layer 3a reports both — a real Playwright run
+  would fire only one per click.
+- The walker cannot catch async ordering races (e.g. two XHRs that
+  complete in non-deterministic order and emit events out-of-spec).
+- Layer 3a does not check `details`-key shapes — that's Layer 1's
+  job. Likewise it doesn't touch `session.json` shape — that's
+  Layer 2. A passing 3a therefore does NOT mean parity overall.
+
+#### Layer 3b — Behavioural E2E (`scripts/parity_e2e/e2e_parity.spec.ts`)
+
+Real Playwright spec driving both UIs through the canonical gesture
+sequence with a mocked backend (all `/api/*` calls fulfilled via
+`page.route()`, so pypowsybl / expert_op4grid_recommender are NOT
+required). The spec captures:
+
+- Ordered list of `interactionLogger` events per run.
+- `details` keys per event.
+- `session.json` field paths.
+
+And asserts three-way equality: React events == standalone events,
+React keys == standalone keys, React session shape == standalone
+session shape.
+
+Runs in ~90 s including browser launch. Designed for **nightly
+CI** or **on-label PR** runs, not per-commit (see the cost
+discussion in `scripts/PARITY_README.md`). Not executed in the
+sandbox this audit was generated from because Playwright's browser
+download is blocked — the spec itself is committed and ready to
+run in any standard CI environment with one-off setup:
+
+```bash
+cd scripts/parity_e2e
+npm install
+npx playwright install chromium
+cd ../../frontend && npm run build
+cd ../scripts/parity_e2e
+npx playwright test
+```
+
 ### Running the conformity checks
 
 ```bash
@@ -626,13 +679,20 @@ python scripts/check_standalone_parity.py --json         # CI-friendly
 # Layer 2 — session-reload fidelity (save-vs-restore symmetry)
 python scripts/check_session_fidelity.py                 # human text
 python scripts/check_session_fidelity.py --json          # CI-friendly
+
+# Layer 3a — gesture-sequence static proxy
+python scripts/check_gesture_sequence.py                 # human text
+python scripts/check_gesture_sequence.py --json          # CI-friendly
+
+# Layer 3b — behavioural E2E (needs a Playwright browser; see
+# scripts/PARITY_README.md for the one-off setup)
+cd scripts/parity_e2e && npx playwright test
 ```
 
-Both exit non-zero on any FAIL finding. Wire them into a GitHub
-Action per PR — see `scripts/PARITY_README.md`. A Layer-3 behavioural
-E2E check (Playwright, driving both UIs through a scripted session)
-is designed but not yet implemented; that README contains the spec
-for it.
+All four exit non-zero on any FAIL finding. Wire Layers 1 + 2 + 3a
+into a GitHub Action per PR; run Layer 3b nightly or on-label.
+`scripts/PARITY_README.md` contains the CI snippet and a cost/
+cadence discussion.
 
 ### How to use this audit
 
