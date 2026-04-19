@@ -549,18 +549,27 @@ standalone emits **32**.
 Nothing in the standalone emits an event the union does not know
 about (0 orphan types).
 
-##### Frontend drifts from the replay-contract spec (4 events)
+##### Frontend drifts from the replay-contract spec
 
-The React app emits a shape that drifts from
-`docs/interaction-logging.md`. The standalone is closer to the spec
-for these — fix the React side, don't downgrade:
+**0 events — all resolved** in this branch. The table below is the
+historical record (each row now has a regression test and the Python
++ Vitest conformity checks guard against re-introduction):
 
-| Event | Spec required | Frontend emits | Missing | React source |
-|---|---|---|---|---|
-| `action_deselected` | `{previous_action_id}` | `{action_id}` | `previous_action_id` | `hooks/useDiagrams.ts:360` |
-| `analysis_step2_started` | `{all_overloads, element, monitor_deselected, selected_overloads}` | `{monitor_deselected, selected_overloads}` | `all_overloads, element` | `hooks/useAnalysis.ts:122` |
-| `overload_toggled` | `{overload, selected}` | `{overload}` | `selected` | `hooks/useAnalysis.ts:239` |
-| `prioritized_actions_displayed` | `{n_actions}` | `{actions_count}` | `n_actions` | `hooks/useAnalysis.ts:193` |
+| Event | Fix | Regression test |
+|---|---|---|
+| `action_deselected` | `{action_id}` → `{previous_action_id}` (`hooks/useDiagrams.ts:360`) | `hooks/useDiagrams.test.ts::logs action_deselected when re-selecting the same action` |
+| `analysis_step2_started` | added `element` + `all_overloads` (`hooks/useAnalysis.ts:122`) | `hooks/useAnalysis.test.ts::step2_started carries the full spec payload` |
+| `overload_toggled` | added `selected` (`hooks/useAnalysis.ts:239`) | `hooks/useAnalysis.test.ts::logs overload_toggled with overload + selected` |
+| `prioritized_actions_displayed` | `actions_count` → `n_actions` (`hooks/useAnalysis.ts:193`) | `hooks/useAnalysis.test.ts::logs prioritized_actions_displayed with n_actions` |
+| `analysis_step2_completed` | `actions_count` → `n_actions` (`hooks/useAnalysis.ts:184`) | same suite |
+| `view_mode_changed` (hook-internal emission) | removed emission from `hooks/useDiagrams.ts:202` (App.tsx owns the full-spec emission) | `hooks/useDiagrams.test.ts::handleViewModeChange updates state but does NOT emit view_mode_changed` |
+
+The fifth drift (`view_mode_changed` hook-internal) was surfaced by
+the Vitest spec-conformance test, not the Python script — the
+script's set-based union across call sites was masking it behind
+`App.tsx`'s full-shape emission. The spec-conformance test
+(`utils/specConformance.test.ts`) walks all call sites individually
+and catches per-site drift, so it ran as the stricter check.
 
 ##### Standalone drifts from the replay-contract spec (14 events)
 
@@ -603,11 +612,14 @@ the spec, not a parity gap between the two codebases.
 _Generated from the fidelity script on 2026-04-19._ 30 curated
 fields checked; 25/30 round-trip on React, 28/30 on standalone.
 
-##### Fields the React frontend RESTORES but never SAVES (1 — hard fail)
+##### Fields the React frontend RESTORES but never SAVES
 
-| Field | Consequence |
-|---|---|
-| `lines_overloaded_after` | `useSession.ts:312` reads it back into each live `ActionDetail`, but `sessionUtils.ts` never writes it on save. On reload the field is always `undefined`, so the Remedial-Action NAD/SLD loses its post-action overload halos until the user re-runs analysis. Add the field to the `SavedActionEntry` object literal in `sessionUtils.ts:120-145`. |
+**0 fields — resolved** in this branch. The table below is the
+historical record:
+
+| Field | Fix | Regression test |
+|---|---|---|
+| `lines_overloaded_after` | Added to `SavedActionEntry` object literal in `sessionUtils.ts` | `utils/sessionUtils.test.ts::persists lines_overloaded_after so it survives save → reload (regression)` |
 
 ##### Fields absent from the standalone entirely (2 — warn)
 
@@ -689,10 +701,37 @@ python scripts/check_gesture_sequence.py --json          # CI-friendly
 cd scripts/parity_e2e && npx playwright test
 ```
 
-All four exit non-zero on any FAIL finding. Wire Layers 1 + 2 + 3a
-into a GitHub Action per PR; run Layer 3b nightly or on-label.
-`scripts/PARITY_README.md` contains the CI snippet and a cost/
-cadence discussion.
+All four exit non-zero on any FAIL finding.
+
+### CI wiring
+
+`.github/workflows/parity.yml` runs the checks automatically:
+
+- **Layers 1 + 2 + 3a** — every push to `main` + every PR. Pure
+  Python, no backend, no browser. Finishes in <30 s.
+- **Layer 3b** — nightly (cron `30 2 * * *`) + whenever a PR
+  carries the `e2e` label. Builds the React app, installs
+  Chromium, runs the full Playwright spec. ~6 min on a fresh
+  runner, ~2 min with cache.
+
+The workflow also appends Layer 1's `--emit-markdown` output to
+the GitHub Actions step summary on every run, so per-PR comments
+show exactly which events drifted from the spec without waiting
+for reviewer triage. A Markdown step-summary example:
+
+```
+| Event | Spec required | Frontend emits | Missing |
+|---|---|---|---|
+| action_deselected | {previous_action_id} | {action_id} | previous_action_id |
+```
+
+The matching Vitest **spec-conformance** test
+(`frontend/src/utils/specConformance.test.ts`) runs as part of the
+regular frontend suite — `npm run test`. It walks every
+`interactionLogger.record` call site in the React source and
+verifies the `details` keys per event match the replay contract.
+This is the pre-PR gate; the Layer-1 parity script is the PR-gate
+fallback that also checks the standalone HTML.
 
 ### How to use this audit
 
