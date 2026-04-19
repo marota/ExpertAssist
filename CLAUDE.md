@@ -772,6 +772,69 @@ verifies the `details` keys per event match the replay contract.
 This is the pre-PR gate; the Layer-1 parity script is the PR-gate
 fallback that also checks the standalone HTML.
 
+### Honest gap report — what the parity scripts CANNOT catch
+
+After three rounds of user-discovered standalone bugs that the
+green parity reports failed to flag, here's the honest scorecard.
+The four layers we ship today each guard a specific surface; none
+of them inspect actual rendered DOM, which is where most
+user-observable regressions live.
+
+| Bug class | Example bugs missed | Why scripts missed it |
+|---|---|---|
+| **Visual threshold values** | Pin severity used hardcoded 0.9 / 1.0 cutoffs instead of `monitoringFactor` ± 0.05; Overview backdrop dimmed at 0.55 → edges invisible | No script reads CSS / fill / stroke values |
+| **Conditional rendering** | Dashed combined-pair lines drawn for `is_estimated: true` entries (no simulation has run yet); Overview pin layer not in detached popup | Scripts inspect call-site syntax, not "when does this branch render" |
+| **Field-semantic interpretation** | `max_rho_line` used as primary pin anchor instead of action's topology target; `is_estimated` not respected when filtering combined pairs | Scripts check shape, not which field a UI consumer should treat as authoritative |
+| **Auto-effects ordering** | Tab didn't auto-switch to Action when Display Prioritized clicked; auto-zoom didn't fire after action selection; deselect snapped to N-1 instead of staying on Action | Scripts confirm an event fires; they don't check the side-effects (`setActiveTab`, `setViewBox`) that follow |
+| **Loading-state hygiene** | Combine-modal Simulate button stuck in spinner state until variant diagram completed (5–6 s after the result was ready) | No script inspects loading flags / button disabled state |
+| **Rendering performance** | Overview SVG re-cloned on every re-render (200–500 ms each); base NAD fetched serially after metadata | No script measures critical-path latency |
+
+What the four layers DO catch:
+
+| Layer | Scope |
+|---|---|
+| Layer 1 (`check_standalone_parity.py`) | Event-type coverage; `details` key shape; `InteractionType` union membership; API path coverage; `SettingsState` field coverage |
+| Layer 2 (`check_session_fidelity.py`) | Session.json field round-trip (save vs restore); save-only-OK fields |
+| Layer 3a (`check_gesture_sequence.py`) | Per-gesture ordered list of `record(...)` / `recordCompletion(...)` calls; sequence-aware but path-blind |
+| Layer 3b (`parity_e2e/e2e_parity.spec.ts`) | Real browser run of the 11-gesture canonical session; same-event sequence + same-`details` keys + same-`session.json` shape between React + standalone |
+
+Layer 3b is the only one positioned to catch most of the missed
+classes — but only IF its gesture script exercises them. It
+currently runs an 11-gesture canonical flow that doesn't visit
+Display Prioritized → Action Overview → pin click. Extending the
+script is the highest-leverage next move.
+
+#### Proposed Layer 4 — User-observable invariants
+
+Things scripts SHOULD check that none of L1–L3 do today:
+
+1. **Pin severity ↔ rho ↔ monitoringFactor** — render the
+   ActionOverviewDiagram with synthetic actions at rho =
+   `mf - 0.06`, `mf - 0.04`, `mf + 0.01` and assert pins come out
+   green / orange / red.
+2. **Conditional render gates** — for each "this is shown when
+   X" UI, snapshot the canonical states and check the right
+   element exists / is hidden.
+3. **Loading-state release** — drive a simulate, mock a slow
+   diagram fetch, assert button releases when the metrics arrive,
+   not when the diagram does.
+4. **Auto-effects after gesture** — after `prioritized_actions_displayed`,
+   assert `activeTab === 'action'` and the Overview is rendered.
+   After `action_selected` with simulated diagram available,
+   assert auto-zoom set viewBox onto `max_rho_line`.
+
+These all need browser-level execution (jsdom + RTL or Playwright);
+none can be done with a pure-Python regex pass. Realistic path:
+add them as Vitest specs that mount the React component tree (the
+React side guards itself), and as Playwright assertions in the
+existing Layer 3b spec for the standalone side.
+
+In the meantime: anyone editing the standalone Overview / detach
+/ severity logic should manually run through the four bug classes
+above before sending a PR. The CLAUDE.md mirror-status table is
+updated reactively from user reports — it is not a complete
+invariant.
+
 ### How to use this audit
 
 When updating `standalone_interface.html`:

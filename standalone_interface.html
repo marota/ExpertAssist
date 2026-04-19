@@ -1597,7 +1597,37 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             return null;
         };
 
-        const computeActionOverviewPins = (actions, metaIndex) => {
+        // Pure pin-severity classifier.  Mirrors React's
+        // `computeActionSeverity` (frontend/src/utils/svgUtils.ts):
+        //   non_convergence / is_islanded → grey
+        //   max_rho missing      → green if is_rho_reduction else red
+        //   max_rho > MF         → red    (still overloaded)
+        //   max_rho > MF - 0.05  → orange (low margin)
+        //   else                 → green
+        // monitoringFactor is the operational threshold the user set
+        // in the Configurations tab — defaults to 0.95.  Hardcoding
+        // 0.9 / 1.0 boundaries (the previous bug) silently classed
+        // "still overloaded at 97%" cards as orange instead of red
+        // when the user had set MF=0.95.
+        const computeActionSeverity = (details, monitoringFactor) => {
+            if (!details) return 'grey';
+            if (details.non_convergence || details.is_islanded) return 'grey';
+            const rho = details.max_rho != null
+                ? details.max_rho
+                : (details.estimated_max_rho != null ? details.estimated_max_rho : null);
+            if (rho == null) return details.is_rho_reduction ? 'green' : 'red';
+            if (rho > monitoringFactor) return 'red';
+            if (rho > monitoringFactor - 0.05) return 'orange';
+            return 'green';
+        };
+        const SEVERITY_COLOR = {
+            green:  '#28a745',
+            orange: '#f0ad4e',
+            red:    '#dc3545',
+            grey:   '#9ca3af',
+        };
+
+        const computeActionOverviewPins = (actions, metaIndex, monitoringFactor = 0.95) => {
             if (!actions || !metaIndex) return [];
             const ids = Object.keys(actions);
             const pins = [];
@@ -1613,22 +1643,16 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 if (id.includes('+')) continue;
                 const anchor = resolveActionAnchor(id, action, metaIndex);
                 if (!anchor) continue;
+                const severity = computeActionSeverity(action, monitoringFactor);
                 const rho = typeof action.max_rho === 'number'
                     ? action.max_rho
                     : (typeof action.estimated_max_rho === 'number' ? action.estimated_max_rho : NaN);
-                // Severity palette mirrors ActionCard (docs/action-overview-diagram.md):
-                //   green    rho <= 0.9 (safe)
-                //   orange   0.9 < rho <= 1.0 (near limit)
-                //   red      rho > 1.0 (still overloaded)
-                //   grey     rho unavailable (divergent / islanded / not yet simulated)
-                let color = '#9ca3af';
-                if (Number.isFinite(rho)) {
-                    color = rho <= 0.9 ? '#28a745' : rho <= 1.0 ? '#f0ad4e' : '#dc3545';
-                }
                 pins.push({
                     id,
                     x: anchor.x, y: anchor.y,
-                    rho, rank: i + 1, color,
+                    rho, rank: i + 1,
+                    color: SEVERITY_COLOR[severity],
+                    severity,
                     description: action.description_unitaire || '',
                     max_rho_line: action.max_rho_line || action.estimated_max_rho_line || id,
                 });
@@ -1636,19 +1660,23 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             return pins;
         };
 
-        // Build curves for combined-pair (A+B) entries.  Each pair is
-        // rendered as a dashed line connecting the two constituent
-        // unitary pins plus a labelled midpoint marker.  Matches
-        // `buildCombinedActionPins` in the frontend's svgUtils.
-        const computeCombinedActionPins = (actions, metaIndex, unitaryPinById) => {
+        // Build curves for combined-pair (A+B) entries.  Filtered to
+        // SIMULATED pairs only — `is_estimated: true` entries are the
+        // recommender's superposition output (no actual simulation
+        // ran), and rendering dashed lines for them mid-flight clutters
+        // the overview before the operator has even opened the Combine
+        // modal.  Matches frontend behaviour: simulated combined pairs
+        // land in `result.actions` with `is_estimated: false` and only
+        // those produce a dashed connection.
+        const computeCombinedActionPins = (actions, metaIndex, unitaryPinById, monitoringFactor = 0.95) => {
             if (!actions || !metaIndex) return [];
             const pairs = [];
             for (const [id, action] of Object.entries(actions)) {
                 if (!id.includes('+') || !action) continue;
-                // Resolve each constituent to a pin position — fall
-                // back to recomputing via the resolver when the
-                // unitary pin isn't already on screen.
+                if (action.is_estimated === true) continue;        // estimated only — skip
+                // Resolve each constituent to a pin position.
                 const parts = id.split('+').map(p => p.trim());
+                if (parts.length !== 2) continue;
                 const getEndpoint = (partId) => {
                     const cached = unitaryPinById.get(partId);
                     if (cached) return { x: cached.x, y: cached.y };
@@ -1659,19 +1687,13 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                 const a = getEndpoint(parts[0]);
                 const b = getEndpoint(parts[1]);
                 if (!a || !b) continue;
-                const rho = typeof action.max_rho === 'number'
-                    ? action.max_rho
-                    : (typeof action.estimated_max_rho === 'number' ? action.estimated_max_rho : NaN);
-                let color = '#9ca3af';
-                if (Number.isFinite(rho)) {
-                    color = rho <= 0.9 ? '#28a745' : rho <= 1.0 ? '#f0ad4e' : '#dc3545';
-                }
+                const severity = computeActionSeverity(action, monitoringFactor);
                 pairs.push({
                     id,
                     x1: a.x, y1: a.y, x2: b.x, y2: b.y,
-                    // Midpoint for the label badge.
                     midX: (a.x + b.x) / 2, midY: (a.y + b.y) / 2,
-                    rho, color,
+                    severity,
+                    color: SEVERITY_COLOR[severity],
                     description: action.description_unitaire || '',
                 });
             }
@@ -1693,6 +1715,12 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             selectedActionId,
             onActionSelect,
             onPinPreview,
+            // Operational threshold from the Configurations tab.
+            // Drives the pin severity palette (green / orange / red)
+            // — without this, the standalone falls back to the 0.95
+            // default and may misclassify pins on grids configured
+            // with a different MF.
+            monitoringFactor = 0.95,
             // Richer-popover props — forward the sidebar ActionCard
             // affordances so the pin popover matches the card the
             // user would see in the feed.
@@ -1718,8 +1746,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             const fitVbRef = React.useRef(null); // the "Fit" target
 
             const pins = React.useMemo(
-                () => computeActionOverviewPins(actions, n1MetaIndex),
-                [actions, n1MetaIndex],
+                () => computeActionOverviewPins(actions, n1MetaIndex, monitoringFactor),
+                [actions, n1MetaIndex, monitoringFactor],
             );
 
             // Combined-pair connections.  A Map keyed by unitary pin id
@@ -1727,8 +1755,8 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
             // rather than re-running the resolver for every leg.
             const combinedPairs = React.useMemo(() => {
                 const byId = new Map(pins.map(p => [p.id, p]));
-                return computeCombinedActionPins(actions, n1MetaIndex, byId);
-            }, [actions, n1MetaIndex, pins]);
+                return computeCombinedActionPins(actions, n1MetaIndex, byId, monitoringFactor);
+            }, [actions, n1MetaIndex, pins, monitoringFactor]);
 
             // visible → overview_shown / overview_hidden.
             React.useEffect(() => {
@@ -6453,6 +6481,7 @@ This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface t
                                                 actions={result.actions}
                                                 selectedActionId={selectedActionId}
                                                 onActionSelect={handleActionSelect}
+                                                monitoringFactor={monitoringFactor}
                                                 selectedActionIds={manualActionIds}
                                                 rejectedActionIds={rejectedActionIds}
                                                 manuallyAddedIds={manuallyAddedIds}
