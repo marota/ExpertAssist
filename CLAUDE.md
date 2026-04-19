@@ -466,8 +466,9 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **Session** | List-sessions modal | ✅ | — |
 | **Session** | Restore configuration + contingency + analysis state | ✅ | — |
 | **Session** | Restore interaction log | ✅ | — |
-| **Interaction log** | Event recording | ✅ | — |
-| **Interaction log** | Correlation IDs | ⚠️ | Recorded for some events — not systematically paired on all async flows |
+| **Interaction log** | Event-type coverage | ⚠️ | 19/55 spec types never emitted by the standalone — see machine-grounded findings below |
+| **Interaction log** | `details` schema conformance | ⚠️ | 5 events with standalone-side schema drift (e.g. `voltage_range_changed {min_kv,max_kv}` vs spec `{min,max}`) — see below |
+| **Interaction log** | `recordCompletion` pairs | ⚠️ | Only `analysis_step{1,2}_completed` emitted — both sides drift from the spec here |
 | **Interaction log** | Replay-ready details | ✅ | — |
 | **Interaction log** | Saved with session | ✅ | — |
 | **Confirmation** | Contingency change | ✅ | `window.confirm()` |
@@ -505,24 +506,139 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 #### Features in the standalone that are no longer in React
 None identified. The standalone is strictly a subset of the React app — there is no obsolete code path to remove. If a feature is removed from `frontend/`, delete it from `standalone_interface.html` in the same commit.
 
+### Machine-grounded findings (`scripts/check_standalone_parity.py`)
+
+The feature table above is human-curated. A static parity check is
+automated in `scripts/check_standalone_parity.py`; run it to refresh
+these numbers. Findings as of 2026-04-19:
+
+```
+InteractionType union:       55 types declared in frontend/src/types.ts
+Frontend emits:              51 types (missing: settings_cancelled,
+                             action_unfavorited, action_unrejected,
+                             contingency_selected variants used in tests)
+Standalone emits:            32 types
+```
+
+#### Event types emitted by the frontend but NOT by the standalone (19)
+
+These are all valid `InteractionType` values. Fix by adding
+`interactionLogger.record('<type>', { ... })` at the equivalent
+gesture site in the standalone.
+
+| Event type | React source |
+|---|---|
+| `action_mw_resimulated` | `components/ActionFeed.tsx:451` |
+| `pst_tap_resimulated` | `components/ActionFeed.tsx:503` |
+| `contingency_confirmed` | `App.tsx:681` (standalone uses `window.confirm()` and emits nothing) |
+| `settings_tab_changed` | `components/modals/SettingsModal.tsx:51` |
+| `path_picked` | `hooks/useSettings.ts:232` |
+| `inspect_query_changed` | `App.tsx:976,984` |
+| `tab_detached` / `tab_reattached` | `App.tsx:211,225` |
+| `tab_tied` / `tab_untied` | `hooks/useTiedTabsSync.ts:97,107` |
+| `overview_shown` / `overview_hidden` | `components/ActionOverviewDiagram.tsx:466,469` |
+| `overview_pin_clicked` / `overview_pin_double_clicked` | `components/ActionOverviewDiagram.tsx:343,364` |
+| `overview_popover_closed` | `components/ActionOverviewDiagram.tsx:558` |
+| `overview_zoom_in` / `overview_zoom_out` / `overview_zoom_fit` | `components/ActionOverviewDiagram.tsx:476,482,487` |
+| `overview_inspect_changed` | `components/ActionOverviewDiagram.tsx:526,530` |
+
+Nothing in the standalone emits an event the `InteractionType` union
+does not know about (0 orphan types).
+
+#### Details-key drift between frontend and standalone (11 events)
+
+Cross-referenced against the schema in `docs/interaction-logging.md`;
+each row lists which side owns the fix.
+
+**Standalone owns the fix (5 events)** — the standalone emits a shape
+incompatible with the documented replay contract:
+
+| Event | Spec `details` | Standalone emits | Standalone site |
+|---|---|---|---|
+| `asset_clicked` | `{ action_id, asset_name, tab }` | `{ action_id, asset_name, target_tab }` | `standalone:3034,3056` |
+| `diagram_tab_changed` | `{ tab }` | `{ from_tab, to_tab }` | `standalone:6675` |
+| `sld_overlay_tab_changed` | `{ tab, vl_name }` | `{ from_tab, to_tab }` (no `vl_name`) | `standalone:5148` |
+| `view_mode_changed` | `{ mode, tab, scope }` | `{ mode }` (no `tab`, no `scope`) | `standalone:6762,6773` |
+| `voltage_range_changed` | `{ min, max }` (kV) | `{ min_kv, max_kv }` | `standalone:5070,5083` |
+
+**Frontend owns the fix (3 events)** — the React app emits a shape
+that drifts from its own documented replay contract. The standalone
+is closer to the spec and should NOT be downgraded to match the FE;
+instead the FE should be corrected:
+
+| Event | Spec `details` | Frontend emits | Frontend site |
+|---|---|---|---|
+| `action_deselected` | `{ previous_action_id }` | `{ action_id }` | `hooks/useDiagrams.ts:360` |
+| `analysis_step2_started` | `{ element, selected_overloads, all_overloads, monitor_deselected }` | `{ selected_overloads, monitor_deselected }` — missing `element`, `all_overloads` | `hooks/useAnalysis.ts:122-125` |
+| `overload_toggled` | `{ overload, selected }` | `{ overload }` — missing `selected` | `hooks/useAnalysis.ts:239` |
+
+**Harmless extras in the standalone (3 events)** — the standalone
+adds keys the spec doesn't require. Keep or drop; does not break
+replay:
+
+| Event | Extra keys in standalone |
+|---|---|
+| `manual_action_simulated` | `+ description` |
+| `session_saved` | `+ session_name` |
+| `sld_overlay_opened` | `+ initial_tab` |
+
+#### API paths referenced by the frontend but not by the standalone (1)
+
+| Endpoint | Introduced in | Frontend call site |
+|---|---|---|
+| `/api/simulate-and-variant-diagram` | NDJSON stream emitting `{type:"metrics"}` then `{type:"diagram"}` | `api.ts::simulateAndVariantDiagramStream` |
+
+#### `recordCompletion` coverage
+
+Both codebases emit the same two `*_completed` events:
+`analysis_step1_completed` and `analysis_step2_completed`. The
+replay spec lists more async wait-points that could benefit from
+completion events (`action_selected`, `manual_action_simulated`,
+`action_mw_resimulated`, `pst_tap_resimulated`, `combine_pair_simulated`,
+`settings_applied`, `session_reloaded`, `tab_detached` /
+`tab_reattached`) — **this is a shared gap against the spec**, not a
+parity gap between the two codebases. Track as a follow-up for
+`docs/interaction-logging.md` compliance on both sides.
+
+### Running the conformity check
+
+```bash
+python scripts/check_standalone_parity.py            # human output
+python scripts/check_standalone_parity.py --json     # CI-friendly JSON
+```
+
+Exits non-zero on any FAIL finding — suitable as a GitHub Actions
+gate. See the top of the script file for the three inventories it
+checks (`InteractionType` union, API paths, `SettingsState`) and
+the per-event details-key diff.
+
 ### How to use this audit
 
 When updating `standalone_interface.html`:
 
-1. Pick an item from "Top-priority gaps" (or "Deferrable gaps" if the
-   work is lighter). Read the React source files listed alongside to
-   understand the exact behaviour.
-2. Check the Interaction Logger section of `frontend/CLAUDE.md` and
-   add any new gesture types to the standalone's inline
-   `interactionLogger` implementation. The replay contract in
-   `docs/interaction-logging.md` is the source of truth.
-3. When a new endpoint is added to the backend (`expert_backend/main.py`)
+1. Run `scripts/check_standalone_parity.py` first. Every FAIL line is
+   a specific, actionable item with file:line anchors on both sides.
+2. For each "event type missing in standalone" finding: open the
+   React source file listed, understand the gesture, and add an
+   equivalent `interactionLogger.record('<type>', { ... })` at the
+   matching spot in the standalone.
+3. For each "details-key drift" finding: check which side the spec
+   (`docs/interaction-logging.md`) sides with, then fix that side.
+4. When a new endpoint is added to the backend (`expert_backend/main.py`)
    and surfaced in `frontend/src/api.ts`, mirror it in the standalone's
-   inline API wrapper **in the same PR**.
-4. When adding a new setting field: update the audit table above to
-   track its mirror state.
-5. Run the standalone locally by opening it in a browser with the
+   inline API wrapper **in the same PR** — the script's API-path
+   check will catch any miss.
+5. When adding a new setting field: add it to the `SettingsState`
+   interface AND to the standalone's `useState` set with a
+   convention-compatible name (the script normalises camelCase ↔
+   snake_case automatically).
+6. Run the standalone locally by opening it in a browser with the
    FastAPI backend running. Confirm the gesture, diagram, and
-   interaction-log output match the React app side by side.
+   interaction-log output match the React app side by side. The
+   script catches shape drift but not behavioural drift — a future
+   Layer-3 Playwright spec is the next step (see the conformity-script
+   design in the session transcript).
 
 Last audited: 2026-04-19 (branch `claude/fix-grid-layout-reset-8TYEV`).
+Numbers above regenerated by
+`scripts/check_standalone_parity.py` on the same branch.
