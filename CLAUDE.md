@@ -372,7 +372,7 @@ Grouped by domain. Each item lists the primary React source file(s)
 - **Save snapshot** to folder (or browser download) — `hooks/useSession.ts::handleSaveResults`, `/api/save-session`
 - **List-sessions modal** — `components/modals/ReloadSessionModal.tsx`, `/api/list-sessions`
 - **Restore session** — configuration + contingency + analysis state — `/api/load-session`
-- **`restore-analysis-context`** — rehydrate `selectedOverloads`, monitored lines, computed pairs — `/api/restore-analysis-context` *(NOTE: wired only in `standalone_interface.html` today; React `useSession::handleRestoreSession` does not call it, so React-saved sessions lose `lines_we_care_about` on reload. Gap flagged in the 2026-04-20 audit delta below.)*
+- **`restore-analysis-context`** — rehydrate `selectedOverloads`, monitored lines, computed pairs — `/api/restore-analysis-context` (wired on both sides as of 2026-04-20: `standalone_interface.html:3857` AND `frontend/src/hooks/useSession.ts::handleRestoreSession`; `sessionUtils.ts` now persists `lines_we_care_about` + `computed_pairs` in `session.json` so the monitored-line set survives a React-saved reload.)
 
 #### Interaction Logger
 - **Typed event recording** — `utils/interactionLogger.ts`, `types.ts::InteractionType` union
@@ -469,7 +469,7 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **Session** | Save to folder | ✅ | — |
 | **Session** | Browser download fallback | ✅ | — |
 | **Session** | List-sessions modal | ✅ | — |
-| **Session** | Restore configuration + contingency + analysis state | ⚠️ | Both restore client state; only the standalone re-pushes `lines_we_care_about` to the backend via `/api/restore-analysis-context` (see 2026-04-20 audit delta). React `useSession::handleRestoreSession` skips this call — reloaded React sessions use the backend's default monitored-line set on subsequent simulations. Follow-up: mirror the call in React. |
+| **Session** | Restore configuration + contingency + analysis state | ✅ | Both restore client state AND re-push `lines_we_care_about` + `computed_pairs` to the backend via `/api/restore-analysis-context`. React wiring landed 2026-04-20 in `useSession::handleRestoreSession` + `sessionUtils.ts`; guarded by regression tests `useSession.test.ts::re-pushes lines_we_care_about` and `sessionUtils.test.ts::persists lines_we_care_about`. |
 | **Session** | Restore interaction log | ✅ | — |
 | **Interaction log** | Event-type coverage | ✅ | 51/51 gestures emitted by the frontend are now emitted by the standalone (the full `InteractionType` union minus 4 test-only helpers that neither codebase emits). |
 | **Interaction log** | `details` schema conformance | ✅ | All emitted standalone events are spec-conformant; historical `min_kv/max_kv`, `target_tab`, `from_tab/to_tab`, `missing tab/scope` drifts all resolved |
@@ -883,24 +883,38 @@ running the parity layers against a first auto-generated standalone
 `npm run build:standalone`). Neither is a new drift — both were
 masked by the existing script's extractor assumptions.
 
-1. **One-way API drift: `/api/restore-analysis-context`** — called
-   by `standalone_interface.html:3857` during session reload to push
-   the saved `lines_we_care_about` back into the backend so
-   subsequent simulate-action calls use the same monitored-line set
-   as the original study. The React frontend never calls this
-   endpoint (`rg -n lines_we_care_about frontend/src` → 0 hits) and
-   `frontend/src/utils/sessionUtils.ts` does not save
-   `lines_we_care_about` in `session.json` either. Result: reloading
-   a React-saved session and then running a new simulation falls
-   back to the backend's default monitored-line policy instead of
-   the snapshot's — a silent behavioural gap on the React side, not
-   on the standalone side. `scripts/check_standalone_parity.py`
-   missed this because its `missing_api_paths` check is
-   frontend→standalone only; it does not flag standalone-exclusive
-   API paths. Follow-up: add a reverse check (`missing_api_paths_sa_only`),
-   persist `lines_we_care_about` in `sessionUtils.ts`, and call
-   `api.restoreAnalysisContext()` from `useSession::handleRestoreSession`
-   right after the base-diagram Promise.all.
+1. **One-way API drift: `/api/restore-analysis-context`** — **RESOLVED**
+   2026-04-20 in the same branch. The standalone calls this endpoint
+   from `standalone_interface.html:3857` during session reload to push
+   the saved `lines_we_care_about` back into the backend so subsequent
+   simulate-action calls use the same monitored-line set as the
+   original study. Before the fix, the React frontend never called
+   this endpoint (`rg -n lines_we_care_about frontend/src` → 0 hits)
+   and `frontend/src/utils/sessionUtils.ts` did not save
+   `lines_we_care_about` in `session.json` either, so reloading a
+   React-saved session and then running a new simulation fell back to
+   the backend's default monitored-line policy — a silent behavioural
+   gap on the React side that none of the 4 parity layers flagged.
+   `scripts/check_standalone_parity.py` missed this because its
+   `missing_api_paths` check is frontend→standalone only; it does not
+   flag standalone-exclusive API paths. The fix:
+   - `frontend/src/api.ts` → added `api.restoreAnalysisContext(...)`
+   - `frontend/src/types.ts` → `AnalysisResult` + `SessionResult.analysis`
+     gained `lines_we_care_about` and `computed_pairs`
+   - `frontend/src/utils/sessionUtils.ts` → persists both fields in
+     `session.json` (save-side parity with the standalone)
+   - `frontend/src/hooks/useSession.ts::handleRestoreSession` → calls
+     `api.restoreAnalysisContext(...)` right after the base-diagram
+     `Promise.all`, wrapped in try/catch so the reload still completes
+     if the push fails
+   - Regression tests: `sessionUtils.test.ts::persists lines_we_care_about`,
+     `sessionUtils.test.ts::persists computed_pairs`,
+     `useSession.test.ts::re-pushes lines_we_care_about`, plus a legacy-
+     session no-op test and a backend-offline-failure test
+   - `frontend/src/api.test.ts` → unit test for the new axios method
+   Follow-up still open: add a reverse check
+   (`missing_api_paths_sa_only`) to `check_standalone_parity.py` so
+   future standalone-only API paths surface automatically.
 
 2. **Auto-generated-standalone viability: confirmed** — Phase 1 of
    the auto-generation plan (build a single-file React bundle via
