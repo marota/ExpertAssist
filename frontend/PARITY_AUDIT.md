@@ -10,13 +10,14 @@
 
 > **Status as of 2026-04-20:** the hand-maintained
 > `standalone_interface.html` was decommissioned and renamed to
-> `standalone_interface_legacy.html` (untracked via `.gitignore`,
-> kept on disk for reference only). The canonical single-file
-> distribution is now `frontend/dist-standalone/standalone.html`
-> produced by `npm run build:standalone` — the audit sections
-> below still reference `standalone_interface.html` by name for
-> continuity with the git history; the legacy file is the one
-> the parity scripts target when it is still present on disk.
+> `standalone_interface_legacy.html` — committed as a frozen
+> snapshot of its last version (do NOT edit further). The
+> canonical single-file distribution is now
+> `frontend/dist-standalone/standalone.html` produced by
+> `npm run build:standalone`. The audit sections below still
+> reference `standalone_interface.html` by name for continuity
+> with the git history; when the parity scripts target the
+> legacy file they read `standalone_interface_legacy.html`.
 
 
 `standalone_interface.html` is a self-contained single-file mirror of the

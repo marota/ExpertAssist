@@ -279,8 +279,8 @@ React source tree by `npm run build:standalone` in `frontend/` (see
 with React + CSS inlined, favicon inlined as a data URI, no
 external network dependencies. This artifact replaces the former
 hand-maintained `standalone_interface.html` (renamed to
-`standalone_interface_legacy.html`, untracked via `.gitignore`,
-kept on disk for reference only).
+`standalone_interface_legacy.html` at the project root, committed
+as a frozen snapshot of its last version — do NOT edit further).
 
 Consequence for day-to-day dev: **no manual mirroring is required**
 when you add a component, setting, endpoint, or gesture. Land the
