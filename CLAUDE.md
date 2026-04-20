@@ -427,9 +427,9 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **ActionFeed** | Max-rho / LS / RC / PST badges | ✅ | — |
 | **ActionFeed** | DC-fallback badge | ⚠️ | `non_convergence` tracked but not surfaced in the filter dropdown |
 | **ActionFeed** | Scroll-to-selected | ✅ | — |
-| **ActionFeed** | Load-shedding details popup | ❌ | Badge shows count only — no per-load breakdown popup |
-| **ActionFeed** | Curtailment details popup | ❌ | Badge shows count only — no per-generator breakdown popup |
-| **ActionFeed** | PST details popup | ❌ | Tap shown inline on the card — no separate popup with range & start |
+| **ActionFeed** | Load-shedding details popup | ✅ | Stale-audit correction (2026-04-20): legacy renders the per-load breakdown + editable MW input + Re-simulate button inline on the card at `standalone:6920-6945`, matching React's `ActionCard.tsx:263-291`. Not a popover in React either — the audit's "popup" label was a misnomer; both sides render the breakdown in-card. |
+| **ActionFeed** | Curtailment details popup | ✅ | Stale-audit correction: identical to LS above. Legacy `standalone:6946-6975` mirrors React `ActionCard.tsx:292-320`. Inline edit + re-simulate. |
+| **ActionFeed** | PST details popup | ✅ | Stale-audit correction: both sides render the PST tap + range inline on the card (React `ActionCard.tsx:321-350`; legacy inline). No separate popover on either side. |
 | **ActionFeed** | Re-simulate (MW + tap) interaction log | ✅ | Now emits `action_mw_resimulated` / `pst_tap_resimulated` |
 | **ActionVariant** | Fetch on select | ✅ | — |
 | **ActionVariant** | Network / Delta mode toggle | ✅ | — |
@@ -444,9 +444,10 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **Visualization** | Voltage range filter | ✅ | — |
 | **Visualization** | `boostSvgForLargeGrid` scaling | ✅ | — |
 | **Visualization** | Asset click zoom | ✅ | — |
-| **Visualization** | Contingency highlight | ⚠️ | Uses clone halo — not the `vector-effect` approach; heavier on re-render |
+| **Visualization** | Contingency highlight | ✅ | Stale-audit correction (2026-04-20): both sides use the SAME technique — a clone appended to the `nad-background-layer` carrying the `nad-highlight-clone` CSS class, which itself applies `vector-effect: non-scaling-stroke`. Legacy at `standalone_interface.html:1415-1468` mirrors React `utils/svgUtils.ts::applyContingencyHighlight:531-586` line-for-line. |
 | **Visualization** | Overload / delta highlights | ✅ | — |
-| **Visualization** | Zoom-tier LOD (hide labels at overview) | ❌ | SVG always fully rendered regardless of zoom tier |
+| **Visualization** | Zoom-tier LOD (hide labels at overview) | ✅ | Stale-audit correction (2026-04-20): legacy wires `computeZoomTier(current, original)` + `container.setAttribute('data-zoom-tier', tier)` at `standalone:810-830`, matched by the CSS hiding rules at `standalone:183-194`. Behaviourally equivalent to the React side (`usePanZoom.ts` + `App.css`). |
+| **Perf** | Zoom-tier LOD | ✅ | See row above — was stale `❌`. |
 | **Combined Actions** | Pair checkbox selection | ✅ | — |
 | **Combined Actions** | Superposition compute | ✅ | — |
 | **Combined Actions** | ComputedPairsTable | ⚠️ | Rendered inline, not as a discrete reusable component |
@@ -481,24 +482,23 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **Confirmation** | Apply Settings | ✅ | `window.confirm()` + emits `contingency_confirmed { type: 'applySettings' }` |
 | **Errors** | ErrorBoundary | ❌ | No catastrophic-render guard — only error-state message display |
 | **Errors** | Error / info / monitoring-warning messages | ✅ | — |
-| **Perf** | `format=text` diagram fetch | ⚠️ | Behaviour assumed from rendering; not obviously wired to the `format=text` endpoint |
+| **Perf** | `format=text` diagram fetch | ✅ | Stale-audit correction (2026-04-20): legacy `standalone:3447` calls `fetch(..."/api/network-diagram?format=text"...)` — same raw-SVG-body optimisation as React `api.ts:69-92`. |
 | **Perf** | Parallel boot XHRs | ✅ | `Promise.all([branches, VLs, nominal voltages])` |
 | **Perf** | `getIdMap` WeakMap cache | ✅ | — |
 | **Perf** | MemoizedSvgContainer | ❌ | No memoisation wrapper — inline SVG render |
-| **Perf** | Zoom-tier LOD | ❌ | No tier-based element hiding |
 
 ### Parity Gap Priority
 
 #### Top-priority gaps (biggest user impact — do first)
 1. ~~**Action Overview Diagram + pin navigation**~~ — **DONE** (minimal port). Pins on the N-1 NAD, single-click popover, double-click navigation, zoom + inspect controls all wired, all 9 `overview_*` events fire. Follow-up polish: multi-pin fan-out on shared anchors, combined-action curves, full ActionCard in the popover.
 2. ~~**Detached + tied tabs**~~ — **DONE** (minimal port). `window.open`-based popups with SVG snapshot + pan/zoom + postMessage-based tied viewBox mirror. Accepted limitations: popup content is a snapshot (doesn't live-update on main state changes) and there's no React portal. All 4 `tab_*` events fire. Follow-up polish: portal-style live updates, shared inspect-search inside popups.
-3. **Pan/zoom migration to `react-zoom-pan-pinch`** — standalone uses raw viewBox math with no inertia or gesture smoothing. On large grids this is the single biggest UX regression versus the React app.
-4. **Zoom-tier LOD** — large grids (500+ VLs) render ALL text at overview zoom and become unreadable; React hides text-heavy elements per tier. See `docs/rendering-optimization-plan.md`.
-5. **Load-shedding / curtailment / PST details popups** — three separate popups in the React `ActionCard` that expose per-item breakdowns; currently replaced by a badge count only.
-6. **Contingency highlight rendering** — standalone uses clone halos; React uses `vector-effect: non-scaling-stroke`. Functionally similar but React's approach is cheaper on repeated contingency changes.
-7. **Name-resolution in datalist** — surfacing `nameMap[id]` in the dropdown options. Very low effort, high frequent-use payoff on grids with 1000+ branches.
-8. **Confirmation dialog before Apply Settings** — parity with the existing Load-Study / contingency-change confirmations.
-9. **Interaction log correlation IDs on all async flows** — the replay contract requires start/completion pairs; standalone currently emits only partial pairs.
+3. **Pan/zoom migration to `react-zoom-pan-pinch`** — standalone uses raw viewBox math with no inertia or gesture smoothing. On large grids this is the single biggest UX regression versus the React app. **Deferred** — multi-hundred-line rewrite of `standalone:800-900` pan/zoom service; tracked as Phase-3 follow-up to the auto-generation work.
+4. ~~**Zoom-tier LOD**~~ — **STALE AUDIT CLAIM (2026-04-20)**. Legacy has it wired at `standalone:810-830` + CSS at `:183-194`. No gap. Table row flipped to ✅.
+5. ~~**Load-shedding / curtailment / PST details popups**~~ — **STALE AUDIT CLAIM**. Both sides render the per-item breakdown inline on the card with editable MW input + Re-simulate button. No user-visible gap. Table rows flipped to ✅.
+6. ~~**Contingency highlight rendering**~~ — **STALE AUDIT CLAIM**. Both sides use the identical clone-in-background-layer approach with `vector-effect: non-scaling-stroke` on the `.nad-highlight-clone` class. No gap.
+7. **Name-resolution in datalist** — **REAL GAP**. Surfacing `nameMap[id]` in the dropdown options. Very low effort, high frequent-use payoff on grids with 1000+ branches.
+8. ~~**Confirmation dialog before Apply Settings**~~ — **STALE AUDIT CLAIM**. Legacy has it at `standalone:2541-2543`, emitting `contingency_confirmed { type: 'applySettings' }`. Table row confirms ✅.
+9. **Interaction log correlation IDs on all async flows** — **SHARED GAP**. Both frontend and standalone emit exactly 2 `recordCompletion` pairs (step1 + step2); the replay contract lists ~8 other async wait-points (`action_selected`, `manual_action_simulated`, `combine_pair_simulated`, `settings_applied`, `session_reloaded`, `tab_detached/reattached`, `action_mw_resimulated`, `pst_tap_resimulated`) that would benefit from pairs. Not a legacy-vs-react divergence; not addressed in this pass to preserve parity.
 10. **Extracting inline `ComputedPairsTable` and `ExplorePairsTab`** into discrete JS modules within the standalone file. Low functional impact but improves maintainability.
 
 #### Deferrable gaps (cosmetic / marginal)

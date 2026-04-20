@@ -17,23 +17,38 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { viteSingleFile } from 'vite-plugin-singlefile'
 import { resolve } from 'node:path'
-import { renameSync, existsSync } from 'node:fs'
+import { renameSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 
 export default defineConfig({
   plugins: [
     react(),
     viteSingleFile(),
     {
-      name: 'rename-standalone-output',
+      name: 'rename-and-inline-favicon',
       closeBundle() {
         const outDir = resolve(__dirname, 'dist-standalone')
         const from = resolve(outDir, 'index.html')
         const to = resolve(outDir, 'standalone.html')
-        if (existsSync(from)) {
-          if (existsSync(to)) {
-            renameSync(to, to + '.bak')
-          }
-          renameSync(from, to)
+        if (!existsSync(from)) return
+        if (existsSync(to)) renameSync(to, to + '.bak')
+        renameSync(from, to)
+
+        // Replace the `<link rel="icon" href="./vite.svg">` reference
+        // with an inline data URI so the single-file HTML remains
+        // truly self-contained when opened via `file://` (no 404 on
+        // the sibling vite.svg, no need to ship two files).
+        const svgPath = resolve(outDir, 'vite.svg')
+        if (existsSync(svgPath)) {
+          const svgSrc = readFileSync(svgPath, 'utf-8').trim()
+          const dataUri =
+            'data:image/svg+xml;utf8,' + encodeURIComponent(svgSrc)
+          let html = readFileSync(to, 'utf-8')
+          html = html.replace(
+            /href="\.\/vite\.svg"/,
+            `href="${dataUri}"`,
+          )
+          writeFileSync(to, html)
+          unlinkSync(svgPath)
         }
       },
     },
