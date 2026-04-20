@@ -58,7 +58,22 @@ class TestCacheSynchronization:
     @patch.object(RecommenderService, '_get_n1_variant')
     @patch.object(RecommenderService, '_get_n_variant')
     @patch.object(RecommenderService, '_get_simulation_env')
-    def test_cache_invalidation_on_contingency_switch(self, mock_get_env, mock_get_n, mock_get_n1):
+    @patch.object(RecommenderService, '_get_base_network')
+    def test_cache_invalidation_on_contingency_switch(self, mock_get_net, mock_get_env, mock_get_n, mock_get_n1):
+        # `_ensure_n1_state_ready` (invoked at the top of
+        # `simulate_manual_action`) calls `_get_base_network()` BEFORE
+        # `_get_n1_variant()`. When the base network is not mocked the
+        # fallback path `pp.network.load(config.ENV_PATH)` raises — the
+        # guard swallows the exception, but `_get_n1_variant` is never
+        # called, so the 4 `side_effect` values below shift by one and
+        # the second `simulate_manual_action("DISCO_B")` ends up getting
+        # the cached "n1_A" id back → both N and N-1 caches hit → zero
+        # `env.get_obs` calls instead of the expected 1. On CI
+        # (`pip install --no-deps expert_op4grid_recommender`) the
+        # fallback path tries a relative `data/` dir under site-packages
+        # that does not exist — exactly the scenario this mock
+        # neutralises. The companion test `test_cache_hits_on_repeated_calls`
+        # already mocks `_get_base_network`; aligning this one.
         service = RecommenderService()
         service._dict_action = {"act1": {"content": {}}}
         service._last_result = {"prioritized_actions": {}}
