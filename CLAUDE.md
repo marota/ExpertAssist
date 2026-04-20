@@ -450,8 +450,8 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 | **Perf** | Zoom-tier LOD | ✅ | See row above — was stale `❌`. |
 | **Combined Actions** | Pair checkbox selection | ✅ | — |
 | **Combined Actions** | Superposition compute | ✅ | — |
-| **Combined Actions** | ComputedPairsTable | ⚠️ | Rendered inline, not as a discrete reusable component |
-| **Combined Actions** | ExplorePairsTab | ⚠️ | Rendered inline, not as a discrete component |
+| **Combined Actions** | ComputedPairsTable | ✅ | Extracted 2026-04-20 as a module-level component at `standalone_interface.html:2369` (124 lines, 5 props). Mirrors React's `components/ComputedPairsTable.tsx`. Props threaded through explicitly — no closure over App-local state. |
+| **Combined Actions** | ExplorePairsTab | ✅ | Extracted 2026-04-20 at `standalone_interface.html:2493` (234 lines, 16 props). Mirrors React's `components/ExplorePairsTab.tsx`. |
 | **Combined Actions** | Simulate combined | ✅ | — |
 | **Action Overview** | N-1 NAD with pin overlay | ✅ | Minimal port — one pin per prioritized action at the midpoint of its `max_rho_line`; no multi-pin fan-out, no combined-action curves. All 9 `overview_*` events fire at the documented gesture points. |
 | **Action Overview** | ActionCardPopover on pin hover | ⚠️ | Minimal popover (id / description / max ρ / "View action" button). Not the full ActionCard component — no favorite/reject buttons inside the popover. |
@@ -499,7 +499,7 @@ Legend: ✅ mirrored · ⚠️ partial (gap noted) · ❌ missing
 7. **Name-resolution in datalist** — **REAL GAP**. Surfacing `nameMap[id]` in the dropdown options. Very low effort, high frequent-use payoff on grids with 1000+ branches.
 8. ~~**Confirmation dialog before Apply Settings**~~ — **STALE AUDIT CLAIM**. Legacy has it at `standalone:2541-2543`, emitting `contingency_confirmed { type: 'applySettings' }`. Table row confirms ✅.
 9. **Interaction log correlation IDs on all async flows** — **SHARED GAP**. Both frontend and standalone emit exactly 2 `recordCompletion` pairs (step1 + step2); the replay contract lists ~8 other async wait-points (`action_selected`, `manual_action_simulated`, `combine_pair_simulated`, `settings_applied`, `session_reloaded`, `tab_detached/reattached`, `action_mw_resimulated`, `pst_tap_resimulated`) that would benefit from pairs. Not a legacy-vs-react divergence; not addressed in this pass to preserve parity.
-10. **Extracting inline `ComputedPairsTable` and `ExplorePairsTab`** into discrete JS modules within the standalone file. Low functional impact but improves maintainability.
+10. ~~**Extracting inline `ComputedPairsTable` and `ExplorePairsTab`**~~ — **DONE** 2026-04-20 (commit `63612d4`). Both hoisted to module-level components at `standalone_interface.html:2369` (`ComputedPairsTable`, 5 props) and `:2493` (`ExplorePairsTab`, 16 props), sitting alongside the other already-extracted `ActionOverviewDiagram` + `MemoizedSvgContainer` modules. `App()` is now ~370 lines shorter.
 
 #### Deferrable gaps (cosmetic / marginal)
 1. **ErrorBoundary** — catastrophic-render guard. Rare in practice.
