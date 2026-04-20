@@ -732,22 +732,48 @@ function App() {
 
     if (branches.length > 0 && !branches.includes(selectedBranch)) return;
 
-    if (selectedBranch === diagrams.committedBranchRef.current && (n1Diagram || hasAnalysisState() || n1Loading || analysisLoading)) return;
+    // Short-circuit when we already have the N-1 diagram / fetch /
+    // analysis for this branch — EXCEPT on session restore, where
+    // `hasAnalysisState()` is already true (actions were rehydrated
+    // by `useSession::handleRestoreSession`) while `n1Diagram` is
+    // still null. In that case the early-return would silently skip
+    // the N-1 fetch, leaving the N-1 tab blank and the N-1 overloads
+    // panel empty. `restoringSessionRef.current` is the signal we
+    // use to force the fetch through.
+    if (selectedBranch === diagrams.committedBranchRef.current
+        && !diagrams.restoringSessionRef.current
+        && (n1Diagram || hasAnalysisState() || n1Loading || analysisLoading)) return;
 
     if (selectedBranch !== diagrams.committedBranchRef.current && hasAnalysisState() && !diagrams.restoringSessionRef.current) {
       setConfirmDialog({ type: 'contingency', pendingBranch: selectedBranch });
       setSelectedBranch(diagrams.committedBranchRef.current);
       return;
     }
+    // Capture BEFORE we reset the ref so the rest of this effect can
+    // distinguish "user changed contingency" from "session was just
+    // restored". Without the local capture, any later branch in
+    // this effect would see `restoringSessionRef.current === false`
+    // and incorrectly wipe the just-restored analysis state via
+    // `clearContingencyState()`.
+    const isRestoring = diagrams.restoringSessionRef.current;
     diagrams.restoringSessionRef.current = false;
 
     diagrams.committedBranchRef.current = selectedBranch;
-    clearContingencyState();
-    diagrams.setN1Diagram(null);
+    if (!isRestoring) {
+      clearContingencyState();
+      diagrams.setN1Diagram(null);
+    }
 
     const fetchN1 = async () => {
       diagrams.setN1Loading(true);
-      diagrams.setActiveTab('n-1');
+      // On user-initiated contingency change, switch to N-1 so the
+      // fetched diagram is visible. On session restore, leave the
+      // active tab alone so the user lands on whichever tab the
+      // VisualizationPanel default (Action / Overflow) resolves to
+      // given the restored state.
+      if (!isRestoring) {
+        diagrams.setActiveTab('n-1');
+      }
       try {
         const res = await api.getN1Diagram(selectedBranch);
         const { svg, viewBox } = processSvg(res.svg, voltageLevels.length);

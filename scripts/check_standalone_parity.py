@@ -43,14 +43,18 @@ from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
-# `STANDALONE` is the default hand-maintained mirror; callers can
-# override it at invocation time via the ``COSTUDY4GRID_STANDALONE_PATH``
-# environment variable (set by the Phase-1 auto-generated-standalone
-# smoke tests in the same repo).
+# Standalone target: the hand-maintained mirror was decommissioned
+# 2026-04-20 (renamed to `standalone_interface_legacy.html` and
+# untracked via `.gitignore`). The canonical target is now the
+# auto-generated single-file bundle. Callers that want to audit a
+# different artifact can set `COSTUDY4GRID_STANDALONE_PATH` to any
+# path — the legacy file is still readable on disk if present.
+_DEFAULT_STANDALONE = REPO_ROOT / "frontend" / "dist-standalone" / "standalone.html"
+_LEGACY_STANDALONE = REPO_ROOT / "standalone_interface_legacy.html"
 STANDALONE = Path(
     os.environ.get(
         "COSTUDY4GRID_STANDALONE_PATH",
-        str(REPO_ROOT / "standalone_interface.html"),
+        str(_DEFAULT_STANDALONE if _DEFAULT_STANDALONE.exists() else _LEGACY_STANDALONE),
     )
 )
 TYPES_TS = FRONTEND_SRC / "types.ts"

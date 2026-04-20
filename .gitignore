@@ -30,3 +30,9 @@ env/
 config_*.json
 .idea/
 *DS_Store
+
+# Legacy hand-maintained standalone — kept on disk for reference
+# during the migration to the auto-generated single-file build
+# (`frontend/dist-standalone/standalone.html` via `npm run build:standalone`).
+# Do NOT track further changes. Canonical UI is now React + Vite.
+standalone_interface_legacy.html

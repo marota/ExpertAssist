@@ -41,9 +41,12 @@ Co-Study4Grid/
 │       │                          #            ConfirmationDialog)
 │       └── utils/                 # svgUtils, overloadHighlights, sessionUtils,
 │                                  # interactionLogger, popoverPlacement, mergeAnalysisResult
-├── standalone_interface.html  # Self-contained single-file HTML mirror of the React UI
-│                              # (~7300 lines, no React imports). Ships independently.
-│                              # See "Standalone Interface Parity Audit" section below.
+├── standalone_interface_legacy.html  # DECOMMISSIONED 2026-04-20 — hand-maintained
+│                              # single-file mirror kept on disk for reference only.
+│                              # Untracked via .gitignore. Replaced by the auto-generated
+│                              # `frontend/dist-standalone/standalone.html`
+│                              # (`npm run build:standalone`). New UI changes land ONLY
+│                              # in `frontend/src/` — no manual mirroring required.
 ├── docs/                      # Design docs (perf, save-results, interaction-logging,
 │                              # action-overview-diagram, state-reset-and-confirmation-dialogs,
 │                              # detachable-viz-tabs, …)
@@ -253,8 +256,8 @@ NAD/SLD payloads:
 - The backend API base URL is hardcoded to `http://localhost:8000` in `frontend/src/api.ts`
 - CORS is configured to allow all origins (`allow_origins=["*"]`)
 - **Frontend architecture (Phase 1 refactored)**: `App.tsx` is the state orchestration hub; it must NOT contain large inline JSX blocks. Extracted presentational components live in `components/` and `components/modals/`. When adding new UI sections, create a new component file and wire it in `App.tsx`.
-- **`useSettings` hook**: Exposes a `SettingsState` object with all settings fields + setters. This is passed wholesale to `SettingsModal` to avoid excessive prop drilling. Adding a new setting means: (1) add to `useSettings.ts`, (2) add to `SettingsModal.tsx`, (3) mirror in `standalone_interface.html`.
-- **`standalone_interface.html`**: A self-contained single-file version of the full UI. It does **not** import React components — it has its own inline JSX for all UI sections. When making UI changes, **always mirror them manually** in the standalone interface.
+- **`useSettings` hook**: Exposes a `SettingsState` object with all settings fields + setters. This is passed wholesale to `SettingsModal` to avoid excessive prop drilling. Adding a new setting means: (1) add to `useSettings.ts`, (2) add to `SettingsModal.tsx`. No manual standalone mirror is required — the legacy hand-maintained file has been decommissioned and the auto-generated bundle inherits from the React source automatically.
+- **Standalone bundle (auto-generated)**: `npm run build:standalone` in `frontend/` produces `frontend/dist-standalone/standalone.html` — a single-file HTML with React + CSS inlined via `vite-plugin-singlefile`. This is the canonical distribution artifact replacing the former `standalone_interface.html`. The legacy file remains on disk as `standalone_interface_legacy.html` (untracked) for reference.
 - There is no CI/CD pipeline, Dockerfile, or containerization configured
 - Root `.gitignore` excludes `__pycache__/`, `*.pyc`, `*.pyo`; `frontend/.gitignore` handles frontend build artifacts
 - Root-level Python scripts (`test_*.py`, `reproduce_error.py`, `repro_stuck.py`, `fix_zoom.py`, `inspect_metadata.py`) are ad-hoc development/debugging utilities, not part of the main application

@@ -442,6 +442,59 @@ describe('useSession — handleRestoreSession', () => {
         expect(ctx.committedNetworkPathRef.current).toBe('');
     });
 
+    it('sets restoringSessionRef BEFORE setSelectedBranch so the N-1 fetch effect bypasses its hasAnalysisState short-circuit (regression)', async () => {
+        // Without the ref being flipped to `true` first, the N-1
+        // useEffect in App.tsx short-circuits the second a session
+        // with existing analysis state is restored — because the
+        // restored `result` is non-null so `hasAnalysisState() ===
+        // true`, which the early-return gate used to treat as "no
+        // fetch needed". The ref lets the gate distinguish
+        // "already-analyzed this branch" from "session just
+        // restored, still need N-1 diagram". Verified here via the
+        // call-order of the ref-set vs the setSelectedBranch call.
+        const order: string[] = [];
+        const ctx = makeCtx();
+        const restoringRef = { current: false };
+        Object.defineProperty(restoringRef, 'current', {
+            set(v: boolean) {
+                if (v) order.push('restoringSessionRef=true');
+                Object.defineProperty(this, '_v', { value: v, writable: true, configurable: true });
+            },
+            get() { return (this as unknown as { _v?: boolean })._v ?? false; },
+            configurable: true,
+        });
+        ctx.restoringSessionRef = restoringRef as unknown as typeof ctx.restoringSessionRef;
+        const committedBranchRef = { current: '' };
+        Object.defineProperty(committedBranchRef, 'current', {
+            set(v: string) {
+                order.push(`committedBranchRef=${v}`);
+                Object.defineProperty(this, '_v', { value: v, writable: true, configurable: true });
+            },
+            get() { return (this as unknown as { _v?: string })._v ?? ''; },
+            configurable: true,
+        });
+        ctx.committedBranchRef = committedBranchRef as unknown as typeof ctx.committedBranchRef;
+        ctx.setSelectedBranch = vi.fn(() => order.push('setSelectedBranch'));
+
+        mockLoadSession.mockResolvedValue(makeSession({
+            contingency: { disconnected_element: 'LINE_A', selected_overloads: [], monitor_deselected: false },
+        }));
+        const { result } = renderHook(() => useSession());
+        await act(async () => {
+            await result.current.handleRestoreSession('session_ref_order', ctx);
+        });
+
+        // The ref must flip to true before setSelectedBranch is called,
+        // otherwise the N-1 effect sees `restoringSessionRef.current === false`
+        // and wipes the just-restored analysis state.
+        const refIdx = order.indexOf('restoringSessionRef=true');
+        const branchIdx = order.indexOf('setSelectedBranch');
+        expect(refIdx).toBeGreaterThanOrEqual(0);
+        expect(branchIdx).toBeGreaterThanOrEqual(0);
+        expect(refIdx).toBeLessThan(branchIdx);
+        expect(committedBranchRef.current).toBe('LINE_A');
+    });
+
     it('surfaces backend errors via ctx.setError and leaves the ref empty', async () => {
         mockLoadSession.mockRejectedValue({ response: { data: { detail: 'not found' } } });
         const ctx = makeCtx();

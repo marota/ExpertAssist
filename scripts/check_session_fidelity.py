@@ -53,12 +53,12 @@ import os
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FE_SAVE_PATH = REPO_ROOT / "frontend" / "src" / "utils" / "sessionUtils.ts"
 FE_RESTORE_PATH = REPO_ROOT / "frontend" / "src" / "hooks" / "useSession.ts"
-# Override via ``COSTUDY4GRID_STANDALONE_PATH`` to run the check against
-# the auto-generated bundle.
+_DEFAULT_STANDALONE = REPO_ROOT / "frontend" / "dist-standalone" / "standalone.html"
+_LEGACY_STANDALONE = REPO_ROOT / "standalone_interface_legacy.html"
 STANDALONE = Path(
     os.environ.get(
         "COSTUDY4GRID_STANDALONE_PATH",
-        str(REPO_ROOT / "standalone_interface.html"),
+        str(_DEFAULT_STANDALONE if _DEFAULT_STANDALONE.exists() else _LEGACY_STANDALONE),
     )
 )
 

@@ -382,4 +382,142 @@ describe('SldOverlay', () => {
             expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length).toBe(1);
         });
     });
+
+    // =====================================================================
+    // LS / curtailment / PST highlight fallback (regression for the missing
+    // load-shedding highlight on manually-simulated / re-simulated actions).
+    //
+    // The SLD highlight pass used to gate load/gen target collection behind
+    // `if (topo) { if (!isCoupling) { ... } }`. That silently skipped
+    // highlights whenever `action_topology` was empty — which happens for
+    // manually-simulated load_shedding_/curtail_ actions whose grid2op
+    // Action objects don't expose the `loads_p` / `gens_p` fields as
+    // public attributes. The fix hoists the non-coupling block out of the
+    // topo gate and ALWAYS consumes `load_shedding_details[].load_name`,
+    // `curtailment_details[].gen_name`, and `pst_details[].pst_name` as
+    // additional highlight sources. The signature cache was also extended
+    // to include the LS/curtail/PST magnitudes so an in-place re-simulation
+    // (same actionId, bumped MW / tap) invalidates stale clones.
+    // =====================================================================
+    describe('LS / curtailment / PST highlight fallback (regression)', () => {
+        const makeOverlay = (): VlOverlay => ({
+            vlName: 'VL_BEON',
+            actionId: 'act_ls',
+            svg:
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                + '<g><rect id="cell_load" width="10" height="10"/></g>'
+                + '<g><rect id="cell_gen" width="10" height="10"/></g>'
+                + '<g><rect id="cell_pst" width="10" height="10"/></g>'
+                + '</svg>',
+            sldMetadata: JSON.stringify({
+                nodes: [
+                    { id: 'cell_load', equipmentId: 'LOAD_X' },
+                    { id: 'cell_gen', equipmentId: 'GEN_Y' },
+                    { id: 'cell_pst', equipmentId: 'PST_Z' },
+                ],
+            }),
+            loading: false,
+            error: null,
+            tab: 'action' as SldTab,
+        });
+
+        const makeResult = (actionDetail: Record<string, unknown>) => ({
+            actions: { act_ls: actionDetail },
+            lines_overloaded: [],
+            pdf_path: null,
+            pdf_url: null,
+            message: '',
+            dc_fallback: false,
+        } as unknown as AnalysisResult);
+
+        it('highlights a shed load even when action_topology.loads_p is empty (manual-sim fallback)', () => {
+            const detail = {
+                description_unitaire: 'Shed LOAD_X',
+                rho_before: [1.1],
+                rho_after: [0.9],
+                max_rho: 0.9,
+                max_rho_line: 'X',
+                is_rho_reduction: true,
+                action_topology: {},  // <- the bug trigger
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_BEON', shedded_mw: 3.4 }],
+            };
+            const { container } = render(
+                <SldOverlay {...defaultProps} vlOverlay={makeOverlay()} result={makeResult(detail)} />,
+            );
+            // Load cell must now carry the action-target class even
+            // though topology was empty — supplied via the details
+            // fallback.
+            expect(container.querySelector('#cell_load.sld-highlight-action-original')).toBeTruthy();
+        });
+
+        it('highlights a curtailed generator via curtailment_details fallback', () => {
+            const detail = {
+                description_unitaire: 'Curtail GEN_Y',
+                rho_before: [1.1],
+                rho_after: [0.85],
+                max_rho: 0.85,
+                max_rho_line: 'X',
+                is_rho_reduction: true,
+                action_topology: {},
+                curtailment_details: [{ gen_name: 'GEN_Y', voltage_level_id: 'VL_BEON', curtailed_mw: 12 }],
+            };
+            const { container } = render(
+                <SldOverlay {...defaultProps} vlOverlay={makeOverlay()} result={makeResult(detail)} />,
+            );
+            expect(container.querySelector('#cell_gen.sld-highlight-action-original')).toBeTruthy();
+        });
+
+        it('highlights a PST via pst_details fallback', () => {
+            const detail = {
+                description_unitaire: 'Move PST_Z tap',
+                rho_before: [1.1],
+                rho_after: [0.95],
+                max_rho: 0.95,
+                max_rho_line: 'X',
+                is_rho_reduction: true,
+                action_topology: {},
+                pst_details: [{ pst_name: 'PST_Z', tap_position: 5, low_tap: -16, high_tap: 16 }],
+            };
+            const { container } = render(
+                <SldOverlay {...defaultProps} vlOverlay={makeOverlay()} result={makeResult(detail)} />,
+            );
+            expect(container.querySelector('#cell_pst.sld-highlight-action-original')).toBeTruthy();
+        });
+
+        it('re-applies highlights when an in-place re-simulation bumps shedded_mw (signature invalidation)', () => {
+            // Signature cache must include the LS magnitude, otherwise
+            // the highlight pass short-circuits after a re-simulation
+            // and the operator keeps seeing the stale clone.
+            const baseDetail = {
+                description_unitaire: 'Shed LOAD_X',
+                rho_before: [1.1],
+                rho_after: [0.95],
+                max_rho: 0.95,
+                max_rho_line: 'X',
+                is_rho_reduction: true,
+                action_topology: {},
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_BEON', shedded_mw: 2.0 }],
+            };
+            const { container, rerender } = render(
+                <SldOverlay {...defaultProps} vlOverlay={makeOverlay()} result={makeResult(baseDetail)} />,
+            );
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-action').length).toBe(1);
+
+            // Simulate pan reconciliation wiping the clones.
+            container.querySelectorAll('.sld-highlight-clone').forEach(el => el.remove());
+            expect(container.querySelectorAll('.sld-highlight-clone').length).toBe(0);
+
+            // User re-simulated with a new MW value. The actionId is the
+            // same but the detail carries an updated shedded_mw. The
+            // signature must see the change and re-plant the clones.
+            const bumpedDetail = {
+                ...baseDetail,
+                load_shedding_details: [{ load_name: 'LOAD_X', voltage_level_id: 'VL_BEON', shedded_mw: 4.5 }],
+            };
+            rerender(
+                <SldOverlay {...defaultProps} vlOverlay={makeOverlay()} result={makeResult(bumpedDetail)} />,
+            );
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-action').length).toBe(1);
+        });
+    });
 });
