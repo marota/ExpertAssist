@@ -23,8 +23,11 @@ import numpy as np
 from expert_op4grid_recommender import config
 from expert_op4grid_recommender.environment import load_interesting_lines
 from expert_op4grid_recommender.main import (
-    Backend, run_analysis, run_analysis_step1, run_analysis_step2,
-    run_analysis_step2_graph, run_analysis_step2_discovery,
+    Backend,
+    run_analysis,
+    run_analysis_step1,
+    run_analysis_step2_graph,
+    run_analysis_step2_discovery,
 )
 from expert_op4grid_recommender.utils.superposition import get_virtual_line_flow
 
@@ -912,12 +915,12 @@ class AnalysisMixin:
             if not _disco_scores:
                 logger.info("[DEBUG step2] No disco scores found — checking overflow graph edges…")
                 try:
-                    import networkx as _nx
+                    import networkx as _nx  # noqa: F401 — optional diagnostic import
                     _g = results.get("_g_overflow_debug")
                     if _g is None:
                         logger.info("[DEBUG step2] No overflow graph in results (expected)")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Suppressed debug-graph inspection: %s", e)
             # Log all action score types and counts
             for _type, _data in action_scores.items():
                 _cnt = len(_data.get("scores", {})) if isinstance(_data, dict) else 0
@@ -939,13 +942,10 @@ class AnalysisMixin:
                 "dc_fallback": False,
             })
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.exception("Backend Error in Analysis Resolution")
             yield {"type": "error", "message": f"Backend Error in Analysis Resolution: {str(e)}"}
 
     def run_analysis(self, disconnected_element: str):
-        import io
-        import threading
         from contextlib import redirect_stdout
 
         # Legacy full-analysis endpoint — still shares the same Network with

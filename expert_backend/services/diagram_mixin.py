@@ -128,7 +128,6 @@ class DiagramMixin:
     def _generate_diagram(self, network, voltage_level_ids=None, depth=0):
         """Generate NAD and return svg + metadata dict."""
         from pypowsybl_jupyter.util import _get_svg_string, _get_svg_metadata
-        import time
 
         logger.info(f"[RECO] Generating diagram (VLs={voltage_level_ids}, depth={depth})...")
         t0 = time.time()
@@ -203,7 +202,6 @@ class DiagramMixin:
 
     def get_n1_diagram(self, disconnected_element: str, voltage_level_ids=None, depth=0):
         import pypowsybl as pp
-        import time
 
         logger.info(f"[RECO] Generating N-1 diagram for {disconnected_element} (VLs={voltage_level_ids}, depth={depth})...")
         t_start = time.time()

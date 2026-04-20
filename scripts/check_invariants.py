@@ -389,7 +389,7 @@ def check_invariant(inv: Invariant) -> dict:
             "pattern_hit": pattern_hit,
             "must_not_hit": must_not_hit,
             "reason": None if side_ok else (
-                f"regex not found in any candidate path" if (pattern and pattern_hit is None)
+                "regex not found in any candidate path" if (pattern and pattern_hit is None)
                 else f"forbidden pattern found at {must_not_hit}" if must_not_hit
                 else "unknown"
             ),

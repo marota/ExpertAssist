@@ -620,7 +620,7 @@ class SimulationMixin:
         if content is None and topo:
             # Best-effort reconstruction for manual/combined actions from topology
             try:
-                restored = RecommenderService._build_action_entry_from_topology(action_id, topo)
+                restored = self._build_action_entry_from_topology(action_id, topo)
                 content = restored.get("content")
             except Exception as e:
                 logger.debug("Suppressed exception: %s", e)
@@ -885,7 +885,7 @@ class SimulationMixin:
         act1_is_pst = _is_pst_action(action1_id)
         act2_is_pst = _is_pst_action(action2_id)
 
-        logger.info(f"[compute_superposition] Calling compute_combined_pair_superposition with:")
+        logger.info("[compute_superposition] Calling compute_combined_pair_superposition with:")
         logger.info(f"  act1_line_idxs={line_idxs1}, act1_sub_idxs={sub_idxs1}, act1_is_pst={act1_is_pst}")
         logger.info(f"  act2_line_idxs={line_idxs2}, act2_sub_idxs={sub_idxs2}, act2_is_pst={act2_is_pst}")
         logger.debug(f"  obs_combined present: {all_actions.get(f'{action1_id}+{action2_id}', {}).get('observation') is not None}")
@@ -970,7 +970,7 @@ class SimulationMixin:
                        f"rho_est={est_rho:.6f} (scaled:{est_rho*mf:.4f}), "
                        f"rho_N1={n1_rho:.6f}, rho_N={n_rho:.6f}")
              else:
-                 logger.debug(f"[compute_superposition] .BIESL61PRAGN NOT FOUND in name_line_list")
+                 logger.debug("[compute_superposition] .BIESL61PRAGN NOT FOUND in name_line_list")
 
              logger.info(f"[compute_superposition] RESULT: max_rho_line={max_rho_line}, "
                    f"max_rho_raw={max_rho:.6f}, max_rho_scaled={max_rho * mf:.4f}")
