@@ -151,7 +151,12 @@ describe('SldOverlay', () => {
             description_unitaire: 'test action',
             rho_before: null,
             rho_after: null,
-            max_rho: 0.5,
+            // Above the default monitoringFactor (0.95) so the "Solved —
+            // low margin" gate added in 2026-04-20 does NOT suppress the
+            // halo these tests assert on. A realistic "Still overloaded"
+            // action that hasn't fully resolved the N-1 overload would
+            // carry `lines_overloaded_after` alongside a red-card max_rho.
+            max_rho: 1.05,
             max_rho_line: 'LINE_NEW',
             is_rho_reduction: true,
         };
@@ -545,6 +550,128 @@ describe('SldOverlay', () => {
             // and neither the direct nor substring lookup of "P.SAO3TR311"
             // matched.
             expect(container.querySelector('#cell_for_load.sld-highlight-action-original')).toBeTruthy();
+        });
+
+        it('suppresses the post-action overloaded halo when max_rho <= monitoringFactor (Solved / low-margin regression)', () => {
+            // Regression for the low-margin halo bug reported 2026-04-20.
+            // Backend `simulation_mixin.py:536` flags
+            // `lines_overloaded_after` on raw rho >= monitoring_factor
+            // (0.95), while `analysis_mixin.py:97` uses >= 1.0. For a
+            // manually-simulated action with raw rho ~0.96 (displayed
+            // max_rho ~0.912), the two paths disagree: manual ships a
+            // non-empty list, analysis ships []. The SLD overload
+            // highlight trusted the list and drew a pink halo even
+            // though the ActionCard classified the action as "Solved —
+            // low margin". The fix gates the halo on
+            // `max_rho <= monitoringFactor`, matching the card.
+            const svg =
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                + '<g class="sld-extern-cell" id="cell_load">'
+                +   '<rect width="10" height="10"/>'
+                + '</g>'
+                + '<g class="sld-extern-cell" id="cell_branch">'
+                +   '<rect width="10" height="10"/>'
+                + '</g>'
+                + '</svg>';
+            const vlOverlay: VlOverlay = {
+                vlName: 'VL_400',
+                actionId: 'load_shedding_A',
+                svg,
+                sldMetadata: JSON.stringify({
+                    nodes: [
+                        { id: 'cell_load', equipmentId: 'LOAD_A' },
+                        { id: 'cell_branch', equipmentId: 'LINE_OLD_OVERLOAD' },
+                    ],
+                }),
+                loading: false,
+                error: null,
+                tab: 'action' as SldTab,
+            };
+            const detail = {
+                description_unitaire: 'Shed LOAD_A',
+                rho_before: [1.05],
+                rho_after: [0.912],
+                max_rho: 0.912,                  // <= 0.95 → orange "Solved — low margin"
+                max_rho_line: 'LINE_OLD_OVERLOAD',
+                is_rho_reduction: true,
+                action_topology: { loads_p: { LOAD_A: 3.4 } },
+                // Backend (manual path) still reports the line as
+                // "overloaded_after" because raw rho ≈ 0.96 ≥ 0.95.
+                lines_overloaded_after: ['LINE_OLD_OVERLOAD'],
+            };
+            const { container } = render(
+                <SldOverlay
+                    {...defaultProps}
+                    vlOverlay={vlOverlay}
+                    result={{
+                        actions: { load_shedding_A: detail },
+                        lines_overloaded: ['LINE_OLD_OVERLOAD'],
+                        pdf_path: null,
+                        pdf_url: null,
+                        message: '',
+                        dc_fallback: false,
+                    } as unknown as AnalysisResult}
+                    monitoringFactor={0.95}
+                />,
+            );
+            // Load cell (action target) still gets the action-target
+            // class: the user needs to know which equipment the action
+            // touched.
+            expect(container.querySelector('#cell_load.sld-highlight-action-original')).toBeTruthy();
+            // But the old overloaded line does NOT carry the
+            // overloaded halo — the card says "Solved", so the SLD
+            // must agree.
+            expect(container.querySelector('#cell_branch.sld-highlight-overloaded-original')).toBeFalsy();
+            expect(container.querySelectorAll('.sld-highlight-clone.sld-highlight-overloaded').length).toBe(0);
+        });
+
+        it('DOES highlight the overloaded line when max_rho > monitoringFactor (Still-overloaded red card)', () => {
+            // Complementary guard: when the action doesn't fully solve
+            // the overload (red card), the halo must still show so the
+            // operator sees which line is still at risk.
+            const svg =
+                '<svg xmlns="http://www.w3.org/2000/svg">'
+                + '<g class="sld-extern-cell" id="cell_branch">'
+                +   '<rect width="10" height="10"/>'
+                + '</g>'
+                + '</svg>';
+            const vlOverlay: VlOverlay = {
+                vlName: 'VL_400',
+                actionId: 'load_shedding_B',
+                svg,
+                sldMetadata: JSON.stringify({
+                    nodes: [{ id: 'cell_branch', equipmentId: 'LINE_STILL_HOT' }],
+                }),
+                loading: false,
+                error: null,
+                tab: 'action' as SldTab,
+            };
+            const detail = {
+                description_unitaire: 'Shed LOAD_B',
+                rho_before: [1.05],
+                rho_after: [1.02],
+                max_rho: 1.02,                  // > 0.95 → red "Still overloaded"
+                max_rho_line: 'LINE_STILL_HOT',
+                is_rho_reduction: true,
+                action_topology: {},
+                lines_overloaded_after: ['LINE_STILL_HOT'],
+            };
+            const { container } = render(
+                <SldOverlay
+                    {...defaultProps}
+                    vlOverlay={vlOverlay}
+                    result={{
+                        actions: { load_shedding_B: detail },
+                        lines_overloaded: ['LINE_STILL_HOT'],
+                        pdf_path: null,
+                        pdf_url: null,
+                        message: '',
+                        dc_fallback: false,
+                    } as unknown as AnalysisResult}
+                    monitoringFactor={0.95}
+                />,
+            );
+            expect(container.querySelector('#cell_branch.sld-highlight-overloaded-original')).toBeTruthy();
         });
 
         it('re-applies highlights when an in-place re-simulation bumps shedded_mw (signature invalidation)', () => {

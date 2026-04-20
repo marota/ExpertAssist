@@ -18,6 +18,16 @@ export interface SldOverlayProps {
     actionDiagram: DiagramData | null;
     selectedBranch: string;
     result: AnalysisResult | null;
+    /**
+     * User-configured monitoring-factor threshold (typically 0.95).
+     * Used to gate the post-action overload highlight on the `action`
+     * tab: when `actionDetail.max_rho <= monitoringFactor` the card
+     * is classified "Solved" (orange = low margin, green = clean) so
+     * the overload halo is suppressed to match. Defaults to 0.95
+     * when the parent hasn't plumbed it through yet — preserves the
+     * pre-fix behaviour for legacy callers.
+     */
+    monitoringFactor?: number;
 }
 
 const SldOverlay: React.FC<SldOverlayProps> = ({
@@ -25,6 +35,7 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
     onOverlayClose, onOverlaySldTabChange,
     n1Diagram, actionDiagram,
     selectedBranch, result,
+    monitoringFactor = 0.95,
 }) => {
     const overlayBodyRef = useRef<HTMLDivElement>(null);
     const [overlayPos, setOverlayPos] = useState({ x: 16, y: 16 });
@@ -665,11 +676,22 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
         // N-1 tab: highlight overloads present in the N-1 state.
         // Action tab: highlight post-action overloads (overloads that persist or new
         // ones that emerged). Overloads solved by the action are NOT highlighted here.
+        //
+        // "Solved" = max_rho <= monitoringFactor — matches the ActionCard's
+        // orange/green severity classification. Suppressing the halo in
+        // this band aligns the SLD with the card's label and with the
+        // corresponding NAD gate in App.tsx. Without this, manually
+        // simulated actions in the low-margin band (raw rho in
+        // `[mf, 1.0)`) showed halos while suggested actions with the
+        // same displayed max_rho did not — the backend thresholds
+        // diverge (`simulation_mixin.py:536` vs `analysis_mixin.py:97`).
         let overloadedLinesToShow: string[] | undefined;
         if (vlOverlay.tab === 'n-1') {
             overloadedLinesToShow = result?.lines_overloaded;
         } else if (vlOverlay.tab === 'action' && actionDetail) {
-            overloadedLinesToShow = actionDetail.lines_overloaded_after;
+            const isSolved = actionDetail.max_rho != null
+                && actionDetail.max_rho <= monitoringFactor;
+            overloadedLinesToShow = isSolved ? [] : actionDetail.lines_overloaded_after;
         }
         if (overloadedLinesToShow && overloadedLinesToShow.length > 0) {
             for (const lineId of overloadedLinesToShow) {
