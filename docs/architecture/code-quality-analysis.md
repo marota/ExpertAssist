@@ -481,3 +481,56 @@ verbatim wherever possible.
 Next candidates (see §6 metrics): `run_analysis` (169 lines),
 `update_config` (166 lines), `_enrich_actions` (125 lines).
 
+---
+
+## 11. Delta — 2026-04-20 (follow-up: frontend svgUtils decomposition)
+
+Third pass targeted at the largest frontend file flagged in §6 — the
+1807-line `frontend/src/utils/svgUtils.ts` omnibus. Split into
+focused modules under `frontend/src/utils/svg/`:
+
+| Module | Lines | Responsibility |
+|--------|-------|----------------|
+| `idMap.ts` | 29 | Cached DOM-id map for an SVG container |
+| `svgBoost.ts` | 122 | Dynamic font/node scaling for large grids; `processSvg` |
+| `metadataIndex.ts` | 40 | Build the `MetadataIndex` from pypowsybl metadata |
+| `highlights.ts` | 422 | Overloaded / action-target / contingency halos; line & VL resolution |
+| `deltaVisuals.ts` | 137 | Delta flow coloring + text replacement |
+| `actionPinData.ts` | 344 | Pin descriptors, severity palette, anchor resolution — pure / no DOM |
+| `actionPinRender.ts` | 537 | DOM injection for pins, highlights, click semantics, scale math |
+| `fitRect.ts` | 125 | Padded viewBox computation for action overview + focused zoom |
+
+`svgUtils.ts` itself is now a **60-line barrel** that re-exports every
+symbol — no caller had to change. Largest frontend file is now
+`App.tsx` at 1370 lines (the state orchestration hub, which is exempt
+from the component size ceiling by design).
+
+### New helpers promoted to the public API
+
+Five pieces that used to be inline / closure-scoped are now exported
+as standalone pure functions — making them unit-testable and reusable:
+
+- `formatPinLabel(details)` — percentage / DIV / ISL / em-dash
+- `formatPinTitle(idLabel, details)` — hover tooltip
+- `fanOutColocatedPins(pins)` — circular distribution for colocated pins
+- `curveMidpoint(p1, p2)` — quadratic Bezier midpoint + control point
+- `computePinScale(baseR, pxPerSvgUnit, viewBoxMax)` — pin scale math
+
+### Coverage
+
+Five new co-located test files (61 new tests) covering each module in
+isolation:
+
+| Test file | Tests |
+|-----------|-------|
+| `idMap.test.ts` | 5 |
+| `svgBoost.test.ts` | 7 |
+| `metadataIndex.test.ts` | 6 |
+| `actionPinData.test.ts` | 19 |
+| `actionPinRender.test.ts` | 12 |
+| `fitRect.test.ts` | 12 |
+
+The pre-existing `svgUtils.test.ts` (144 tests) continues to pass
+unchanged — the refactor is behaviour-preserving. Full frontend
+suite: **1000 tests, all green**.
+
