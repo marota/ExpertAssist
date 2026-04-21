@@ -597,3 +597,68 @@ _compute_deltas            92
 both fell out of the top-5. Next candidates: `update_config`,
 `get_action_variant_sld`, `_compute_deltas`.
 
+---
+
+## 13. Delta — 2026-04-21 (follow-up: diagram_mixin decomposition)
+
+Fifth pass targeted at `diagram_mixin.py` — the second-largest
+backend file after the analysis sweep. Split into seven focused
+modules under a new `expert_backend/services/diagram/` package:
+
+| Module | Lines | Responsibility |
+|--------|------:|----------------|
+| `__init__.py` | 22 | Package docstring + module index |
+| `layout_cache.py` | 63 | `(path, mtime)`-keyed ``grid_layout.json`` loader |
+| `nad_params.py` | 41 | Default ``NadParameters`` factory (perf-tuned) |
+| `nad_render.py` | 89 | ``generate_diagram`` + NaN element stripping |
+| `sld_render.py` | 36 | SLD SVG + metadata extraction with fallbacks |
+| `overloads.py` | 131 | Overload filtering + per-element current scans |
+| `flows.py` | 67 | Branch + asset flow extractors (vectorised) |
+| `deltas.py` | 241 | Terminal-aware flow-delta math (pure) |
+
+`diagram_mixin.py` shrank **974 → 469 lines**. Every public method
+(`get_network_diagram`, `get_n1_diagram`, `get_action_variant_diagram`,
+`get_n_sld`, `get_n1_sld`, `get_action_variant_sld`) is now a short
+orchestrator that switches the right variant, calls the stateless
+helpers, and stashes results. Five new private helpers isolate the
+variant-switching patterns that previously repeated across methods:
+
+- `_require_action(action_id)` — validate + fetch the action entry
+- `_lf_status_for_variant(...)` — load-flow status with variant cache
+- `_snapshot_n1_state(...)` — N-1 branch + asset flows with variant restore
+- `_attach_flow_deltas_vs_base(...)` — populate `flow_deltas` / `asset_deltas` on a diagram
+- `_attach_convergence_from_obs(...)` — copy `lf_converged` / `non_convergence` from an observation
+- `_diff_switches(...)` — `{switch_id: {from_open, to_open}}` diff between variants
+
+### Coverage
+
+- **39 new unit tests** in `expert_backend/tests/test_diagram_helpers.py`
+  covering every helper in isolation (layout cache eviction, NaN
+  stripping, overload filtering with N-state exclusion, terminal-aware
+  delta math with direction-flip, vectorised equivalent against scalar
+  reference, asset-delta categorisation, …).
+- **1,000+ diagram-side test assertions** across the existing suite
+  continue to pass. One edge case (`test_sld_highlight.py::
+  TestChangedSwitchesInSld`) uncovered a subtle ordering dependency
+  — `changed_switches` must be captured BEFORE attempting flow
+  extraction so a mock network with missing flows still returns the
+  switch diff. Fixed in the orchestrator and regression-pinned.
+- Full-suite diff against pre-refactor baseline: **identical 19
+  pre-existing test-pollution failures on both sides, zero new
+  regressions.**
+- Quality gate green, ruff (E9/F) clean.
+
+### Top-5 longest functions after the pass
+
+```
+update_config                 166
+simulate_manual_action        146
+compute_superposition         112
+compute_action_metrics         87
+_augment_superposition_result  81
+```
+
+Every diagram-related function fell out of the top-5. Next natural
+candidates: `update_config` (orchestrator in
+`recommender_service.py`), then the simulation helpers.
+
