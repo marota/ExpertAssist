@@ -534,3 +534,66 @@ The pre-existing `svgUtils.test.ts` (144 tests) continues to pass
 unchanged — the refactor is behaviour-preserving. Full frontend
 suite: **1000 tests, all green**.
 
+---
+
+## 12. Delta — 2026-04-21 (follow-up: analysis_mixin decomposition)
+
+Fourth pass targeted at the 1,116-line `analysis_mixin.py` — the
+largest backend file. Split into four focused modules under a new
+`expert_backend/services/analysis/` package:
+
+| Module | Lines | Responsibility |
+|--------|-------|----------------|
+| `pdf_watcher.py` | 43 | Glob + mtime search for overflow PDFs |
+| `action_enrichment.py` | 389 | Load-shedding / curtailment / PST details, renewable detection, rho scaling, topology extraction, non-convergence normalisation — pure |
+| `mw_start_scoring.py` | 341 | MW-at-start dispatcher + per-type math (load shedding, curtailment, line disco, PST, open coupling) — pure |
+| `analysis_runner.py` | 193 | Legacy AC→DC fallback worker + PDF-polling generator + `derive_analysis_message` |
+
+`analysis_mixin.py` shrank **1,116 → 509 lines**. The three public
+entry points (`run_analysis_step1`, `run_analysis_step2`, `run_analysis`)
+are now thin orchestrators plus `_enrich_actions` /
+`_compute_mw_start_for_scores` iterators that delegate to the
+stateless helpers.
+
+### Dependency injection instead of monkey patching
+
+Two call sites rely on module-level library references that tests
+traditionally `@patch`:
+
+- `expert_backend.services.analysis_mixin.get_virtual_line_flow`
+  (used by `mw_start_open_coupling`)
+- `expert_backend.services.analysis_mixin.run_analysis` (used by
+  the legacy worker)
+
+Both helpers now accept the callable as an optional keyword argument.
+The mixin reads the module-level name at call time and threads it in,
+so existing `@patch('expert_backend.services.analysis_mixin.*')`
+tests keep working without modification.
+
+### Coverage
+
+- **68 new unit tests** in `expert_backend/tests/test_analysis_helpers.py`
+  covering every new helper in isolation (pdf_watcher, non-convergence
+  normalisation, lines-overloaded reconstruction, load-shedding /
+  curtailment / PST details, MW-start dispatcher, analysis-message
+  derivation, …).
+- **All 410 pre-existing analysis / simulation tests** continue to
+  pass — baseline diffed against post-refactor and showed zero new
+  regressions (same 19 pre-existing test-pollution failures on both
+  sides).
+- Quality gate green; ruff (E9/F) clean.
+
+### Top-5 longest functions after the pass
+
+```
+update_config             166
+simulate_manual_action    146
+compute_superposition     112
+get_action_variant_sld     97
+_compute_deltas            92
+```
+
+`run_analysis` (was 169 lines) and `_enrich_actions` (was 125 lines)
+both fell out of the top-5. Next candidates: `update_config`,
+`get_action_variant_sld`, `_compute_deltas`.
+
