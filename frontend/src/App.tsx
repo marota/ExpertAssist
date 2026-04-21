@@ -174,6 +174,7 @@ function App() {
     categories: { green: true, orange: true, red: true, grey: true },
     threshold: 1.5,
     showUnsimulated: false,
+    actionType: 'all',
   });
 
   // Flat list of action ids that appear in `action_scores` but are

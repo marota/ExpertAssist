@@ -6,7 +6,9 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ActionDetail, ActionOverviewFilters, ActionSeverityCategory, DiagramData, MetadataIndex, UnsimulatedActionScoreInfo, ViewBox } from '../types';
+import type { ActionDetail, ActionOverviewFilters, ActionSeverityCategory, ActionTypeFilterToken, DiagramData, MetadataIndex, UnsimulatedActionScoreInfo, ViewBox } from '../types';
+import { matchesActionTypeFilter } from '../utils/actionTypes';
+import ActionTypeFilterChips from './ActionTypeFilterChips';
 import {
     actionPassesOverviewFilter,
     applyActionOverviewHighlights,
@@ -152,6 +154,7 @@ const DEFAULT_FILTERS: ActionOverviewFilters = {
     categories: { green: true, orange: true, red: true, grey: true },
     threshold: 1.5,
     showUnsimulated: false,
+    actionType: 'all',
 };
 
 const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
@@ -180,7 +183,18 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     unsimulatedActionInfo,
     onSimulateUnsimulatedAction,
 }) => {
-    const activeFilters = filters ?? DEFAULT_FILTERS;
+    // Normalize against DEFAULT_FILTERS so legacy call sites that
+    // predate a given field (e.g. `actionType`) don't crash the
+    // matcher with `undefined`. Later shipped-filters win over the
+    // defaults for the fields they set.
+    const activeFilters = useMemo<ActionOverviewFilters>(() => {
+        if (!filters) return DEFAULT_FILTERS;
+        return {
+            ...DEFAULT_FILTERS,
+            ...filters,
+            actionType: filters.actionType ?? DEFAULT_FILTERS.actionType,
+        };
+    }, [filters]);
     const containerRef = useRef<HTMLDivElement | null>(null);
     // Pull the svg string into a local so the React Compiler can
     // see that both the injection effect and the initialViewBox memo
@@ -281,11 +295,35 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     //  4. Re-filter the unitary pin list: passing pins go through
     //     as-is, protected-but-failing pins come through with a
     //     `dimmedByFilter` flag, everything else is dropped.
+    // Helpers that combine the severity/threshold filter AND the
+    // single-select action-type chip. When `actionType` is 'all' the
+    // chip check is a no-op.
+    const passesAll = useCallback((id: string, det: ActionDetail) => {
+        if (!actionPassesOverviewFilter(
+            det, monitoringFactor,
+            activeFilters.categories, activeFilters.threshold,
+        )) return false;
+        return matchesActionTypeFilter(activeFilters.actionType, id, det.description_unitaire, null);
+    }, [monitoringFactor, activeFilters.categories, activeFilters.threshold, activeFilters.actionType]);
+
     const pins = useMemo(() => {
         if (!n1MetaIndex || !actions) return [];
         performance.mark('aod:buildPins:start');
         const allUnitary = buildActionOverviewPins(actions, n1MetaIndex, monitoringFactor);
         const allCombined = buildCombinedActionPins(actions, allUnitary, monitoringFactor);
+        // A combined pin is considered "in scope" for the type
+        // filter if EITHER constituent matches — combined actions are
+        // inherently multi-type and hiding a pair because one side
+        // doesn't match the chip would surprise the operator.
+        const combinedPassesTypeFilter = (cp: { action1Id: string; action2Id: string }): boolean => {
+            if (activeFilters.actionType === 'all') return true;
+            const d1 = actions[cp.action1Id];
+            const d2 = actions[cp.action2Id];
+            return (
+                (d1 ? matchesActionTypeFilter(activeFilters.actionType, cp.action1Id, d1.description_unitaire, null) : false)
+                || (d2 ? matchesActionTypeFilter(activeFilters.actionType, cp.action2Id, d2.description_unitaire, null) : false)
+            );
+        };
         const protectedIds = new Set<string>();
         for (const cp of allCombined) {
             const det = actions[cp.pairId];
@@ -293,7 +331,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
             if (actionPassesOverviewFilter(
                 det, monitoringFactor,
                 activeFilters.categories, activeFilters.threshold,
-            )) {
+            ) && combinedPassesTypeFilter(cp)) {
                 protectedIds.add(cp.action1Id);
                 protectedIds.add(cp.action2Id);
             }
@@ -301,12 +339,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         const result: typeof allUnitary = [];
         for (const p of allUnitary) {
             const det = actions[p.id];
-            const passes = det
-                ? actionPassesOverviewFilter(
-                    det, monitoringFactor,
-                    activeFilters.categories, activeFilters.threshold,
-                )
-                : true;
+            const passes = det ? passesAll(p.id, det) : true;
             if (passes) {
                 result.push(p);
             } else if (protectedIds.has(p.id)) {
@@ -316,7 +349,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         performance.mark('aod:buildPins:end');
         perfMeasure('aod:buildPins', 'aod:buildPins:start', 'aod:buildPins:end');
         return result;
-    }, [n1MetaIndex, actions, monitoringFactor, activeFilters.categories, activeFilters.threshold]);
+    }, [n1MetaIndex, actions, monitoringFactor, activeFilters.categories, activeFilters.threshold, activeFilters.actionType, passesAll]);
 
     const combinedPins = useMemo(() => {
         if (!actions || pins.length === 0) return [];
@@ -328,19 +361,35 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         return buildCombinedActionPins(actions, pins, monitoringFactor).filter(cp => {
             const det = actions[cp.pairId];
             if (!det) return true;
-            return actionPassesOverviewFilter(
+            if (!actionPassesOverviewFilter(
                 det, monitoringFactor,
                 activeFilters.categories, activeFilters.threshold,
+            )) return false;
+            if (activeFilters.actionType === 'all') return true;
+            const d1 = actions[cp.action1Id];
+            const d2 = actions[cp.action2Id];
+            return (
+                (d1 ? matchesActionTypeFilter(activeFilters.actionType, cp.action1Id, d1.description_unitaire, null) : false)
+                || (d2 ? matchesActionTypeFilter(activeFilters.actionType, cp.action2Id, d2.description_unitaire, null) : false)
             );
         });
-    }, [actions, pins, monitoringFactor, activeFilters.categories, activeFilters.threshold]);
+    }, [actions, pins, monitoringFactor, activeFilters.categories, activeFilters.threshold, activeFilters.actionType]);
 
     const unsimulatedPins = useMemo(() => {
         if (!activeFilters.showUnsimulated) return [];
         if (!n1MetaIndex || !unsimulatedActionIds || unsimulatedActionIds.length === 0) return [];
         const simulatedIds = new Set(Object.keys(actions ?? {}));
-        return buildUnsimulatedActionPins(unsimulatedActionIds, simulatedIds, n1MetaIndex, unsimulatedActionInfo);
-    }, [activeFilters.showUnsimulated, n1MetaIndex, unsimulatedActionIds, actions, unsimulatedActionInfo]);
+        // Drop ids that don't match the active type chip. We rely
+        // on the score-info `type` string when available; fall back
+        // to the id-based heuristics in `classifyActionType`.
+        const filteredIds = activeFilters.actionType === 'all'
+            ? unsimulatedActionIds
+            : unsimulatedActionIds.filter(id => {
+                const scoreType = unsimulatedActionInfo?.[id]?.type ?? null;
+                return matchesActionTypeFilter(activeFilters.actionType, id, null, scoreType);
+            });
+        return buildUnsimulatedActionPins(filteredIds, simulatedIds, n1MetaIndex, unsimulatedActionInfo);
+    }, [activeFilters.showUnsimulated, activeFilters.actionType, n1MetaIndex, unsimulatedActionIds, actions, unsimulatedActionInfo]);
 
     // Deterministic auto-fit rectangle derived from the bounding
     // box of contingency + overloads + pins. Recomputed whenever any
@@ -753,6 +802,15 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         pushFilters({ ...activeFilters, showUnsimulated: next });
     }, [activeFilters, pushFilters]);
 
+    const setActionType = useCallback((token: ActionTypeFilterToken) => {
+        if (token === activeFilters.actionType) return;
+        interactionLogger.record('overview_filter_changed', {
+            kind: 'action_type',
+            action_type: token,
+        });
+        pushFilters({ ...activeFilters, actionType: token });
+    }, [activeFilters, pushFilters]);
+
     // Pre-compute the props ActionCard needs for the popover render.
     const popoverDetails = popoverPin && actions ? actions[popoverPin.id] : null;
     const popoverIndex = useMemo(() => {
@@ -887,6 +945,26 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                         <span style={{ color: '#475569' }}>Show unsimulated</span>
                     </label>
                 </div>
+            </div>
+
+            {/* Action-type chip row — single-select filter that
+                hides pins + sidebar cards whose action type doesn't
+                match the chosen bucket. Shares styling with the
+                Explore Pairs filter so the affordance feels
+                identical. */}
+            <div
+                style={{
+                    flexShrink: 0,
+                    padding: '6px 14px',
+                    background: '#ffffff',
+                    borderBottom: '1px solid #e2e8f0',
+                }}
+            >
+                <ActionTypeFilterChips
+                    testIdPrefix="overview-action-type-filter"
+                    value={activeFilters.actionType}
+                    onChange={setActionType}
+                />
             </div>
 
             {/* SVG body: the pan/zoom container. Wheel + drag work

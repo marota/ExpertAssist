@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData, ActionOverviewFilters } from '../types';
 import { actionPassesOverviewFilter } from '../utils/svgUtils';
+import { matchesActionTypeFilter } from '../utils/actionTypes';
 import { api } from '../api';
 import { interactionLogger } from '../utils/interactionLogger';
 import CombinedActionsModal from './CombinedActionsModal';
@@ -575,6 +576,29 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                     details, monitoringFactor,
                     overviewFilters.categories, overviewFilters.threshold,
                 )) return false;
+                // Shared action-type chip filter. Combined actions
+                // (key contains '+') are considered in scope when
+                // EITHER constituent matches — they're inherently
+                // multi-type, so hiding them because only one side
+                // matches would surprise the operator.
+                // `actionType ?? 'all'` keeps legacy call sites that
+                // don't yet set the field (older session reloads /
+                // tests) behaving as "no type filter".
+                const typeFilter = overviewFilters?.actionType ?? 'all';
+                if (typeFilter !== 'all') {
+                    if (id.includes('+')) {
+                        const [id1, id2] = id.split('+');
+                        const d1 = actions[id1];
+                        const d2 = actions[id2];
+                        const ok = (d1 && matchesActionTypeFilter(typeFilter, id1, d1.description_unitaire, null))
+                            || (d2 && matchesActionTypeFilter(typeFilter, id2, d2.description_unitaire, null));
+                        if (!ok) return false;
+                    } else if (!matchesActionTypeFilter(
+                        typeFilter, id, details.description_unitaire, null,
+                    )) {
+                        return false;
+                    }
+                }
                 return true;
             })
             .sort(([, a], [, b]) => {

@@ -478,6 +478,13 @@ export interface InteractionLogEntry {
 
 export type ActionSeverityCategory = 'green' | 'orange' | 'red' | 'grey';
 
+/**
+ * Action-type chip filter value. 'all' means no restriction, the
+ * other tokens map 1:1 to the action-type buckets surfaced by
+ * `classifyActionType` (see `utils/actionTypes.ts`).
+ */
+export type ActionTypeFilterToken = 'all' | 'disco' | 'reco' | 'ls' | 'rc' | 'open' | 'close' | 'pst';
+
 export interface ActionOverviewFilters {
     categories: Record<ActionSeverityCategory, boolean>;
     /**
@@ -490,6 +497,13 @@ export interface ActionOverviewFilters {
     threshold: number;
     /** When true, un-simulated scored actions are drawn as dimmed pins. */
     showUnsimulated: boolean;
+    /**
+     * Single-select action-type filter (DISCO / RECO / LS / RC / OPEN
+     * / CLOSE / PST). 'all' disables the filter. Applied to both the
+     * overview pins and the sidebar action feed cards so the two views
+     * stay in sync regardless of which chip row the operator uses.
+     */
+    actionType: ActionTypeFilterToken;
 }
 
 /**

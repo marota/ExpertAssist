@@ -6,7 +6,8 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 import React, { useState } from 'react';
-import type { CombinedAction, AnalysisResult } from '../types';
+import type { CombinedAction, AnalysisResult, ActionTypeFilterToken } from '../types';
+import ActionTypeFilterChips from './ActionTypeFilterChips';
 
 interface SimulationFeedback {
     max_rho: number | null;
@@ -63,7 +64,7 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
     onSimulateSingle,
     displayName = (id: string) => id,
 }) => {
-    const [exploreFilter, setExploreFilter] = useState<string>('all');
+    const [exploreFilter, setExploreFilter] = useState<ActionTypeFilterToken>('all');
 
     return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -91,29 +92,14 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                 </div>
             </div>
 
-            {/* Filter Buttons */}
-            <div style={{ marginBottom: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                {['all', 'disco', 'reco', 'ls', 'rc', 'open', 'close', 'pst'].map(f => (
-                    <button
-                        key={f}
-                        onClick={() => setExploreFilter(f)}
-                        style={{
-                            padding: '4px 12px',
-                            borderRadius: '15px',
-                            border: '1px solid',
-                            borderColor: exploreFilter === f ? '#007bff' : '#ddd',
-                            background: exploreFilter === f ? '#007bff' : 'white',
-                            color: exploreFilter === f ? 'white' : '#666',
-                            fontSize: '11px',
-                            cursor: 'pointer',
-                            fontWeight: exploreFilter === f ? 'bold' : 'normal',
-                            transition: 'all 0.2s'
-                        }}
-                    >
-                        {f.toUpperCase()}
-                    </button>
-                ))}
-            </div>
+            {/* Filter Buttons — reuses the shared chip row so
+                styling stays in sync with the action-overview filter. */}
+            <ActionTypeFilterChips
+                testIdPrefix="explore-pairs-filter"
+                value={exploreFilter}
+                onChange={setExploreFilter}
+                style={{ marginBottom: '12px' }}
+            />
 
             {/* Grouped Table */}
             <div style={{ flex: 1, maxHeight: '350px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', marginBottom: '15px' }}>

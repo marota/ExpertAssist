@@ -1243,6 +1243,103 @@ describe('ActionOverviewDiagram', () => {
         });
     });
 
+    describe('action-type chip filter', () => {
+        const allCategories = { green: true, orange: true, red: true, grey: true };
+
+        const propsWithMixedTypes = () => {
+            const actions: Record<string, ActionDetail> = {
+                'disco_LINE_A': makeAction({
+                    action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                    max_rho: 0.5,
+                    max_rho_line: 'LINE_A',
+                    description_unitaire: "Ouverture de la ligne 'LINE_A'",
+                }),
+                'coupling_VL_FAR': makeAction({
+                    description_unitaire: "Ouverture du poste 'VL_FAR'",
+                    max_rho: 0.8,
+                    max_rho_line: 'LINE_B',
+                }),
+            };
+            return { ...defaultProps(), actions };
+        };
+
+        it('renders the action-type chip row above the SVG body', () => {
+            const { getByTestId } = render(
+                <ActionOverviewDiagram
+                    {...propsWithMixedTypes()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: false, actionType: 'all' }}
+                />,
+            );
+            expect(getByTestId('overview-action-type-filter')).toBeInTheDocument();
+            expect(getByTestId('overview-action-type-filter-disco')).toBeInTheDocument();
+            expect(getByTestId('overview-action-type-filter-pst')).toBeInTheDocument();
+        });
+
+        it('hides pins whose classified type does not match the active chip', () => {
+            // DISCO-only filter → disco_LINE_A stays, coupling_VL_FAR drops.
+            const { container } = render(
+                <ActionOverviewDiagram
+                    {...propsWithMixedTypes()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: false, actionType: 'disco' }}
+                />,
+            );
+            const pins = container.querySelectorAll('.nad-action-overview-pin:not(.nad-action-overview-pin-unsimulated)');
+            const ids = Array.from(pins).map(p => p.getAttribute('data-action-id'));
+            expect(ids).toEqual(['disco_LINE_A']);
+        });
+
+        it('ALL restores every pin', () => {
+            const { container, rerender } = render(
+                <ActionOverviewDiagram
+                    {...propsWithMixedTypes()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: false, actionType: 'open' }}
+                />,
+            );
+            // With 'open' we keep the coupling pin only
+            expect(container.querySelectorAll('.nad-action-overview-pin:not(.nad-action-overview-pin-unsimulated)').length).toBe(1);
+
+            rerender(
+                <ActionOverviewDiagram
+                    {...propsWithMixedTypes()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: false, actionType: 'all' }}
+                />,
+            );
+            expect(container.querySelectorAll('.nad-action-overview-pin:not(.nad-action-overview-pin-unsimulated)').length).toBe(2);
+        });
+
+        it('clicking a chip fires onFiltersChange with the new actionType', () => {
+            const onFiltersChange = vi.fn();
+            const { getByTestId } = render(
+                <ActionOverviewDiagram
+                    {...propsWithMixedTypes()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: false, actionType: 'all' }}
+                    onFiltersChange={onFiltersChange}
+                />,
+            );
+            fireEvent.click(getByTestId('overview-action-type-filter-disco'));
+            expect(onFiltersChange).toHaveBeenCalledTimes(1);
+            expect(onFiltersChange.mock.calls[0][0].actionType).toBe('disco');
+        });
+
+        it('filters un-simulated pins by matching the score-info type', () => {
+            const { container } = render(
+                <ActionOverviewDiagram
+                    {...defaultProps()}
+                    filters={{ categories: allCategories, threshold: 2.0, showUnsimulated: true, actionType: 'pst' }}
+                    unsimulatedActionIds={['LINE_D', 'LINE_A']}
+                    unsimulatedActionInfo={{
+                        LINE_D: { type: 'pst_tap_change', score: 0.5, mwStart: null, tapStart: null, rankInType: 1, countInType: 1, maxScoreInType: 0.5 },
+                        LINE_A: { type: 'line_disconnection', score: 0.8, mwStart: null, tapStart: null, rankInType: 1, countInType: 1, maxScoreInType: 0.8 },
+                    }}
+                />,
+            );
+            const dimmed = container.querySelectorAll('.nad-action-overview-pin-unsimulated');
+            const dimmedIds = Array.from(dimmed).map(p => p.getAttribute('data-action-id'));
+            // Only the PST-scored un-simulated pin survives.
+            expect(dimmedIds).toEqual(['LINE_D']);
+        });
+    });
+
     describe('detached-window popover placement', () => {
         // Regression: the popover placement heuristic used to call
         // `window.innerWidth/innerHeight` unconditionally, so when the
