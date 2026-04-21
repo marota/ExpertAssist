@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ActionDetail, ActionOverviewFilters, ActionSeverityCategory, DiagramData, MetadataIndex, ViewBox } from '../types';
 import {
+    actionPassesOverviewFilter,
     applyActionOverviewHighlights,
     applyActionOverviewPins,
     buildActionOverviewPins,
@@ -260,13 +261,50 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     }, [svgString]);
     /* eslint-enable react-hooks/purity */
 
+    // Three-pass pin build so combined-action constituents are kept
+    // visible (dimmed) even when they would individually be filtered
+    // out by the category/threshold header:
+    //  1. Build every unitary pin unfiltered so combined pins have
+    //     endpoints to anchor on.
+    //  2. Build combined pins from the unfiltered set, then drop the
+    //     ones that fail the overview filter themselves.
+    //  3. Compute the set of unitary ids referenced by any surviving
+    //     combined pin — those are "protected" from being hidden.
+    //  4. Re-filter the unitary pin list: passing pins go through
+    //     as-is, protected-but-failing pins come through with a
+    //     `dimmedByFilter` flag, everything else is dropped.
     const pins = useMemo(() => {
         if (!n1MetaIndex || !actions) return [];
         performance.mark('aod:buildPins:start');
-        const result = buildActionOverviewPins(
-            actions, n1MetaIndex, monitoringFactor, undefined,
-            { categories: activeFilters.categories, threshold: activeFilters.threshold },
-        );
+        const allUnitary = buildActionOverviewPins(actions, n1MetaIndex, monitoringFactor);
+        const allCombined = buildCombinedActionPins(actions, allUnitary, monitoringFactor);
+        const protectedIds = new Set<string>();
+        for (const cp of allCombined) {
+            const det = actions[cp.pairId];
+            if (!det) continue;
+            if (actionPassesOverviewFilter(
+                det, monitoringFactor,
+                activeFilters.categories, activeFilters.threshold,
+            )) {
+                protectedIds.add(cp.action1Id);
+                protectedIds.add(cp.action2Id);
+            }
+        }
+        const result: typeof allUnitary = [];
+        for (const p of allUnitary) {
+            const det = actions[p.id];
+            const passes = det
+                ? actionPassesOverviewFilter(
+                    det, monitoringFactor,
+                    activeFilters.categories, activeFilters.threshold,
+                )
+                : true;
+            if (passes) {
+                result.push(p);
+            } else if (protectedIds.has(p.id)) {
+                result.push({ ...p, dimmedByFilter: true });
+            }
+        }
         performance.mark('aod:buildPins:end');
         perfMeasure('aod:buildPins', 'aod:buildPins:start', 'aod:buildPins:end');
         return result;
@@ -274,8 +312,20 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
 
     const combinedPins = useMemo(() => {
         if (!actions || pins.length === 0) return [];
-        return buildCombinedActionPins(actions, pins, monitoringFactor);
-    }, [actions, pins, monitoringFactor]);
+        // Combined pins themselves are filtered by the overview
+        // header: a combined action whose severity/threshold fails
+        // the filter is dropped. Unfiltered constituents on the
+        // kept combined pins stay visible via the dimmed branch in
+        // the `pins` memo above.
+        return buildCombinedActionPins(actions, pins, monitoringFactor).filter(cp => {
+            const det = actions[cp.pairId];
+            if (!det) return true;
+            return actionPassesOverviewFilter(
+                det, monitoringFactor,
+                activeFilters.categories, activeFilters.threshold,
+            );
+        });
+    }, [actions, pins, monitoringFactor, activeFilters.categories, activeFilters.threshold]);
 
     const unsimulatedPins = useMemo(() => {
         if (!activeFilters.showUnsimulated) return [];
@@ -379,17 +429,33 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
         placeAbove: boolean;
         horizontalAlign: 'start' | 'center' | 'end';
     } | null>(null);
+    // Viewport captured at click time so `computePopoverStyle` renders
+    // the popover relative to the popup window that was actually
+    // clicked — otherwise detached-window clicks would fall back to
+    // the main window's dimensions (see popoverPlacement.defaultViewport).
+    const [popoverViewport, setPopoverViewport] = useState<{ width: number; height: number } | null>(null);
 
     const handlePinClick = useCallback((actionId: string, screenPos: { x: number; y: number }) => {
         interactionLogger.record('overview_pin_clicked', { action_id: actionId });
         performance.mark('aod:pinClick:start');
-        const placement = decidePopoverPlacement(screenPos.x, screenPos.y);
+        // When the overview is detached into a secondary window, the
+        // container lives in that window's document — use its viewport
+        // (not main-window `window.innerWidth/innerHeight`) so the
+        // above/below placement reflects where the pin actually sits
+        // on the user's screen. Falls back to the default (main window)
+        // viewport when the ref isn't attached yet.
+        const ownerWin = containerRef.current?.ownerDocument?.defaultView ?? null;
+        const viewport = ownerWin
+            ? { width: ownerWin.innerWidth, height: ownerWin.innerHeight }
+            : undefined;
+        const placement = decidePopoverPlacement(screenPos.x, screenPos.y, viewport);
         setPopoverPin({
             id: actionId,
             screenX: screenPos.x,
             screenY: screenPos.y,
             ...placement,
         });
+        setPopoverViewport(viewport ?? null);
         // Scroll the sidebar action feed to the matching card so the
         // operator can see both the popover on the diagram and the full
         // card details side-by-side.
@@ -613,6 +679,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
     const closePopover = useCallback((reason: string) => {
         interactionLogger.record('overview_popover_closed', { reason });
         setPopoverPin(null);
+        setPopoverViewport(null);
     }, []);
 
     const popoverRef = useRef<HTMLDivElement | null>(null);
@@ -1038,7 +1105,7 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                     details={popoverDetails}
                     index={popoverIndex}
                     style={{
-                        ...computePopoverStyle(popoverPin),
+                        ...computePopoverStyle(popoverPin, popoverViewport ?? undefined),
                         width: POPOVER_WIDTH,
                         maxHeight: POPOVER_MAX_HEIGHT,
                         overflowY: 'auto',

@@ -749,6 +749,13 @@ export interface ActionPinInfo {
      * simulation (the same code path as the Manual Selection dropdown).
      */
     unsimulated?: boolean;
+    /**
+     * When true this pin was filtered out by the overview header
+     * filter but kept visible because a passing combined action
+     * references it. Rendered with reduced opacity so it reads as
+     * a context pin rather than a first-class action.
+     */
+    dimmedByFilter?: boolean;
 }
 
 /**
@@ -1739,6 +1746,7 @@ export const applyActionOverviewPins = (
         g.setAttribute('class', 'nad-action-overview-pin');
         g.setAttribute('transform', `translate(${pin.x} ${pin.y})`);
         g.setAttribute('data-action-id', pin.id);
+        if (pin.dimmedByFilter) g.setAttribute('data-dimmed-by-filter', 'true');
         (g as unknown as SVGGElement).style.cursor = 'pointer';
 
         // INNER group: the glyph itself.
@@ -1755,7 +1763,10 @@ export const applyActionOverviewPins = (
             fill = severityFillHighlighted[pin.severity];
             strokeColor = '#eab308';    // gold border for emphasis
             strokeWidth = r * 0.12;
-        } else if (isRejected) {
+        } else if (isRejected || pin.dimmedByFilter) {
+            // Filter-dimmed constituents reuse the same washed-out
+            // palette as rejected pins so the operator reads them as
+            // "context, not a first-class action" at a glance.
             fill = severityFillDimmed[pin.severity];
         } else {
             fill = severityFill[pin.severity];
@@ -1788,9 +1799,14 @@ export const applyActionOverviewPins = (
             body.appendChild(crossEl);
         }
 
-        // Dim the whole pin group for rejected actions.
+        // Dim the whole pin group for rejected OR filter-dimmed
+        // actions. Filter-dimmed pins are kept alive only because a
+        // passing combined action anchors on them, so they must read
+        // as context, not as first-class actions.
         if (isRejected) {
             g.setAttribute('opacity', '0.55');
+        } else if (pin.dimmedByFilter) {
+            g.setAttribute('opacity', '0.4');
         }
 
         attachClickListeners(g, pin.id, onPinClick, onPinDoubleClick);

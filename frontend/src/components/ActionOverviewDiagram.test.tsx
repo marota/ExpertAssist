@@ -1081,4 +1081,173 @@ describe('ActionOverviewDiagram', () => {
             expect(onFiltersChange.mock.calls[0][0].showUnsimulated).toBe(true);
         });
     });
+
+    describe('detached-window popover placement', () => {
+        // Regression: the popover placement heuristic used to call
+        // `window.innerWidth/innerHeight` unconditionally, so when the
+        // overview was portal'd into a detached popup the above/below
+        // decision was based on the MAIN window's dimensions — leading
+        // to popovers that covered the pin. The fix reads
+        // `ownerDocument.defaultView` so the popup's own viewport
+        // drives the placement.
+        //
+        // In jsdom the default window height is 768; we stub it per
+        // test to exercise both branches.
+        const withViewport = (height: number, fn: () => void) => {
+            const originalInner = window.innerHeight;
+            Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
+            try { fn(); } finally {
+                Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInner });
+            }
+        };
+
+        const clickFirstPin = (container: HTMLElement, screenY: number) => {
+            const pin = container.querySelector('.nad-action-overview-pin:not(.nad-action-overview-pin-unsimulated)') as SVGGElement;
+            // getBoundingClientRect is not implemented for SVG in
+            // jsdom — stub it so handlePinClick's click handler can
+            // read the pin's on-screen position deterministically.
+            Object.defineProperty(pin, 'getBoundingClientRect', {
+                configurable: true,
+                value: () => ({ left: 400, top: screenY, width: 20, height: 20, right: 420, bottom: screenY + 20, x: 400, y: screenY, toJSON: () => ({}) }),
+            });
+            act(() => {
+                fireEvent.click(pin);
+                // applyActionOverviewPins debounces single-click by
+                // PIN_SINGLE_CLICK_DELAY_MS; advance timers so the
+                // popover commits.
+                vi.advanceTimersByTime(300);
+            });
+        };
+
+        beforeEach(() => { vi.useFakeTimers(); });
+        afterEach(() => { vi.useRealTimers(); });
+
+        it('places popover BELOW when the pin sits high in a tall viewport', () => {
+            withViewport(1400, () => {
+                const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+                clickFirstPin(container, 200);
+                const pop = getByTestId('action-overview-popover');
+                expect(pop.getAttribute('data-place-above')).toBe('false');
+            });
+        });
+
+        it('places popover ABOVE when the pin sits low in a short viewport', () => {
+            withViewport(500, () => {
+                const { container, getByTestId } = render(<ActionOverviewDiagram {...defaultProps()} />);
+                clickFirstPin(container, 400);
+                const pop = getByTestId('action-overview-popover');
+                expect(pop.getAttribute('data-place-above')).toBe('true');
+            });
+        });
+    });
+
+    describe('combined-action pin protection', () => {
+        // Regression: when a combined-action pin passes the overview
+        // filter, its two constituent unitary pins must stay visible
+        // (even if the individual filter would hide them), otherwise
+        // the combined-pin curve would dangle. Filtered-but-kept
+        // constituents are dimmed to read as context rather than
+        // first-class actions.
+        const allCategories = { green: true, orange: true, red: true, grey: true };
+
+        const propsWithCombined = () => {
+            const actions: Record<string, ActionDetail> = {
+                'disco_LINE_A': makeAction({
+                    action_topology: { lines_ex_bus: { LINE_A: -1 }, lines_or_bus: { LINE_A: -1 }, gens_bus: {}, loads_bus: {} },
+                    max_rho: 0.5,
+                    max_rho_line: 'LINE_A',
+                }),
+                'disco_LINE_B': makeAction({
+                    // Red severity — would be filtered out if 'red' is off.
+                    action_topology: { lines_ex_bus: { LINE_B: -1 }, lines_or_bus: { LINE_B: -1 }, gens_bus: {}, loads_bus: {} },
+                    max_rho: 1.3,
+                    max_rho_line: 'LINE_B',
+                }),
+                // Combined pair — GREEN severity so it passes even
+                // when red is filtered out. Must keep both unitary
+                // constituents visible.
+                'disco_LINE_A+disco_LINE_B': makeAction({
+                    description_unitaire: 'A + B combined',
+                    rho_after: [0.6, 0.7],
+                    rho_before: [0.8, 0.9],
+                    max_rho: 0.7,
+                    max_rho_line: 'LINE_A',
+                    is_rho_reduction: true,
+                }),
+            };
+            return {
+                ...defaultProps(),
+                actions,
+                overloadedLines: [] as readonly string[],
+                contingency: null as string | null,
+            };
+        };
+
+        it('keeps constituent pins visible but DIMMED when only the combined pin passes the filter', () => {
+            const { container } = render(
+                <ActionOverviewDiagram
+                    {...propsWithCombined()}
+                    filters={{
+                        // Hide the red bucket — disco_LINE_B would
+                        // normally disappear. But the combined pair
+                        // (green) passes, so both unitary pins must
+                        // survive, with disco_LINE_B dimmed.
+                        categories: { ...allCategories, red: false },
+                        threshold: 2.0,
+                        showUnsimulated: false,
+                    }}
+                />,
+            );
+            const pinA = container.querySelector('[data-action-id="disco_LINE_A"]');
+            const pinB = container.querySelector('[data-action-id="disco_LINE_B"]');
+            expect(pinA).not.toBeNull();
+            expect(pinB).not.toBeNull();
+            // disco_LINE_A passes the filter itself → not dimmed.
+            expect(pinA!.getAttribute('data-dimmed-by-filter')).toBeNull();
+            // disco_LINE_B fails the filter but is protected by the
+            // passing combined pin → kept with a dim flag.
+            expect(pinB!.getAttribute('data-dimmed-by-filter')).toBe('true');
+            expect(pinB!.getAttribute('opacity')).toBe('0.4');
+            // The combined pin itself is present.
+            const combined = container.querySelector('[data-action-id="disco_LINE_A+disco_LINE_B"]');
+            expect(combined).not.toBeNull();
+        });
+
+        it('DROPS constituent pins when neither the combined pin nor the unitary passes the filter', () => {
+            const { container } = render(
+                <ActionOverviewDiagram
+                    {...propsWithCombined()}
+                    filters={{
+                        // Hide red AND green — both the combined
+                        // (green) and disco_LINE_B (red) fail; only
+                        // the combined-protection branch could save
+                        // disco_LINE_B, and it no longer passes.
+                        categories: { green: false, orange: true, red: false, grey: true },
+                        threshold: 2.0,
+                        showUnsimulated: false,
+                    }}
+                />,
+            );
+            expect(container.querySelector('[data-action-id="disco_LINE_A"]')).toBeNull();
+            expect(container.querySelector('[data-action-id="disco_LINE_B"]')).toBeNull();
+            expect(container.querySelector('[data-action-id="disco_LINE_A+disco_LINE_B"]')).toBeNull();
+        });
+
+        it('does NOT dim constituents when the combined pin is filtered out and the unitaries would be filtered too', () => {
+            // Combined pin is green — disable green → combined is
+            // out. disco_LINE_B (red) is also out → it should simply
+            // disappear, NOT appear dimmed.
+            const { container } = render(
+                <ActionOverviewDiagram
+                    {...propsWithCombined()}
+                    filters={{
+                        categories: { ...allCategories, green: false, red: false },
+                        threshold: 2.0,
+                        showUnsimulated: false,
+                    }}
+                />,
+            );
+            expect(container.querySelector('[data-action-id="disco_LINE_B"]')).toBeNull();
+        });
+    });
 });
