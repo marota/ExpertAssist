@@ -870,11 +870,23 @@ class DiagramMixin:
             n.set_working_variant(original_variant)
 
     def get_action_variant_sld(self, action_id: str, voltage_level_id: str) -> dict:
-        """Single Line Diagram in the post-action state, with flow deltas vs N-1."""
+        """Single Line Diagram in the post-action state, with flow deltas vs N-1.
+
+        Mirrors `get_action_variant_diagram` (the NAD sibling that
+        already computes correct action-vs-N-1 deltas) as closely as
+        possible — same variant-switch cadence, same helper
+        (`_snapshot_n1_state`), same argument order into
+        `compute_deltas`. The only endpoint-specific extras are the
+        SLD-rendering call + `changed_switches` diff. Keeping the two
+        sides structurally identical means any future fix to the
+        flow-delta pipeline only needs to land in one place.
+        """
         actions = self._require_action(action_id)
         obs = actions[action_id]["observation"]
         nm = obs._network_manager
-        nm.set_working_variant(obs._variant_id)
+        action_variant_id = obs._variant_id
+        nm.set_working_variant(action_variant_id)
+
         network = nm.network
         sld = network.get_single_line_diagram(voltage_level_id)
         svg, sld_metadata = extract_sld_svg_and_metadata(sld)
@@ -887,44 +899,61 @@ class DiagramMixin:
         }
         self._attach_convergence_from_obs(result, obs)
 
-        # Capture the switch-state diff and action-variant flow snapshots
-        # BEFORE touching the base network's working variant — the base
-        # network mutualises the same underlying pypowsybl.Network as
-        # `nm.network` (see `_get_base_network` / the grid2op-shared-
-        # network doc), so switching its variant to N-1 below also
-        # flips `network`'s view. Reading `action_flows` after that
-        # switch would yield N-1 flows on both sides and render every
-        # delta as 0.0 — the exact symptom the operator reported when
-        # the Remedial Action SLD Impacts showed `Δ 0.0` with no
-        # colouring on every cell.
+        # Capture the action-variant switch snapshot NOW — still on the
+        # action variant, pypowsybl DataFrames are live views that
+        # reflect whatever variant is currently active when accessed.
+        # `.copy()` forces pandas to materialise the values in this
+        # frame, independent of any subsequent variant flip on the
+        # shared handle. Same rationale as the NAD-patch endpoint (see
+        # the comment on `action_switches_snap` in
+        # `get_action_variant_diagram_patch`).
         try:
-            action_switches_df = network.get_switches()
+            action_switches_snap = network.get_switches(attributes=["open"]).copy()
         except Exception as e:
-            logger.debug("Suppressed exception: %s", e)
-            action_switches_df = None
+            logger.debug("Suppressed exception while snapshotting switches: %s", e)
+            action_switches_snap = None
 
+        # Flow + asset snapshots — identical call order to
+        # `get_action_variant_diagram`. `get_network_flows` /
+        # `get_asset_flows` already return plain dicts materialised
+        # from pandas `.to_dict()`, so the snapshots are safe to hold
+        # across the subsequent variant switch inside
+        # `_snapshot_n1_state`.
         try:
             action_flows = get_network_flows(network)
             action_assets = get_asset_flows(network)
-        except Exception as e:
-            logger.warning("Warning: Failed to capture action-variant flows: %s", e)
-            action_flows = None
-            action_assets = None
+            # `_snapshot_n1_state` saves the current working variant
+            # (ACTION), flips to N-1 to read, then restores to ACTION
+            # — exactly the cadence used by the NAD sibling endpoint.
+            n1_flows, n1_assets = self._snapshot_n1_state(self._last_disconnected_element)
 
-        n1_network = self._get_base_network()
-        original_variant_n1 = n1_network.get_working_variant_id()
-        n1_network.set_working_variant(self._get_n1_variant(self._last_disconnected_element))
-        try:
-            result["changed_switches"] = self._diff_switches(action_switches_df, n1_network)
-        except Exception as e:
-            logger.warning("Warning: Failed to diff switches: %s", e)
-            result["changed_switches"] = {}
-
-        try:
-            if action_flows is None or action_assets is None:
-                raise RuntimeError("action-variant flow snapshot missing")
-            n1_flows = self._get_n1_flows(self._last_disconnected_element)
-            n1_assets = get_asset_flows(n1_network)
+            # Diagnostic: confirm the snapshots really do differ. If
+            # max |Δp1| is 0 for every branch, the upstream action
+            # simulation either did not actually modify the pypowsybl
+            # variant (grid2op-cached result, no-op action, …) or
+            # `obs._variant_id` points to the same variant as the N-1
+            # reference. Either way the frontend will render the
+            # cell-free "Δ +0.0" / grey Impacts view the operator
+            # reported — and the fix won't be in this function.
+            try:
+                p1_after = (action_flows or {}).get("p1") or {}
+                p1_before = (n1_flows or {}).get("p1") or {}
+                common = set(p1_after.keys()) & set(p1_before.keys())
+                max_abs = 0.0
+                top5: list = []
+                if common:
+                    diffs = [(bid, float(p1_after[bid]) - float(p1_before[bid])) for bid in common]
+                    diffs.sort(key=lambda t: abs(t[1]), reverse=True)
+                    max_abs = abs(diffs[0][1]) if diffs else 0.0
+                    top5 = [(bid, round(d, 2)) for bid, d in diffs[:5]]
+                logger.info(
+                    "[SLD action-variant] action_id=%s vl=%s action_variant=%s "
+                    "branches=%d common=%d max|Δp1|=%.2f top5=%s",
+                    action_id, voltage_level_id, action_variant_id,
+                    len(p1_after), len(common), max_abs, top5,
+                )
+            except Exception as diag_e:
+                logger.debug("[SLD action-variant] flow-diff diagnostic failed: %s", diag_e)
 
             deltas = compute_deltas(action_flows, n1_flows, voltage_level_ids=[voltage_level_id])
             result["flow_deltas"] = deltas["flow_deltas"]
@@ -935,10 +964,40 @@ class DiagramMixin:
             result["flow_deltas"] = {}
             result["reactive_flow_deltas"] = {}
             result["asset_deltas"] = {}
-        finally:
-            n1_network.set_working_variant(original_variant_n1)
+
+        # Switch-diff comes AFTER `_snapshot_n1_state` (which restores
+        # the working variant to ACTION). The `action_switches_snap`
+        # we captured at the top is a materialised copy so the diff
+        # is variant-independent — we just need the N-1 half, which
+        # we re-read with a short-lived variant flip + restore.
+        try:
+            result["changed_switches"] = self._diff_action_switches_vs_n1(
+                action_switches_snap, self._last_disconnected_element,
+            )
+        except Exception as e:
+            logger.warning("Warning: Failed to diff switches: %s", e)
+            result["changed_switches"] = {}
 
         return result
+
+    def _diff_action_switches_vs_n1(self, action_switches_snap, disconnected_element: str) -> dict:
+        """Diff a pre-captured action-variant switch snapshot against the live N-1 variant.
+
+        Centralises the save/switch/read/restore dance so
+        `get_action_variant_sld` doesn't have to interleave variant
+        management with the flow-delta pipeline. Returns `{}` on any
+        failure — switches are informational, they must not break the
+        SLD response.
+        """
+        if action_switches_snap is None:
+            return {}
+        n = self._get_base_network()
+        original_variant = n.get_working_variant_id()
+        try:
+            n.set_working_variant(self._get_n1_variant(disconnected_element))
+            return self._diff_switches(action_switches_snap, n)
+        finally:
+            n.set_working_variant(original_variant)
 
     # ------------------------------------------------------------------
     # Private orchestrator helpers
