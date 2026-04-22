@@ -151,15 +151,20 @@ export function useDiagramHighlights({
         // highlight disappear in Impacts mode. Cloning first guarantees
         // the halos stay on a pristine copy of the element.
         //
+        // Stacking order (SVG draws later-appended clones ON TOP):
+        // contingency halo appended FIRST (bottom) → overload halos
+        // appended SECOND (on top). Matches the product spec
+        // "action halo > overload halo > contingency halo".
+        //
         // Overloaded lines must also be highlighted in BOTH Flows and
         // Impacts modes — the user looks at the Impacts view to see how
         // the action redistributes flows AND which lines are still
         // (or newly) overloaded; suppressing the halos in delta mode
         // hides exactly that information.
+        applyContingencyHighlight(diagrams.n1SvgContainerRef.current, diagrams.n1MetaIndex, selectedBranch);
         if (diagrams.n1MetaIndex && n1OverloadedLines.length > 0) {
           applyOverloadedHighlights(diagrams.n1SvgContainerRef.current, diagrams.n1MetaIndex, n1OverloadedLines);
         }
-        applyContingencyHighlight(diagrams.n1SvgContainerRef.current, diagrams.n1MetaIndex, selectedBranch);
         applyDeltaVisuals(diagrams.n1SvgContainerRef.current, n1Diagram, diagrams.n1MetaIndex, effectiveMode === 'delta');
       }
     }
@@ -213,13 +218,21 @@ export function useDiagramHighlights({
           }
         }
 
+        // Stacking order (SVG draws later-appended clones ON TOP):
+        // contingency halo appended FIRST (bottom), overload halos
+        // SECOND (middle), action-target halo THIRD (top). Matches
+        // the product spec "action halo > overload halo > contingency
+        // halo".
+        if (diagrams.actionSvgContainerRef.current) {
+          applyContingencyHighlight(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, selectedBranch);
+        }
+
         if (diagrams.actionSvgContainerRef.current && diagrams.actionMetaIndex) {
           applyOverloadedHighlights(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, overloadsToHighlight);
         }
 
         if (diagrams.actionSvgContainerRef.current) {
           applyActionTargetHighlights(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, actionDetail, selectedActionId);
-          applyContingencyHighlight(diagrams.actionSvgContainerRef.current, diagrams.actionMetaIndex, selectedBranch);
         }
       }
       else {

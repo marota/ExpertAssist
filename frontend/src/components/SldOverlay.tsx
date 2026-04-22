@@ -49,9 +49,47 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
     //
     // The cell ancestor (sld-extern-cell) wraps BOTH the feeder symbol AND the connecting
     // wire (sld-wire), so we must apply the delta class one level up to color the full branch.
+    //
+    // The hook intentionally runs on EVERY render and self-gates via a
+    // signature + a DOM-presence probe. Same rationale as the highlight
+    // layoutEffect below: a pan/zoom update fires `setOverlayTransform`
+    // which re-renders SldOverlay. React may reconcile the
+    // `dangerouslySetInnerHTML` div and replace its children, wiping
+    // out every delta class and `data-original-text` we painted on the
+    // SVG. A deps-based useEffect would miss that wipe (none of its
+    // deps changed) and leave the overlay stuck on Flows rendering
+    // until a tab switch. By running every render, we detect the wipe
+    // via `deltaDomPresent` and re-apply.
+    const appliedDeltaSigRef = useRef<string>('');
     useEffect(() => {
         const container = overlayBodyRef.current;
         if (!container) return;
+
+        const deltaSig = JSON.stringify({
+            svgLen: vlOverlay.svg?.length ?? 0,
+            meta: vlOverlay.sldMetadata?.length ?? 0,
+            tab: vlOverlay.tab,
+            mode: actionViewMode,
+            fd: vlOverlay.flow_deltas ? Object.keys(vlOverlay.flow_deltas).sort() : [],
+            rfd: vlOverlay.reactive_flow_deltas ? Object.keys(vlOverlay.reactive_flow_deltas).sort() : [],
+            ad: vlOverlay.asset_deltas ? Object.keys(vlOverlay.asset_deltas).sort() : [],
+        });
+        const expectDelta = actionViewMode === 'delta'
+            && !!vlOverlay.svg
+            && (!!vlOverlay.flow_deltas || !!vlOverlay.asset_deltas);
+        const deltaDomPresent = container.querySelector(
+            '.sld-delta-positive, .sld-delta-negative, .sld-delta-grey, '
+            + '.sld-delta-text-positive, .sld-delta-text-negative, .sld-delta-text-grey, '
+            + '[data-original-text]',
+        ) !== null;
+        // Short-circuit only when we already applied for the current
+        // inputs AND the DOM still reflects it (or we expect no delta
+        // state at all). Otherwise fall through and (re-)apply.
+        if (deltaSig === appliedDeltaSigRef.current
+            && (expectDelta ? deltaDomPresent : !deltaDomPresent)) {
+            return;
+        }
+        appliedDeltaSigRef.current = deltaSig;
 
         // Clear any previously applied SLD delta classes
         const SLD_DELTA_CLASSES = [
@@ -366,8 +404,11 @@ const SldOverlay: React.FC<SldOverlayProps> = ({
                 cellEl.querySelectorAll('.sld-reactive-power .sld-label').forEach(l => l.classList.add(`sld-delta-text-${catQ}`));
             }
         }
-    }, [vlOverlay.svg, vlOverlay.sldMetadata, vlOverlay.tab, actionViewMode,
-    vlOverlay.flow_deltas, vlOverlay.reactive_flow_deltas, vlOverlay.asset_deltas]);
+        // No deps on purpose: run every render and self-gate via
+        // `appliedDeltaSigRef` + DOM presence check. Catches the
+        // pan-reconciliation wipe that would otherwise strand the
+        // overlay on Flows rendering until a tab switch.
+    });
 
     // ===== Highlight impacted assets on the SLD =====
     // Uses a clone-behind technique: clones target elements and inserts them as

@@ -857,23 +857,24 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                 data-testid="action-overview-header"
                 style={{
                     flexShrink: 0,
-                    padding: '6px 14px',
+                    padding: '4px 10px',
                     display: 'flex',
                     alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: '10px',
-                    rowGap: '6px',
+                    flexWrap: 'nowrap',
+                    gap: '6px',
                     fontSize: '12px',
                     background: '#f8fafc',
                     borderBottom: '1px solid #e2e8f0',
                     color: '#334155',
+                    overflowX: 'auto',
+                    whiteSpace: 'nowrap',
                 }}
             >
                 {hasAnyAction && (
                     <span
                         data-testid="overview-pin-counter"
                         title={`${pins.length} pin${pins.length === 1 ? '' : 's'} on the N-1 network${unsimulatedPins.length > 0 ? ` (+ ${unsimulatedPins.length} un-simulated)` : ''}`}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: '#1f2937' }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 600, color: '#1f2937', flexShrink: 0 }}
                     >
                         <span aria-hidden>{'\uD83D\uDCCD'}</span>
                         <span style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -882,98 +883,107 @@ const ActionOverviewDiagram: React.FC<ActionOverviewDiagramProps> = ({
                         </span>
                     </span>
                 )}
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <CategoryToggle
-                        testId="filter-category-green"
-                        color="#28a745" label="Solves overload"
-                        enabled={activeFilters.categories.green}
-                        onToggle={() => toggleCategory('green')}
-                    />
-                    <CategoryToggle
-                        testId="filter-category-orange"
-                        color="#f0ad4e" label="Low margin"
-                        enabled={activeFilters.categories.orange}
-                        onToggle={() => toggleCategory('orange')}
-                    />
-                    <CategoryToggle
-                        testId="filter-category-red"
-                        color="#dc3545" label="Still overloaded"
-                        enabled={activeFilters.categories.red}
-                        onToggle={() => toggleCategory('red')}
-                    />
-                    <CategoryToggle
-                        testId="filter-category-grey"
-                        color="#9ca3af" label="Divergent / islanded"
-                        enabled={activeFilters.categories.grey}
-                        onToggle={() => toggleCategory('grey')}
-                    />
-                    <button
-                        data-testid="filter-select-all"
-                        type="button"
-                        onClick={() => setAllCategories(true)}
-                        title="Enable all categories"
-                        style={filterChipButtonStyle}
-                    >
-                        All
-                    </button>
-                    <button
-                        data-testid="filter-select-none"
-                        type="button"
-                        onClick={() => setAllCategories(false)}
-                        title="Disable all categories"
-                        style={filterChipButtonStyle}
-                    >
-                        None
-                    </button>
-                    <label
-                        data-testid="filter-threshold"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                        title="Hide actions whose max loading rate exceeds this threshold"
-                    >
-                        <span style={{ color: '#475569' }}>Max loading</span>
-                        <input
-                            type="range"
-                            min={0.5}
-                            max={3}
-                            step={0.05}
-                            value={activeFilters.threshold}
-                            onChange={e => setThreshold(parseFloat(e.target.value))}
-                            style={{ width: 110 }}
-                        />
-                        <span style={{ minWidth: 38, textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: '#1f2937', fontWeight: 600 }}>
-                            {`${Math.round(activeFilters.threshold * 100)}%`}
-                        </span>
-                    </label>
-                    <label
-                        data-testid="filter-show-unsimulated"
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
-                        title="Show scored-but-not-yet-simulated actions as dimmed pins. Double-click a dimmed pin to run its simulation."
-                    >
-                        <input
-                            type="checkbox"
-                            checked={activeFilters.showUnsimulated}
-                            onChange={toggleUnsimulated}
-                        />
-                        <span style={{ color: '#475569' }}>Show unsimulated</span>
-                    </label>
-                    {/* Vertical separator + action-type chips
-                        inline on the same row. */}
-                    <span
-                        aria-hidden
+                <CategoryToggle
+                    testId="filter-category-green"
+                    color="#28a745" label="Solves overload"
+                    enabled={activeFilters.categories.green}
+                    onToggle={() => toggleCategory('green')}
+                />
+                <CategoryToggle
+                    testId="filter-category-orange"
+                    color="#f0ad4e" label="Low margin"
+                    enabled={activeFilters.categories.orange}
+                    onToggle={() => toggleCategory('orange')}
+                />
+                <CategoryToggle
+                    testId="filter-category-red"
+                    color="#dc3545" label="Still overloaded"
+                    enabled={activeFilters.categories.red}
+                    onToggle={() => toggleCategory('red')}
+                />
+                <CategoryToggle
+                    testId="filter-category-grey"
+                    color="#9ca3af" label="Divergent / islanded"
+                    enabled={activeFilters.categories.grey}
+                    onToggle={() => toggleCategory('grey')}
+                />
+                <button
+                    data-testid="filter-select-all"
+                    type="button"
+                    onClick={() => setAllCategories(true)}
+                    title="Enable all categories"
+                    style={filterChipButtonStyle}
+                >
+                    All
+                </button>
+                <button
+                    data-testid="filter-select-none"
+                    type="button"
+                    onClick={() => setAllCategories(false)}
+                    title="Disable all categories"
+                    style={filterChipButtonStyle}
+                >
+                    None
+                </button>
+                <label
+                    data-testid="filter-threshold"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}
+                    title="Hide actions whose max loading rate (%) exceeds this threshold"
+                >
+                    <span style={{ color: '#475569' }}>Max loading</span>
+                    <input
+                        data-testid="filter-threshold-input"
+                        type="number"
+                        min={0}
+                        max={300}
+                        step={1}
+                        value={Math.round(activeFilters.threshold * 100)}
+                        onChange={e => {
+                            const raw = parseInt(e.target.value, 10);
+                            if (!Number.isFinite(raw)) return;
+                            const clamped = Math.max(0, Math.min(300, raw));
+                            setThreshold(clamped / 100);
+                        }}
                         style={{
-                            display: 'inline-block',
-                            width: 1,
-                            height: 18,
-                            background: '#cbd5e1',
-                            margin: '0 2px',
+                            width: 52,
+                            padding: '2px 4px',
+                            fontSize: 12,
+                            fontVariantNumeric: 'tabular-nums',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: 4,
+                            textAlign: 'right',
                         }}
                     />
-                    <ActionTypeFilterChips
-                        testIdPrefix="overview-action-type-filter"
-                        value={activeFilters.actionType}
-                        onChange={setActionType}
+                    <span style={{ color: '#475569' }}>%</span>
+                </label>
+                <label
+                    data-testid="filter-show-unsimulated"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', flexShrink: 0 }}
+                    title="Show scored-but-not-yet-simulated actions as dimmed pins. Double-click a dimmed pin to run its simulation."
+                >
+                    <input
+                        type="checkbox"
+                        checked={activeFilters.showUnsimulated}
+                        onChange={toggleUnsimulated}
                     />
-                </div>
+                    <span style={{ color: '#475569' }}>Show unsimulated</span>
+                </label>
+                <span
+                    aria-hidden
+                    style={{
+                        display: 'inline-block',
+                        width: 1,
+                        height: 18,
+                        background: '#cbd5e1',
+                        margin: '0 2px',
+                        flexShrink: 0,
+                    }}
+                />
+                <ActionTypeFilterChips
+                    testIdPrefix="overview-action-type-filter"
+                    value={activeFilters.actionType}
+                    onChange={setActionType}
+                />
             </div>
 
             {/* SVG body: the pan/zoom container. Wheel + drag work
@@ -1242,6 +1252,7 @@ const filterChipButtonStyle: React.CSSProperties = {
     cursor: 'pointer',
     fontSize: 12,
     fontWeight: 600,
+    flexShrink: 0,
 };
 
 /**
@@ -1275,6 +1286,7 @@ const CategoryToggle: React.FC<{
             fontSize: 12,
             color: enabled ? '#1f2937' : '#94a3b8',
             opacity: enabled ? 1 : 0.65,
+            flexShrink: 0,
         }}
     >
         <span

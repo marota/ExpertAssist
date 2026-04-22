@@ -145,6 +145,37 @@ const ActionSearchDropdown: React.FC<ActionSearchDropdownProps> = ({
                             />
                         )}
 
+                        {/* No-relevant-action warning: analysis ran
+                            (actionScores present) but the selected type
+                            filter yields zero scored actions, so we fall
+                            back to the full network action list below.
+                            The banner tells the operator that nothing from
+                            the analysis recommends actions of this type. */}
+                        {!searchQuery
+                            && scoredActionsList.length === 0
+                            && actionTypeFilter !== 'all'
+                            && !!actionScores
+                            && Object.values(actionScores).some(d =>
+                                d && typeof d === 'object'
+                                && Object.keys((d as { scores?: Record<string, number> }).scores ?? {}).length > 0
+                            ) && (
+                            <div
+                                data-testid="no-relevant-action-warning"
+                                style={{
+                                    margin: '6px 8px',
+                                    padding: '6px 8px',
+                                    background: '#fff3cd',
+                                    border: '1px solid #ffeeba',
+                                    borderRadius: 4,
+                                    color: '#856404',
+                                    fontSize: 12,
+                                    lineHeight: 1.35,
+                                }}
+                            >
+                                ⚠️ Warning: no relevant action detected with regards to overflow analysis
+                            </div>
+                        )}
+
                         {/* Search Results */}
                         {(!searchQuery && scoredActionsList.length === 0 && filteredActions.length === 0) && (
                             <div style={{ padding: '10px', textAlign: 'center', color: '#888', fontSize: '13px' }}>

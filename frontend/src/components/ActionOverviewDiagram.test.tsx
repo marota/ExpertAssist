@@ -952,7 +952,11 @@ describe('ActionOverviewDiagram', () => {
             expect(secondCall[0].categories).toEqual({ green: true, orange: true, red: true, grey: true });
         });
 
-        it('threshold slider update fires onFiltersChange with the new threshold', () => {
+        it('threshold numeric input update fires onFiltersChange with the new threshold', () => {
+            // The threshold widget is a compact integer-% number
+            // input (0–300 %); the form's source-of-truth value is a
+            // fraction (1.0 = 100 %). Typing "100" in the input must
+            // push { threshold: 1.0 } through onFiltersChange.
             const onFiltersChange = vi.fn();
             const { getByTestId } = render(
                 <ActionOverviewDiagram
@@ -961,8 +965,8 @@ describe('ActionOverviewDiagram', () => {
                     onFiltersChange={onFiltersChange}
                 />,
             );
-            const slider = getByTestId('filter-threshold').querySelector('input[type="range"]') as HTMLInputElement;
-            fireEvent.change(slider, { target: { value: '1.0' } });
+            const input = getByTestId('filter-threshold-input') as HTMLInputElement;
+            fireEvent.change(input, { target: { value: '100' } });
             expect(onFiltersChange).toHaveBeenCalledTimes(1);
             expect(onFiltersChange.mock.calls[0][0].threshold).toBeCloseTo(1.0);
         });
