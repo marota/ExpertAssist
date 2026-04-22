@@ -5,13 +5,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import React, { useState } from 'react';
+import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import CombinedActionsModal from './CombinedActionsModal';
 import { api } from '../api';
-import type { ActionTypeFilterToken, AnalysisResult, CombinedAction } from '../types';
+import type { AnalysisResult, CombinedAction } from '../types';
 
 type SimulateResult = Awaited<ReturnType<typeof api.simulateManualAction>>;
 
@@ -91,23 +91,10 @@ describe('CombinedActionsModal', () => {
             }
         };
 
-        // Wrap in a stateful parent so chip clicks actually update the filter.
-        const Wrapper = () => {
-            const [token, setToken] = useState<ActionTypeFilterToken>('all');
-            return (
-                <CombinedActionsModal
-                    {...defaultProps}
-                    analysisResult={resultWithTypes as AnalysisResult}
-                    actionTypeFilter={token}
-                    onActionTypeFilterChange={setToken}
-                />
-            );
-        };
-        render(<Wrapper />);
-
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes as AnalysisResult} />);
         fireEvent.click(getExploreTab());
 
-        // Filter for disconnections
+        // Filter for disconnections — chip click updates local state inside ExplorePairsTab
         fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
         expect(screen.getByText('disco1')).toBeInTheDocument();
         expect(screen.queryByText('reco1')).not.toBeInTheDocument();
@@ -118,7 +105,7 @@ describe('CombinedActionsModal', () => {
         expect(screen.queryByText('disco1')).not.toBeInTheDocument();
     });
 
-    it('respects an initial actionTypeFilter prop without requiring a click', () => {
+    it('shows all actions in explore tab by default (no filter active)', () => {
         const resultWithTypes: AnalysisResult = {
             ...mockAnalysisResult,
             actions: {
@@ -131,22 +118,20 @@ describe('CombinedActionsModal', () => {
                 'reco': { scores: { 'reco1': 20 } },
             },
         };
-        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes} actionTypeFilter="disco" />);
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes} />);
         fireEvent.click(getExploreTab());
         expect(screen.getByText('disco1')).toBeInTheDocument();
-        expect(screen.queryByText('reco1')).not.toBeInTheDocument();
+        expect(screen.getByText('reco1')).toBeInTheDocument();
     });
 
-    it('forwards onActionTypeFilterChange to the ExplorePairsTab chip row', () => {
-        const onActionTypeFilterChange = vi.fn();
-        render(<CombinedActionsModal
-            {...defaultProps}
-            actionTypeFilter="all"
-            onActionTypeFilterChange={onActionTypeFilterChange}
-        />);
+    it('chip row is present in explore tab and clicking changes the filter', () => {
+        render(<CombinedActionsModal {...defaultProps} />);
         fireEvent.click(getExploreTab());
-        fireEvent.click(screen.getByTestId('explore-pairs-filter-disco'));
-        expect(onActionTypeFilterChange).toHaveBeenCalledWith('disco');
+        const discoChip = screen.getByTestId('explore-pairs-filter-disco');
+        expect(discoChip).toBeInTheDocument();
+        // Clicking should not throw and should update internal state
+        expect(() => fireEvent.click(discoChip)).not.toThrow();
+        expect(discoChip.getAttribute('aria-pressed')).toBe('true');
     });
 
     it('groups actions by type in explore tab table including LS', async () => {

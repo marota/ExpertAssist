@@ -393,52 +393,46 @@ describe('ActionFeed', () => {
         expect(goodIndex).toBeLessThan(badIndex);
     });
 
-    it('shows only PST actions in dropdown when overviewFilters.actionType is "pst"', async () => {
+    it('shows only PST actions in dropdown after clicking the PST chip', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
         const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
+        const pstChip = await screen.findByTestId('search-dropdown-filter-pst');
+        fireEvent.click(pstChip);
 
         // PST action visible, reco action hidden
         expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
         expect(screen.queryByText('line_reco_1')).not.toBeInTheDocument();
     });
 
-    it('shows all actions in dropdown when overviewFilters.actionType is "all"', async () => {
+    it('shows all actions in dropdown when ALL chip is active (default)', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
         const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'all' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
         expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
         expect(screen.getByText('line_reco_1')).toBeInTheDocument();
     });
 
-    it('hides PST actions in search results when actionType filter is "reco"', async () => {
+    it('hides PST actions in search results after setting filter to RECO', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'reco' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
+
+        // Set filter to RECO
+        const recoChip = await screen.findByTestId('search-dropdown-filter-reco');
+        fireEvent.click(recoChip);
 
         // Type "pst" in search
         const searchInput = screen.getByPlaceholderText(/Search action/);
@@ -454,37 +448,33 @@ describe('ActionFeed', () => {
         expect(screen.getByText(/Simulate manual ID:/)).toBeInTheDocument();
     });
 
-    it('shows only PST actions in dropdown when actionType filter is "pst"', async () => {
+    it('shows only PST actions in dropdown after clicking PST chip (excludes disco and unknown)', async () => {
         const pstAction = { id: 'pst_1', description: 'PST action' };
         const discoAction = { id: 'abc', description: 'Ouverture de ligne' };
         const unknownAction = { id: 'xyz', description: 'Some unknown action' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, discoAction, unknownAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
+        const pstChip = await screen.findByTestId('search-dropdown-filter-pst');
+        fireEvent.click(pstChip);
 
         expect(await screen.findByText('pst_1')).toBeInTheDocument();
         expect(screen.queryByText('abc')).not.toBeInTheDocument();
         expect(screen.queryByText('xyz')).not.toBeInTheDocument();
     });
 
-    it('shows only LS actions in dropdown when actionType filter is "ls"', async () => {
+    it('shows only LS actions in dropdown after clicking LS chip', async () => {
         const lsAction = { id: 'load_shedding_LOAD1', description: 'Load shedding LOAD1' };
         const regularAction = { id: 'line_reco_1', description: 'Reconnexion' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([lsAction, regularAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'ls' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
+        const lsChip = await screen.findByTestId('search-dropdown-filter-ls');
+        fireEvent.click(lsChip);
 
         expect(await screen.findByText('load_shedding_LOAD1')).toBeInTheDocument();
         expect(screen.queryByText('line_reco_1')).not.toBeInTheDocument();
@@ -531,12 +521,10 @@ describe('ActionFeed', () => {
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstDiscoAction]);
 
-        render(<ActionFeed
-            {...defaultProps}
-            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
-        />);
-
+        render(<ActionFeed {...defaultProps} />);
         fireEvent.click(screen.getByText('+ Manual Selection'));
+        const pstChip = await screen.findByTestId('search-dropdown-filter-pst');
+        fireEvent.click(pstChip);
 
         await waitFor(() => {
             expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
@@ -2644,7 +2632,7 @@ describe('ActionFeed', () => {
         });
     });
 
-    describe('shared action-type filter (overviewFilters.actionType)', () => {
+    describe('action-type filter — overview cards (overviewFilters.actionType)', () => {
         const makeFilter = (actionType: 'all' | 'disco' | 'reco' | 'ls' | 'rc' | 'open' | 'close' | 'pst') => ({
             categories: { green: true, orange: true, red: true, grey: true },
             threshold: 1.5,
@@ -2673,7 +2661,7 @@ describe('ActionFeed', () => {
             },
         };
 
-        it('hides cards of the other bucket in the Selected list when actionType is "disco"', () => {
+        it('hides cards of the other bucket in the Selected list when overviewFilters.actionType is "disco"', () => {
             render(<ActionFeed
                 {...defaultProps}
                 actions={actionsMix}
@@ -2684,7 +2672,7 @@ describe('ActionFeed', () => {
             expect(screen.queryByTestId('action-card-reco_LINE_B')).not.toBeInTheDocument();
         });
 
-        it('shows every card when actionType is "all"', () => {
+        it('shows every card when overviewFilters.actionType is "all"', () => {
             render(<ActionFeed
                 {...defaultProps}
                 actions={actionsMix}
@@ -2695,8 +2683,7 @@ describe('ActionFeed', () => {
             expect(screen.getByTestId('action-card-reco_LINE_B')).toBeInTheDocument();
         });
 
-        it('falls back to showing every card when overviewFilters is undefined', () => {
-            // No overviewFilters prop → activeTypeFilter defaults to 'all'.
+        it('shows every card when overviewFilters is undefined', () => {
             render(<ActionFeed
                 {...defaultProps}
                 actions={actionsMix}
@@ -2705,92 +2692,53 @@ describe('ActionFeed', () => {
             expect(screen.getByTestId('action-card-disco_LINE_A')).toBeInTheDocument();
             expect(screen.getByTestId('action-card-reco_LINE_B')).toBeInTheDocument();
         });
+    });
 
-        it('calls onOverviewFiltersChange with the merged filter object when a dropdown chip is clicked', async () => {
+    describe('action-type filter — dropdown chips (local state, independent of overview)', () => {
+        it('dropdown chip click does NOT call onOverviewFiltersChange', async () => {
             const onOverviewFiltersChange = vi.fn();
             vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
             render(<ActionFeed
                 {...defaultProps}
-                overviewFilters={makeFilter('all')}
+                overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'all' }}
                 onOverviewFiltersChange={onOverviewFiltersChange}
             />);
             fireEvent.click(screen.getByText('+ Manual Selection'));
-            // Wait for the dropdown chip row to render
             const discoChip = await screen.findByTestId('search-dropdown-filter-disco');
             fireEvent.click(discoChip);
-            expect(onOverviewFiltersChange).toHaveBeenCalledTimes(1);
-            const patched = onOverviewFiltersChange.mock.calls[0][0];
-            // Only `actionType` should change; the other fields are preserved.
-            expect(patched).toEqual({
-                categories: { green: true, orange: true, red: true, grey: true },
-                threshold: 1.5,
-                showUnsimulated: false,
-                actionType: 'disco',
-            });
+            // Local state update — does NOT bubble up to the overview filter
+            expect(onOverviewFiltersChange).not.toHaveBeenCalled();
         });
 
-        it('preserves non-default category/threshold values when patching only actionType', async () => {
-            const onOverviewFiltersChange = vi.fn();
+        it('marks the active chip with aria-pressed="true" after clicking LS in the search dropdown', async () => {
             vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
-            render(<ActionFeed
-                {...defaultProps}
-                overviewFilters={{
-                    categories: { green: false, orange: true, red: false, grey: false },
-                    threshold: 2.0,
-                    showUnsimulated: true,
-                    actionType: 'all',
-                }}
-                onOverviewFiltersChange={onOverviewFiltersChange}
-            />);
-            fireEvent.click(screen.getByText('+ Manual Selection'));
-            const pstChip = await screen.findByTestId('search-dropdown-filter-pst');
-            fireEvent.click(pstChip);
-            expect(onOverviewFiltersChange.mock.calls[0][0]).toEqual({
-                categories: { green: false, orange: true, red: false, grey: false },
-                threshold: 2.0,
-                showUnsimulated: true,
-                actionType: 'pst',
-            });
-        });
-
-        it('marks the active chip with aria-pressed="true" in the search dropdown', async () => {
-            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
-            render(<ActionFeed
-                {...defaultProps}
-                overviewFilters={makeFilter('ls')}
-            />);
+            render(<ActionFeed {...defaultProps} />);
             fireEvent.click(screen.getByText('+ Manual Selection'));
             const lsChip = await screen.findByTestId('search-dropdown-filter-ls');
+            fireEvent.click(lsChip);
             expect(lsChip.getAttribute('aria-pressed')).toBe('true');
             expect(screen.getByTestId('search-dropdown-filter-all').getAttribute('aria-pressed')).toBe('false');
         });
 
-        it('filters the Scored Actions table by actionType', async () => {
+        it('filters the Scored Actions table after clicking DISCO chip', async () => {
             const actionScores = {
                 line_disconnection: { scores: { disco_LINE_A: 10 } },
                 line_reconnection: { scores: { reco_LINE_B: 20 } },
             };
             vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
-            render(<ActionFeed
-                {...defaultProps}
-                actionScores={actionScores}
-                overviewFilters={makeFilter('disco')}
-            />);
+            render(<ActionFeed {...defaultProps} actionScores={actionScores} />);
             fireEvent.click(screen.getByText('+ Manual Selection'));
+            const discoChip = await screen.findByTestId('search-dropdown-filter-disco');
+            fireEvent.click(discoChip);
             expect(await screen.findByText('disco_LINE_A')).toBeInTheDocument();
             expect(screen.queryByText('reco_LINE_B')).not.toBeInTheDocument();
         });
 
-        it('swallows chip clicks when onOverviewFiltersChange is not wired', async () => {
+        it('clicking a dropdown chip does not throw', async () => {
             vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
-            render(<ActionFeed
-                {...defaultProps}
-                overviewFilters={makeFilter('all')}
-                // intentionally no onOverviewFiltersChange
-            />);
+            render(<ActionFeed {...defaultProps} />);
             fireEvent.click(screen.getByText('+ Manual Selection'));
             const discoChip = await screen.findByTestId('search-dropdown-filter-disco');
-            // No throw — the optional handler is guarded with `?.`.
             expect(() => fireEvent.click(discoChip)).not.toThrow();
         });
     });

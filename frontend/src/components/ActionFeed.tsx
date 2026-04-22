@@ -5,10 +5,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { ActionDetail, ActionTypeFilterToken, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData, ActionOverviewFilters } from '../types';
 import { actionPassesOverviewFilter } from '../utils/svgUtils';
-import { classifyActionType, matchesActionTypeFilter, DEFAULT_ACTION_OVERVIEW_FILTERS } from '../utils/actionTypes';
+import { classifyActionType, matchesActionTypeFilter } from '../utils/actionTypes';
 import { api } from '../api';
 import { interactionLogger } from '../utils/interactionLogger';
 import CombinedActionsModal from './CombinedActionsModal';
@@ -237,35 +237,23 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         setTimeout(() => searchInputRef.current?.focus(), 50);
     };
 
-    // Filter actions for dropdown. Delegates bucket classification
-    // to the shared `classifyActionType` so the manual-selection
-    // search row and the overview chip row share a single source of
-    // truth (including the line-vs-coupling distinction).
-    const activeTypeFilter = overviewFilters?.actionType ?? 'all';
+    // Local filter for the manual-selection dropdown and scored table.
+    // Independent from overviewFilters.actionType which drives the
+    // overview diagram and the action cards list.
+    const [dropdownTypeFilter, setDropdownTypeFilter] = useState<ActionTypeFilterToken>('all');
 
-    // Called by both the chip row in the search dropdown AND the
-    // chip row in the Explore-Pairs tab of CombinedActionsModal:
-    // patches only the `actionType` field of the shared
-    // overviewFilters object, preserving categories / threshold /
-    // showUnsimulated.
-    const handleActionTypeChange = useCallback((token: ActionTypeFilterToken) => {
-        onOverviewFiltersChange?.({
-            ...(overviewFilters ?? DEFAULT_ACTION_OVERVIEW_FILTERS),
-            actionType: token,
-        });
-    }, [overviewFilters, onOverviewFiltersChange]);
     const filteredActions = useMemo(() => {
         const q = searchQuery.toLowerCase();
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
             .filter(a => !alreadyShown.has(a.id))
             .filter(a => {
-                if (activeTypeFilter === 'all') return true;
-                return matchesActionTypeFilter(activeTypeFilter, a.id, a.description || null, a.type || null);
+                if (dropdownTypeFilter === 'all') return true;
+                return matchesActionTypeFilter(dropdownTypeFilter, a.id, a.description || null, a.type || null);
             })
             .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
             .slice(0, 20);
-    }, [searchQuery, availableActions, actions, activeTypeFilter]);
+    }, [searchQuery, availableActions, actions, dropdownTypeFilter]);
 
     // Format scored actions
     const scoredActionsList = useMemo(() => {
@@ -274,14 +262,14 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         for (const [type, data] of Object.entries(actionScores)) {
             const scores = data?.scores || {};
             for (const [actionId, score] of Object.entries(scores)) {
-                if (activeTypeFilter !== 'all') {
+                if (dropdownTypeFilter !== 'all') {
                     const actionDetail = actions[actionId];
                     const bucket = classifyActionType(
                         actionId,
                         actionDetail?.description_unitaire || null,
                         type,
                     );
-                    if (bucket === 'unknown' || bucket !== activeTypeFilter) continue;
+                    if (bucket === 'unknown' || bucket !== dropdownTypeFilter) continue;
                 }
                 const mwStartMap = (data as { mw_start?: Record<string, number | null> })?.mw_start;
                 const mwStart = mwStartMap?.[actionId] ?? null;
@@ -296,7 +284,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
             }
             return b.score - a.score;
         });
-    }, [actionScores, activeTypeFilter, actions]);
+    }, [actionScores, dropdownTypeFilter, actions]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -748,8 +736,8 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         searchInputRef={searchInputRef}
                         searchQuery={searchQuery}
                         onSearchQueryChange={setSearchQuery}
-                        actionTypeFilter={activeTypeFilter}
-                        onActionTypeFilterChange={handleActionTypeChange}
+                        actionTypeFilter={dropdownTypeFilter}
+                        onActionTypeFilterChange={setDropdownTypeFilter}
                         error={error}
                         loadingActions={loadingActions}
                         scoredActionsList={scoredActionsList}
@@ -1014,8 +1002,6 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 monitoringFactor={monitoringFactor}
                 linesOverloaded={linesOverloaded}
                 displayName={displayName}
-                actionTypeFilter={activeTypeFilter}
-                onActionTypeFilterChange={handleActionTypeChange}
             />
         </div>
     );

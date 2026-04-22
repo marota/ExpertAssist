@@ -160,22 +160,26 @@ describe('ExplorePairsTab', () => {
         expect(screen.getByText('Superposition failed')).toBeInTheDocument();
     });
 
-    it('shows only DISCO actions when actionTypeFilter is "disco"', () => {
-        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="disco" />);
+    it('shows only DISCO actions after clicking the DISCO chip', () => {
+        render(<ExplorePairsTab {...defaultProps} />);
+        fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
         expect(screen.getByText('act1')).toBeInTheDocument();
         expect(screen.getByText('act3')).toBeInTheDocument();
         expect(screen.queryByText('act2')).not.toBeInTheDocument();
     });
 
-    it('calls onActionTypeFilterChange with "disco" when DISCO chip is clicked', () => {
-        const onActionTypeFilterChange = vi.fn();
-        render(<ExplorePairsTab {...defaultProps} onActionTypeFilterChange={onActionTypeFilterChange} />);
+    it('clicking DISCO chip updates the local filter (list re-renders)', () => {
+        render(<ExplorePairsTab {...defaultProps} />);
+        // All three visible before clicking
+        expect(screen.getByText('act2')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
-        expect(onActionTypeFilterChange).toHaveBeenCalledWith('disco');
+        // act2 (reco type) disappears
+        expect(screen.queryByText('act2')).not.toBeInTheDocument();
     });
 
-    it('shows only RECO actions when actionTypeFilter is "reco"', () => {
-        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="reco" />);
+    it('shows only RECO actions after clicking the RECO chip', () => {
+        render(<ExplorePairsTab {...defaultProps} />);
+        fireEvent.click(screen.getByRole('button', { name: 'RECO' }));
         expect(screen.getByText('act2')).toBeInTheDocument();
         expect(screen.queryByText('act1')).not.toBeInTheDocument();
     });
@@ -197,29 +201,28 @@ describe('ExplorePairsTab', () => {
         expect(screen.getAllByText('N/A').length).toBeGreaterThan(0);
     });
 
-    it('shows empty state when actionTypeFilter matches no actions', () => {
-        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="pst" />);
+    it('shows empty state when PST chip is active and no PST actions exist', () => {
+        render(<ExplorePairsTab {...defaultProps} />);
+        fireEvent.click(screen.getByRole('button', { name: 'PST' }));
         expect(screen.getByText(/No scored actions available/)).toBeInTheDocument();
     });
 
-    it('defaults to "all" when actionTypeFilter prop is omitted', () => {
-        // No actionTypeFilter prop — all three actions must appear.
+    it('defaults to showing all actions on first render', () => {
         render(<ExplorePairsTab {...defaultProps} />);
         expect(screen.getByText('act1')).toBeInTheDocument();
         expect(screen.getByText('act2')).toBeInTheDocument();
         expect(screen.getByText('act3')).toBeInTheDocument();
     });
 
-    it('marks the active chip with aria-pressed="true"', () => {
-        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="reco" />);
+    it('marks the active chip with aria-pressed="true" after clicking RECO', () => {
+        render(<ExplorePairsTab {...defaultProps} />);
+        fireEvent.click(screen.getByTestId('explore-pairs-filter-reco'));
         const recoChip = screen.getByTestId('explore-pairs-filter-reco');
         expect(recoChip.getAttribute('aria-pressed')).toBe('true');
         expect(screen.getByTestId('explore-pairs-filter-all').getAttribute('aria-pressed')).toBe('false');
     });
 
-    it('does not throw when onActionTypeFilterChange is omitted and a chip is clicked', () => {
-        // Legacy call sites may not wire the change handler; clicking
-        // a chip should be a silent no-op rather than crashing.
+    it('clicking any chip does not throw', () => {
         render(<ExplorePairsTab {...defaultProps} />);
         expect(() => fireEvent.click(screen.getByTestId('explore-pairs-filter-disco'))).not.toThrow();
     });

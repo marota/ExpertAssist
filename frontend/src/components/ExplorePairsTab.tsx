@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
-import React from 'react';
+import React, { useState } from 'react';
 import type { CombinedAction, AnalysisResult, ActionTypeFilterToken } from '../types';
 import ActionTypeFilterChips from './ActionTypeFilterChips';
 import { matchesActionTypeFilter } from '../utils/actionTypes';
@@ -44,9 +44,6 @@ interface ExplorePairsTabProps {
     onSimulate: () => void;
     onSimulateSingle: (actionId: string) => void;
     displayName?: (id: string) => string;
-    /** Shared action-type token — lifted to App.tsx via overviewFilters. */
-    actionTypeFilter?: ActionTypeFilterToken;
-    onActionTypeFilterChange?: (token: ActionTypeFilterToken) => void;
 }
 
 const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
@@ -67,9 +64,8 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
     onSimulate,
     onSimulateSingle,
     displayName = (id: string) => id,
-    actionTypeFilter = 'all',
-    onActionTypeFilterChange,
 }) => {
+    const [actionTypeFilter, setActionTypeFilter] = useState<ActionTypeFilterToken>('all');
 
     return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -103,7 +99,7 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                 <ActionTypeFilterChips
                     testIdPrefix="explore-pairs-filter"
                     value={actionTypeFilter}
-                    onChange={onActionTypeFilterChange ?? (() => {})}
+                    onChange={setActionTypeFilter}
                 />
             </div>
 

@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from '../api';
-import type { ActionTypeFilterToken, AnalysisResult, CombinedAction, ActionDetail } from '../types';
+import type { AnalysisResult, CombinedAction, ActionDetail } from '../types';
 import { interactionLogger } from '../utils/interactionLogger';
 import ComputedPairsTable, { type ComputedPairEntry } from './ComputedPairsTable';
 import ExplorePairsTab from './ExplorePairsTab';
@@ -37,9 +37,6 @@ interface Props {
     monitoringFactor?: number;
     linesOverloaded?: string[];
     displayName?: (id: string) => string;
-    /** Shared action-type token from overviewFilters — synced with ActionFeed and ActionOverviewDiagram. */
-    actionTypeFilter?: ActionTypeFilterToken;
-    onActionTypeFilterChange?: (token: ActionTypeFilterToken) => void;
 }
 
 /** Canonicalize a combined action ID by sorting the parts alphabetically. */
@@ -59,8 +56,6 @@ const CombinedActionsModal: React.FC<Props> = ({
     monitoringFactor = 1.0,
     linesOverloaded = [],
     displayName = (id: string) => id,
-    actionTypeFilter,
-    onActionTypeFilterChange,
 }) => {
     const [activeTab, setActiveTab] = useState<'computed' | 'explore'>('computed');
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -450,8 +445,6 @@ const CombinedActionsModal: React.FC<Props> = ({
                             onSimulate={() => handleSimulate()}
                             onSimulateSingle={handleSimulate}
                             displayName={displayName}
-                            actionTypeFilter={actionTypeFilter}
-                            onActionTypeFilterChange={onActionTypeFilterChange}
                         />
                     )}
                 </div>
