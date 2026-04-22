@@ -199,6 +199,56 @@ extractions (N-1 fetch + highlight pipeline).
   `changed_switches` now captured before flow extraction so mock
   networks with missing flows still return the switch diff; switch
   diff + delta math split into independent `try/except` blocks.
+- **Halo layering on N-1 / Remedial Action NADs** (commit `f7a3834`):
+  contingency clone is now appended FIRST (bottom), overload halos
+  SECOND, action-target halo LAST (top) on the shared
+  `#nad-background-layer`. Reverses the post-`action-variant-diagram-patch`
+  regression where the yellow contingency halo painted over the
+  pink action halo. Code-level guard in
+  `frontend/src/utils/svgUtils.test.ts::Halo layering order` +
+  hook-level guard in `frontend/src/hooks/useDiagramHighlights.test.ts`.
+- **Action Overview filter banner compaction** (commit `f7a3834`):
+  filters laid out on a single horizontal row
+  (`flex-wrap: nowrap`); the max-loading slider is replaced with a
+  compact integer-percent number input (0–300 %, step 1) so the
+  whole banner fits on one line.
+- **No-relevant-action warning in Manual Selection** (commit `f7a3834`):
+  when "Analyze & Suggest" produced action scores but the chosen
+  type filter yields zero scored actions, the dropdown now surfaces
+  a yellow `Warning: no relevant action detected with regards to
+  overflow analysis` banner above the fallback full-action list
+  instead of silently misleading the operator.
+- **"Make a first guess" gating after analysis** (commit `f7a3834`):
+  the pre-analysis shortcut is hidden once "Analyze & Suggest" is
+  running, has produced action scores, or any action sits in the
+  feed. The button only re-appears after a state reset
+  (contingency change, study reload).
+- **SLD Impacts persistence on pan / zoom** (commit `f7a3834`,
+  follow-up `ec17587`): the SLD delta painter is now a
+  `useLayoutEffect` running every render, self-gated via signature
+  + DOM-presence probe. Catches the
+  `dangerouslySetInnerHTML`-reconciliation wipe that used to strand
+  the overlay on Flows rendering until a tab switch, AND eliminates
+  the impact/flow blink during continuous drags by running between
+  React's commit and the browser paint instead of after.
+- **SLD action-variant flow snapshot ordering** (commits `f679646`
+  + `e5c89fb`): `get_action_variant_sld` now captures
+  `action_flows` / `action_assets` BEFORE switching the shared base
+  network to the N-1 variant, then delegates to `_snapshot_n1_state`
+  for the N-1 reference — byte-for-byte the same cadence the
+  (already-correct) NAD sibling endpoint uses. The previous
+  ordering read both snapshots from the N-1 variant after the
+  variant flip, producing all-zero deltas with no colouring on
+  every cell of the Remedial Action SLD Impacts view (operator-
+  reported on `node_merging_PYMONP3` / contingency
+  `P.SAOL31RONCI`). Diagnostic logging added so a future stale-flow
+  regression in upstream `expert_op4grid_recommender` shows up as
+  `max|Δp1|=0.00` in the backend log line.
+- **Spurious f-string prefixes** (commit `46b12a4`): two assertion
+  messages tagged `f""` without `{…}` placeholders tripped
+  `ruff F541` on CI; cascaded into the
+  "Publish report to workflow summary" step which expected
+  `reports/code-quality.md` to exist.
 
 ### Documentation
 
