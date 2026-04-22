@@ -12,7 +12,13 @@
  * jsdom.
  */
 
-import type { ActionDetail, MetadataIndex, NodeMeta } from '../../types';
+import type {
+    ActionDetail,
+    ActionSeverityCategory,
+    MetadataIndex,
+    NodeMeta,
+    UnsimulatedActionScoreInfo,
+} from '../../types';
 import { getActionTargetLines, getActionTargetVoltageLevels } from './highlights';
 
 export interface ActionPinInfo {
@@ -22,6 +28,20 @@ export interface ActionPinInfo {
     severity: 'green' | 'orange' | 'red' | 'grey';
     label: string;
     title: string;
+    /**
+     * When true this pin represents an action from the scored table
+     * that has NOT yet been simulated. Rendered with a dashed outline
+     * and reduced opacity, and double-clicking it kicks off a manual
+     * simulation (the same code path as the Manual Selection dropdown).
+     */
+    unsimulated?: boolean;
+    /**
+     * When true this pin was filtered out by the overview header
+     * filter but kept visible because a passing combined action
+     * references it. Rendered with reduced opacity so it reads as
+     * a context pin rather than a first-class action.
+     */
+    dimmedByFilter?: boolean;
 }
 
 /**
@@ -87,6 +107,31 @@ export const computeActionSeverity = (
     if (details.max_rho > monitoringFactor) return 'red';
     if (details.max_rho > monitoringFactor - 0.05) return 'orange';
     return 'green';
+};
+
+/**
+ * Predicate used by both the overview (pin visibility) and the sidebar
+ * ActionFeed (card visibility) to decide whether an action passes the
+ * active category + threshold filters.
+ *
+ * - `categoryEnabled` controls the four severity buckets (green / orange
+ *   / red / grey); if the action's bucket is disabled, it is hidden.
+ * - `threshold` is a max-loading cap: actions whose `max_rho` is
+ *   **strictly greater** than the threshold are hidden. Actions with a
+ *   null `max_rho` (divergent / islanded — all in the 'grey' bucket)
+ *   bypass the threshold so the operator keeps seeing non-numeric
+ *   outcomes when the grey category is enabled.
+ */
+export const actionPassesOverviewFilter = (
+    details: ActionDetail,
+    monitoringFactor: number,
+    categoryEnabled: Record<ActionSeverityCategory, boolean>,
+    threshold: number,
+): boolean => {
+    const severity = computeActionSeverity(details, monitoringFactor);
+    if (!categoryEnabled[severity]) return false;
+    if (details.max_rho != null && details.max_rho > threshold) return false;
+    return true;
 };
 
 /**
@@ -230,12 +275,21 @@ export const fanOutColocatedPins = (pins: ActionPinInfo[], offsetRadius = 30 * 1
 /**
  * Build the list of pin descriptors for the action-overview view.
  * Pure function — no DOM access — so it can be unit-tested.
+ *
+ * When `overviewFilter` is provided, pins whose action does not pass
+ * the active category + threshold filters are dropped. The same
+ * predicate drives the ActionFeed card filtering, keeping the two
+ * views in lock-step.
  */
 export const buildActionOverviewPins = (
     actions: Record<string, ActionDetail>,
     metaIndex: MetadataIndex,
     monitoringFactor: number,
     filterIds?: Iterable<string>,
+    overviewFilter?: {
+        categories: Record<ActionSeverityCategory, boolean>;
+        threshold: number;
+    } | null,
 ): ActionPinInfo[] => {
     const allowed = filterIds ? new Set(filterIds) : null;
     const pins: ActionPinInfo[] = [];
@@ -245,12 +299,102 @@ export const buildActionOverviewPins = (
         // rendered separately by buildCombinedActionPins with a curved
         // connection between their constituent unitary pins.
         if (actionId.includes('+')) continue;
+        if (overviewFilter && !actionPassesOverviewFilter(
+            details, monitoringFactor, overviewFilter.categories, overviewFilter.threshold,
+        )) continue;
         const anchor = resolveActionAnchor(actionId, details, metaIndex);
         if (!anchor) continue;
         const severity = computeActionSeverity(details, monitoringFactor);
         const label = formatPinLabel(details);
         const title = formatPinTitle(actionId, details);
         pins.push({ id: actionId, x: anchor.x, y: anchor.y, severity, label, title });
+    }
+
+    fanOutColocatedPins(pins);
+    return pins;
+};
+
+/**
+ * Format the SVG-title tooltip shown on hover for an un-simulated pin.
+ * When {@link scoreInfo} is provided the tooltip carries the same
+ * score-table data the Manual Selection dropdown exposes (type,
+ * score, rank in category, MW/tap start), so the operator can triage
+ * without leaving the overview. Falls back to a generic prompt when
+ * score info is absent (e.g. older session reloads).
+ */
+const buildUnsimulatedPinTitle = (
+    id: string,
+    info: UnsimulatedActionScoreInfo | undefined,
+): string => {
+    if (!info) {
+        return `${id} — not yet simulated (double-click to run)`;
+    }
+    const lines: string[] = [
+        `${id} — not yet simulated (double-click to run)`,
+        `Type: ${info.type}`,
+        `Score: ${info.score.toFixed(2)} — rank ${info.rankInType} of ${info.countInType} (max ${info.maxScoreInType.toFixed(2)})`,
+    ];
+    if (info.mwStart != null) {
+        lines.push(`MW start: ${info.mwStart.toFixed(1)} MW`);
+    }
+    if (info.tapStart) {
+        const ts = info.tapStart;
+        const range = ts.low_tap != null && ts.high_tap != null
+            ? ` (range ${ts.low_tap} … ${ts.high_tap})`
+            : '';
+        lines.push(`Tap start: ${ts.tap}${range}`);
+    }
+    return lines.join('\n');
+};
+
+/**
+ * Build pin descriptors for actions that appear in the score table but
+ * have NOT yet been simulated. These are rendered as dimmed, dashed
+ * pins the operator can double-click to trigger a manual simulation.
+ *
+ * An unsimulated action has no `ActionDetail`, so anchoring goes
+ * through `resolveActionAnchor` with a minimal stub; the helper
+ * internally falls back on edge/VL lookups based on the id alone,
+ * which matches what the score table does for line / coupling / PST
+ * actions. Items that cannot be resolved are silently skipped.
+ *
+ * Pins whose id is already present in `simulatedIds` are skipped so
+ * we never double-pin an action that is both scored and simulated.
+ *
+ * Pure function — no DOM access.
+ */
+export const buildUnsimulatedActionPins = (
+    scoredActionIds: readonly string[],
+    simulatedIds: ReadonlySet<string>,
+    metaIndex: MetadataIndex,
+    scoreInfo?: Readonly<Record<string, UnsimulatedActionScoreInfo>>,
+): ActionPinInfo[] => {
+    const pins: ActionPinInfo[] = [];
+    const seen = new Set<string>();
+    const stub: ActionDetail = {
+        description_unitaire: '',
+        rho_before: null,
+        rho_after: null,
+        max_rho: null,
+        max_rho_line: '',
+        is_rho_reduction: false,
+    };
+    for (const rawId of scoredActionIds) {
+        const id = rawId.trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        if (simulatedIds.has(id)) continue;
+        const anchor = resolveActionAnchor(id, stub, metaIndex);
+        if (!anchor) continue;
+        pins.push({
+            id,
+            x: anchor.x,
+            y: anchor.y,
+            severity: 'grey',
+            label: '?',
+            title: buildUnsimulatedPinTitle(id, scoreInfo?.[id]),
+            unsimulated: true,
+        });
     }
 
     fanOutColocatedPins(pins);

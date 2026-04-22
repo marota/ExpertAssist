@@ -457,6 +457,9 @@ export type InteractionType =
     | 'overview_zoom_out'
     | 'overview_zoom_fit'
     | 'overview_inspect_changed'
+    | 'overview_filter_changed'
+    | 'overview_unsimulated_toggled'
+    | 'overview_unsimulated_pin_simulated'
     // Session Management
     | 'session_saved'
     | 'session_reload_modal_opened'
@@ -469,4 +472,63 @@ export interface InteractionLogEntry {
     details: Record<string, unknown>;
     correlation_id?: string;
     duration_ms?: number;
+}
+
+// ===== Action Overview Filters =====
+
+export type ActionSeverityCategory = 'green' | 'orange' | 'red' | 'grey';
+
+/**
+ * Action-type chip filter value. 'all' means no restriction, the
+ * other tokens map 1:1 to the action-type buckets surfaced by
+ * `classifyActionType` (see `utils/actionTypes.ts`).
+ */
+export type ActionTypeFilterToken = 'all' | 'disco' | 'reco' | 'ls' | 'rc' | 'open' | 'close' | 'pst';
+
+export interface ActionOverviewFilters {
+    categories: Record<ActionSeverityCategory, boolean>;
+    /**
+     * Only display actions whose max_rho (loading rate) is strictly below
+     * this threshold. Expressed as a ratio (1.5 == 150%). Applied to both
+     * the overview pins and the sidebar action feed cards. Actions whose
+     * max_rho is null (divergent / islanded) are always shown when the
+     * "grey" category is enabled and ignore the threshold.
+     */
+    threshold: number;
+    /** When true, un-simulated scored actions are drawn as dimmed pins. */
+    showUnsimulated: boolean;
+    /**
+     * Single-select action-type filter (DISCO / RECO / LS / RC / OPEN
+     * / CLOSE / PST). 'all' disables the filter. Applied to both the
+     * overview pins and the sidebar action feed cards so the two views
+     * stay in sync regardless of which chip row the operator uses.
+     */
+    actionType: ActionTypeFilterToken;
+}
+
+/**
+ * Enriched info for an un-simulated scored action — derived from
+ * `action_scores` in App.tsx and forwarded to the overview so the
+ * dimmed pin tooltip can show the same score-table data the Manual
+ * Selection dropdown exposes.
+ */
+export interface UnsimulatedActionScoreInfo {
+    /** Action-score bucket (e.g. "line_disconnection", "pst_tap_change"). */
+    type: string;
+    score: number;
+    /** Starting MW for load-shedding / renewable-curtailment actions. */
+    mwStart?: number | null;
+    /** Starting tap for PST actions. */
+    tapStart?: {
+        pst_name: string;
+        tap: number;
+        low_tap: number | null;
+        high_tap: number | null;
+    } | null;
+    /** 1-based rank inside the action's type bucket (1 = highest score). */
+    rankInType: number;
+    /** Number of actions in the type bucket — used to print "rank X of Y". */
+    countInType: number;
+    /** Highest score in the type bucket. */
+    maxScoreInType: number;
 }

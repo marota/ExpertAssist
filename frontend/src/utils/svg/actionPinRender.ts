@@ -253,6 +253,16 @@ export interface ApplyPinsOptions {
     selectedActionIds?: Set<string>;
     rejectedActionIds?: Set<string>;
     combinedPins?: readonly CombinedPinInfo[];
+    /**
+     * Dimmed, dashed pins for scored-but-not-yet-simulated actions.
+     * Rendered with their own double-click handler
+     * ({@link onUnsimulatedPinDoubleClick}) so that a drill-down gesture
+     * on one of them kicks off a manual simulation instead of the
+     * action-variant view.
+     */
+    unsimulatedPins?: readonly ActionPinInfo[];
+    /** Fires when an unsimulated pin is double-clicked. */
+    onUnsimulatedPinDoubleClick?: (actionId: string) => void;
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -336,9 +346,13 @@ const resolvePinFill = (
     severity: ActionPinInfo['severity'],
     isSelected: boolean,
     isRejected: boolean,
+    isDimmedByFilter: boolean = false,
 ): { fill: string; stroke?: string } => {
     if (isSelected) return { fill: severityFillHighlighted[severity], stroke: '#eab308' };
-    if (isRejected) return { fill: severityFillDimmed[severity] };
+    // Filter-dimmed constituents reuse the same washed-out palette as
+    // rejected pins so the operator reads them as "context, not a
+    // first-class action" at a glance.
+    if (isRejected || isDimmedByFilter) return { fill: severityFillDimmed[severity] };
     return { fill: severityFill[severity] };
 };
 
@@ -434,6 +448,7 @@ const renderUnitaryPin = (
     g.setAttribute('class', 'nad-action-overview-pin');
     g.setAttribute('transform', `translate(${pin.x} ${pin.y})`);
     g.setAttribute('data-action-id', pin.id);
+    if (pin.dimmedByFilter) g.setAttribute('data-dimmed-by-filter', 'true');
     (g as unknown as SVGGElement).style.cursor = 'pointer';
 
     const body = document.createElementNS(SVG_NS, 'g');
@@ -441,7 +456,7 @@ const renderUnitaryPin = (
     body.setAttribute('transform', 'scale(1)');
     g.appendChild(body);
 
-    const { fill, stroke } = resolvePinFill(pin.severity, isSelected, isRejected);
+    const { fill, stroke } = resolvePinFill(pin.severity, isSelected, isRejected, !!pin.dimmedByFilter);
     const strokeWidth = isSelected ? r * 0.12 : undefined;
 
     const R = r;
@@ -468,11 +483,66 @@ const renderUnitaryPin = (
         body.appendChild(crossEl);
     }
 
+    // Dim the whole pin group for rejected OR filter-dimmed actions.
+    // Filter-dimmed pins are kept alive only because a passing combined
+    // action anchors on them, so they must read as context, not as
+    // first-class actions.
     if (isRejected) {
         g.setAttribute('opacity', '0.55');
+    } else if (pin.dimmedByFilter) {
+        g.setAttribute('opacity', '0.4');
     }
 
     attachPinClickListeners(g, pin.id, onPinClick, onPinDoubleClick);
+    frag.appendChild(g);
+};
+
+/**
+ * Render a scored-but-not-simulated action pin. Rendered with a dashed
+ * stroke + reduced opacity so it reads as a "preview" glyph the
+ * operator can promote to a real simulation with a double-click.
+ * Uses the 'grey' severity palette since we have no rho_after yet.
+ */
+const renderUnsimulatedPin = (
+    frag: DocumentFragment,
+    pin: ActionPinInfo,
+    r: number,
+    labelFont: number,
+    onPinClick: (actionId: string, screenPos: { x: number; y: number }) => void,
+    onUnsimulatedPinDoubleClick: ((actionId: string) => void) | undefined,
+    onPinDoubleClick: ((actionId: string) => void) | undefined,
+) => {
+    const g = document.createElementNS(SVG_NS, 'g');
+    g.setAttribute('class', 'nad-action-overview-pin nad-action-overview-pin-unsimulated');
+    g.setAttribute('transform', `translate(${pin.x} ${pin.y})`);
+    g.setAttribute('data-action-id', pin.id);
+    g.setAttribute('data-unsimulated', 'true');
+    g.setAttribute('opacity', '0.5');
+    (g as unknown as SVGGElement).style.cursor = 'pointer';
+
+    const body = document.createElementNS(SVG_NS, 'g');
+    body.setAttribute('class', 'nad-action-overview-pin-body');
+    body.setAttribute('transform', 'scale(1)');
+    g.appendChild(body);
+
+    const fill = severityFillDimmed[pin.severity];
+    buildPinGlyph(body, r, labelFont, fill, pin.label, pin.title, '#6b7280', r * 0.08);
+
+    // Override the stroke with a dashed pattern to visually
+    // distinguish un-simulated pins from the solid-outline simulated
+    // ones.
+    const pinPath = body.querySelector('path');
+    if (pinPath) {
+        pinPath.setAttribute('stroke-dasharray', `${r * 0.35} ${r * 0.2}`);
+    }
+
+    // Double-click runs a manual simulation; single click still opens
+    // the (minimal) preview popover via onPinClick so the operator
+    // gets identical affordances to the simulated pins.
+    attachPinClickListeners(
+        g, pin.id, onPinClick,
+        onUnsimulatedPinDoubleClick ?? onPinDoubleClick,
+    );
     frag.appendChild(g);
 };
 
@@ -496,7 +566,9 @@ export const applyActionOverviewPins = (
     svg.querySelectorAll('.nad-action-overview-pins').forEach(el => el.remove());
 
     const combinedPins = opts?.combinedPins ?? [];
-    if (pins.length === 0 && combinedPins.length === 0) return;
+    const unsimulatedPins = opts?.unsimulatedPins ?? [];
+    const onUnsimulatedPinDoubleClick = opts?.onUnsimulatedPinDoubleClick;
+    if (pins.length === 0 && combinedPins.length === 0 && unsimulatedPins.length === 0) return;
 
     const selectedIds = opts?.selectedActionIds;
     const rejectedIds = opts?.rejectedActionIds;
@@ -526,6 +598,9 @@ export const applyActionOverviewPins = (
     );
     pins.forEach(pin =>
         renderUnitaryPin(frag, pin, r, labelFont, selectedIds, rejectedIds, onPinClick, onPinDoubleClick),
+    );
+    unsimulatedPins.forEach(pin =>
+        renderUnsimulatedPin(frag, pin, r, labelFont, onPinClick, onUnsimulatedPinDoubleClick, onPinDoubleClick),
     );
 
     layer.appendChild(frag);

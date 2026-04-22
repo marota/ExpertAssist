@@ -6,7 +6,9 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData } from '../types';
+import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData, ActionOverviewFilters } from '../types';
+import { actionPassesOverviewFilter } from '../utils/svgUtils';
+import { classifyActionType, matchesActionTypeFilter } from '../utils/actionTypes';
 import { api } from '../api';
 import { interactionLogger } from '../utils/interactionLogger';
 import CombinedActionsModal from './CombinedActionsModal';
@@ -67,6 +69,14 @@ interface ActionFeedProps {
     /** Current voltage-levels count, forwarded to the primer callback's
      * `processSvg` pass. Unused when onActionDiagramPrimed is absent. */
     voltageLevelsLength?: number;
+    /**
+     * Shared category + threshold filters from the Remedial Action
+     * overview. When provided, action cards whose severity bucket is
+     * disabled OR whose max_rho exceeds the threshold are hidden from
+     * the Suggested / Rejected / Selected lists — so the operator
+     * sees the same set of actions on the overview and in the feed.
+     */
+    overviewFilters?: ActionOverviewFilters;
 }
 
 const ActionFeed: React.FC<ActionFeedProps> = ({
@@ -103,6 +113,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     displayName = (id: string) => id,
     onActionDiagramPrimed,
     voltageLevelsLength,
+    overviewFilters,
 }) => {
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -224,35 +235,25 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         setTimeout(() => searchInputRef.current?.focus(), 50);
     };
 
-    // Filter actions for dropdown
+    // Filter actions for dropdown. Delegates bucket classification
+    // to the shared `classifyActionType` so the manual-selection
+    // search row and the overview chip row share a single source of
+    // truth (including the line-vs-coupling distinction).
     const filteredActions = useMemo(() => {
         const q = searchQuery.toLowerCase();
         const alreadyShown = new Set(Object.keys(actions));
         return availableActions
             .filter(a => !alreadyShown.has(a.id))
             .filter(a => {
-                const t = (a.type || 'unknown').toLowerCase();
-                const actionId = a.id.toLowerCase();
-                const actionDesc = (a.description || '').toLowerCase();
-
-                const isDisco = t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture');
-                const isReco = t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture');
-                const isOpenCoupling = t.includes('open_coupling');
-                const isCloseCoupling = t.includes('close_coupling');
-                const isPstAction = (actionId.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
-                const isLoadShedding = (actionId.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
-                const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
-
-                if (isDisco) return typeFilters.disco;
-                if (isReco) return typeFilters.reco;
-                if (isOpenCoupling) return typeFilters.open;
-                if (isCloseCoupling) return typeFilters.close;
-                if (isPstAction) return typeFilters.pst;
-                if (isLoadShedding) return typeFilters.ls;
-                if (isRenewableCurtailment) return typeFilters.rc;
-
-                // Handle unknown or categories not explicitly listed above
-                return typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst;
+                const bucket = classifyActionType(a.id, a.description || null, a.type || null);
+                if (bucket === 'unknown') {
+                    // Unknown buckets fall back to "show only when
+                    // every filter is on" — same behaviour as before.
+                    return typeFilters.disco && typeFilters.reco
+                        && typeFilters.open && typeFilters.close
+                        && typeFilters.pst;
+                }
+                return typeFilters[bucket];
             })
             .filter(a => a.id.toLowerCase().includes(q) || (a.description || '').toLowerCase().includes(q))
             .slice(0, 20);
@@ -287,30 +288,21 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
 
             const scores = data?.scores || {};
             for (const [actionId, score] of Object.entries(scores)) {
-                // Determine if this specific action should be filtered out
                 const actionDetail = actions[actionId];
-                const actionDesc = (actionDetail?.description_unitaire || '').toLowerCase();
-                const aid = actionId.toLowerCase();
-                const t = type.toLowerCase();
-
-                const isDisco = t.includes('disco') || t.includes('open_line') || t.includes('open_load') || actionDesc.includes('ouverture');
-                const isReco = t.includes('reco') || t.includes('close_line') || t.includes('close_load') || actionDesc.includes('fermeture');
-                const isOpenCoupling = t.includes('open_coupling');
-                const isCloseCoupling = t.includes('close_coupling');
-                const isPstAction = (aid.includes('pst') || actionDesc.includes('pst') || t.includes('pst')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling;
-                const isLoadShedding = (aid.includes('load_shedding') || actionDesc.includes('load shedding') || t.includes('load_shedding')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction;
-                const isRenewableCurtailment = (t.includes('renewable_curtailment') || t.includes('open_gen')) && !isDisco && !isReco && !isOpenCoupling && !isCloseCoupling && !isPstAction && !isLoadShedding;
-
-                let shouldShow = false;
-                if (isDisco) shouldShow = typeFilters.disco;
-                else if (isReco) shouldShow = typeFilters.reco;
-                else if (isOpenCoupling) shouldShow = typeFilters.open;
-                else if (isCloseCoupling) shouldShow = typeFilters.close;
-                else if (isPstAction) shouldShow = typeFilters.pst;
-                else if (isLoadShedding) shouldShow = typeFilters.ls;
-                else if (isRenewableCurtailment) shouldShow = typeFilters.rc;
-                else shouldShow = typeFilters.disco && typeFilters.reco && typeFilters.open && typeFilters.close && typeFilters.pst && typeFilters.ls && typeFilters.rc;
-
+                // Same shared classifier as the search dropdown so
+                // the two views agree on bucket membership (e.g. a
+                // line-opening DJ_OC whose description has
+                // "dans le poste" is DISCO, not OPEN).
+                const bucket = classifyActionType(
+                    actionId,
+                    actionDetail?.description_unitaire || null,
+                    type,
+                );
+                const shouldShow = bucket === 'unknown'
+                    ? (typeFilters.disco && typeFilters.reco
+                        && typeFilters.open && typeFilters.close
+                        && typeFilters.pst && typeFilters.ls && typeFilters.rc)
+                    : typeFilters[bucket];
                 if (!shouldShow) continue;
 
                 const mwStartMap = (data as { mw_start?: Record<string, number | null> })?.mw_start;
@@ -550,11 +542,45 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
         return Object.entries(actions)
             .filter(([id, details]) => {
                 const isCombined = id.includes('+');
-                if (!isCombined) return true;
-                // Only show combined if it has been fully simulated (not just estimated)
-                // Simulated actions will NOT have the is_estimated flag set.
-                if (details.is_estimated) return false;
-                return details.rho_after && details.rho_after.length > 0;
+                if (isCombined) {
+                    // Only show combined if it has been fully simulated (not just estimated)
+                    // Simulated actions will NOT have the is_estimated flag set.
+                    if (details.is_estimated) return false;
+                    if (!details.rho_after || details.rho_after.length === 0) return false;
+                }
+                // Shared overview filter: hide cards whose severity or
+                // max_rho falls outside the active category/threshold
+                // picked from the overview header. We skip the filter
+                // when overviewFilters is undefined so isolated tests
+                // (which don't wire it) keep their existing behaviour.
+                if (overviewFilters && !actionPassesOverviewFilter(
+                    details, monitoringFactor,
+                    overviewFilters.categories, overviewFilters.threshold,
+                )) return false;
+                // Shared action-type chip filter. Combined actions
+                // (key contains '+') are considered in scope when
+                // EITHER constituent matches — they're inherently
+                // multi-type, so hiding them because only one side
+                // matches would surprise the operator.
+                // `actionType ?? 'all'` keeps legacy call sites that
+                // don't yet set the field (older session reloads /
+                // tests) behaving as "no type filter".
+                const typeFilter = overviewFilters?.actionType ?? 'all';
+                if (typeFilter !== 'all') {
+                    if (id.includes('+')) {
+                        const [id1, id2] = id.split('+');
+                        const d1 = actions[id1];
+                        const d2 = actions[id2];
+                        const ok = (d1 && matchesActionTypeFilter(typeFilter, id1, d1.description_unitaire, null))
+                            || (d2 && matchesActionTypeFilter(typeFilter, id2, d2.description_unitaire, null));
+                        if (!ok) return false;
+                    } else if (!matchesActionTypeFilter(
+                        typeFilter, id, details.description_unitaire, null,
+                    )) {
+                        return false;
+                    }
+                }
+                return true;
             })
             .sort(([, a], [, b]) => {
                 const aIslanded = !!a.is_islanded;
@@ -562,7 +588,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 if (aIslanded !== bIslanded) return aIslanded ? 1 : -1;
                 return (a.max_rho ?? 999) - (b.max_rho ?? 999);
             });
-    }, [actions]);
+    }, [actions, overviewFilters, monitoringFactor]);
 
     const analysisActionIds = useMemo(() => {
         const ids = new Set<string>();
