@@ -29,6 +29,7 @@ import { useTiedTabsSync, type PZInstance } from './hooks/useTiedTabsSync';
 import { useN1Fetch } from './hooks/useN1Fetch';
 import { useDiagramHighlights } from './hooks/useDiagramHighlights';
 import { interactionLogger } from './utils/interactionLogger';
+import { DEFAULT_ACTION_OVERVIEW_FILTERS } from './utils/actionTypes';
 
 function App() {
   // ===== Settings Hook =====
@@ -172,12 +173,7 @@ function App() {
   // un-simulated pins on ActionOverviewDiagram and (b) the card
   // visibility in the sidebar ActionFeed, so both views stay in
   // lock-step regardless of which entry point the operator uses.
-  const [overviewFilters, setOverviewFilters] = useState<ActionOverviewFilters>({
-    categories: { green: true, orange: true, red: true, grey: true },
-    threshold: 1.5,
-    showUnsimulated: false,
-    actionType: 'all',
-  });
+  const [overviewFilters, setOverviewFilters] = useState<ActionOverviewFilters>(DEFAULT_ACTION_OVERVIEW_FILTERS);
 
   // Flat list of action ids that appear in `action_scores` but are
   // not yet simulated. Feeds ActionOverviewDiagram's un-simulated pin

@@ -5,10 +5,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import type { ActionDetail, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData, ActionOverviewFilters } from '../types';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import type { ActionDetail, ActionTypeFilterToken, NodeMeta, EdgeMeta, AvailableAction, AnalysisResult, CombinedAction, RecommenderDisplayConfig, DiagramData, ActionOverviewFilters } from '../types';
 import { actionPassesOverviewFilter } from '../utils/svgUtils';
-import { classifyActionType, matchesActionTypeFilter } from '../utils/actionTypes';
+import { classifyActionType, matchesActionTypeFilter, DEFAULT_ACTION_OVERVIEW_FILTERS } from '../utils/actionTypes';
 import { api } from '../api';
 import { interactionLogger } from '../utils/interactionLogger';
 import CombinedActionsModal from './CombinedActionsModal';
@@ -242,6 +242,18 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
     // search row and the overview chip row share a single source of
     // truth (including the line-vs-coupling distinction).
     const activeTypeFilter = overviewFilters?.actionType ?? 'all';
+
+    // Called by both the chip row in the search dropdown AND the
+    // chip row in the Explore-Pairs tab of CombinedActionsModal:
+    // patches only the `actionType` field of the shared
+    // overviewFilters object, preserving categories / threshold /
+    // showUnsimulated.
+    const handleActionTypeChange = useCallback((token: ActionTypeFilterToken) => {
+        onOverviewFiltersChange?.({
+            ...(overviewFilters ?? DEFAULT_ACTION_OVERVIEW_FILTERS),
+            actionType: token,
+        });
+    }, [overviewFilters, onOverviewFiltersChange]);
     const filteredActions = useMemo(() => {
         const q = searchQuery.toLowerCase();
         const alreadyShown = new Set(Object.keys(actions));
@@ -737,10 +749,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                         searchQuery={searchQuery}
                         onSearchQueryChange={setSearchQuery}
                         actionTypeFilter={activeTypeFilter}
-                        onActionTypeFilterChange={(token) => onOverviewFiltersChange?.({
-                            ...(overviewFilters ?? { categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'all' }),
-                            actionType: token,
-                        })}
+                        onActionTypeFilterChange={handleActionTypeChange}
                         error={error}
                         loadingActions={loadingActions}
                         scoredActionsList={scoredActionsList}
@@ -1006,10 +1015,7 @@ const ActionFeed: React.FC<ActionFeedProps> = ({
                 linesOverloaded={linesOverloaded}
                 displayName={displayName}
                 actionTypeFilter={activeTypeFilter}
-                onActionTypeFilterChange={(token) => onOverviewFiltersChange?.({
-                    ...(overviewFilters ?? { categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'all' }),
-                    actionType: token,
-                })}
+                onActionTypeFilterChange={handleActionTypeChange}
             />
         </div>
     );

@@ -118,6 +118,37 @@ describe('CombinedActionsModal', () => {
         expect(screen.queryByText('disco1')).not.toBeInTheDocument();
     });
 
+    it('respects an initial actionTypeFilter prop without requiring a click', () => {
+        const resultWithTypes: AnalysisResult = {
+            ...mockAnalysisResult,
+            actions: {
+                ...mockAnalysisResult.actions,
+                'disco1': { description_unitaire: 'Disco 1', max_rho: 0.8, rho_before: [0.8], rho_after: [0.7], max_rho_line: 'L1', is_rho_reduction: true, action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} } },
+                'reco1': { description_unitaire: 'Reco 1', max_rho: 0.9, rho_before: [0.9], rho_after: [0.8], max_rho_line: 'L2', is_rho_reduction: true, action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} } },
+            },
+            action_scores: {
+                'disco': { scores: { 'disco1': 10 } },
+                'reco': { scores: { 'reco1': 20 } },
+            },
+        };
+        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes} actionTypeFilter="disco" />);
+        fireEvent.click(getExploreTab());
+        expect(screen.getByText('disco1')).toBeInTheDocument();
+        expect(screen.queryByText('reco1')).not.toBeInTheDocument();
+    });
+
+    it('forwards onActionTypeFilterChange to the ExplorePairsTab chip row', () => {
+        const onActionTypeFilterChange = vi.fn();
+        render(<CombinedActionsModal
+            {...defaultProps}
+            actionTypeFilter="all"
+            onActionTypeFilterChange={onActionTypeFilterChange}
+        />);
+        fireEvent.click(getExploreTab());
+        fireEvent.click(screen.getByTestId('explore-pairs-filter-disco'));
+        expect(onActionTypeFilterChange).toHaveBeenCalledWith('disco');
+    });
+
     it('groups actions by type in explore tab table including LS', async () => {
         const resultWithLS: AnalysisResult = {
             ...mockAnalysisResult,

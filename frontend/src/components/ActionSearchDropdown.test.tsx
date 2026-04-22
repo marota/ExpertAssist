@@ -63,6 +63,13 @@ describe('ActionSearchDropdown', () => {
         expect(onActionTypeFilterChange).toHaveBeenCalledWith('pst');
     });
 
+    it('marks the active chip with aria-pressed="true"', () => {
+        render(<ActionSearchDropdown {...defaultProps} actionTypeFilter="disco" />);
+        expect(screen.getByTestId('search-dropdown-filter-disco').getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByTestId('search-dropdown-filter-all').getAttribute('aria-pressed')).toBe('false');
+        expect(screen.getByTestId('search-dropdown-filter-pst').getAttribute('aria-pressed')).toBe('false');
+    });
+
     it('calls onSearchQueryChange when input changes', () => {
         const onSearchQueryChange = vi.fn();
         render(<ActionSearchDropdown {...defaultProps} onSearchQueryChange={onSearchQueryChange} />);

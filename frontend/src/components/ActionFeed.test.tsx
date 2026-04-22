@@ -31,6 +31,9 @@ vi.mock('../utils/svgUtils', () => ({
     applyActionTargetHighlights: vi.fn(),
     applyContingencyHighlight: vi.fn(),
     isCouplingAction: vi.fn(() => false),
+    // Always passing the severity/threshold gate isolates the
+    // action-type filter tests from the category/threshold filter.
+    actionPassesOverviewFilter: vi.fn(() => true),
 }));
 
 import ActionFeed from './ActionFeed';
@@ -2638,6 +2641,157 @@ describe('ActionFeed', () => {
                 expect(api.simulateManualAction).toHaveBeenCalledTimes(1);
             });
             expect(api.simulateAndVariantDiagramStream).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('shared action-type filter (overviewFilters.actionType)', () => {
+        const makeFilter = (actionType: 'all' | 'disco' | 'reco' | 'ls' | 'rc' | 'open' | 'close' | 'pst') => ({
+            categories: { green: true, orange: true, red: true, grey: true },
+            threshold: 1.5,
+            showUnsimulated: false,
+            actionType,
+        });
+
+        const actionsMix: Record<string, ActionDetail> = {
+            disco_LINE_A: {
+                description_unitaire: 'Ouverture de la ligne LINE_A',
+                rho_before: [1.1],
+                rho_after: [0.9],
+                max_rho: 0.9,
+                max_rho_line: 'LINE_A',
+                is_rho_reduction: true,
+                action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} },
+            },
+            reco_LINE_B: {
+                description_unitaire: 'Fermeture de la ligne LINE_B',
+                rho_before: [1.2],
+                rho_after: [0.95],
+                max_rho: 0.95,
+                max_rho_line: 'LINE_B',
+                is_rho_reduction: true,
+                action_topology: { lines_ex_bus: {}, lines_or_bus: {}, gens_bus: {}, loads_bus: {} },
+            },
+        };
+
+        it('hides cards of the other bucket in the Selected list when actionType is "disco"', () => {
+            render(<ActionFeed
+                {...defaultProps}
+                actions={actionsMix}
+                selectedActionIds={new Set(['disco_LINE_A', 'reco_LINE_B'])}
+                overviewFilters={makeFilter('disco')}
+            />);
+            expect(screen.getByTestId('action-card-disco_LINE_A')).toBeInTheDocument();
+            expect(screen.queryByTestId('action-card-reco_LINE_B')).not.toBeInTheDocument();
+        });
+
+        it('shows every card when actionType is "all"', () => {
+            render(<ActionFeed
+                {...defaultProps}
+                actions={actionsMix}
+                selectedActionIds={new Set(['disco_LINE_A', 'reco_LINE_B'])}
+                overviewFilters={makeFilter('all')}
+            />);
+            expect(screen.getByTestId('action-card-disco_LINE_A')).toBeInTheDocument();
+            expect(screen.getByTestId('action-card-reco_LINE_B')).toBeInTheDocument();
+        });
+
+        it('falls back to showing every card when overviewFilters is undefined', () => {
+            // No overviewFilters prop → activeTypeFilter defaults to 'all'.
+            render(<ActionFeed
+                {...defaultProps}
+                actions={actionsMix}
+                selectedActionIds={new Set(['disco_LINE_A', 'reco_LINE_B'])}
+            />);
+            expect(screen.getByTestId('action-card-disco_LINE_A')).toBeInTheDocument();
+            expect(screen.getByTestId('action-card-reco_LINE_B')).toBeInTheDocument();
+        });
+
+        it('calls onOverviewFiltersChange with the merged filter object when a dropdown chip is clicked', async () => {
+            const onOverviewFiltersChange = vi.fn();
+            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
+            render(<ActionFeed
+                {...defaultProps}
+                overviewFilters={makeFilter('all')}
+                onOverviewFiltersChange={onOverviewFiltersChange}
+            />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            // Wait for the dropdown chip row to render
+            const discoChip = await screen.findByTestId('search-dropdown-filter-disco');
+            fireEvent.click(discoChip);
+            expect(onOverviewFiltersChange).toHaveBeenCalledTimes(1);
+            const patched = onOverviewFiltersChange.mock.calls[0][0];
+            // Only `actionType` should change; the other fields are preserved.
+            expect(patched).toEqual({
+                categories: { green: true, orange: true, red: true, grey: true },
+                threshold: 1.5,
+                showUnsimulated: false,
+                actionType: 'disco',
+            });
+        });
+
+        it('preserves non-default category/threshold values when patching only actionType', async () => {
+            const onOverviewFiltersChange = vi.fn();
+            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
+            render(<ActionFeed
+                {...defaultProps}
+                overviewFilters={{
+                    categories: { green: false, orange: true, red: false, grey: false },
+                    threshold: 2.0,
+                    showUnsimulated: true,
+                    actionType: 'all',
+                }}
+                onOverviewFiltersChange={onOverviewFiltersChange}
+            />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            const pstChip = await screen.findByTestId('search-dropdown-filter-pst');
+            fireEvent.click(pstChip);
+            expect(onOverviewFiltersChange.mock.calls[0][0]).toEqual({
+                categories: { green: false, orange: true, red: false, grey: false },
+                threshold: 2.0,
+                showUnsimulated: true,
+                actionType: 'pst',
+            });
+        });
+
+        it('marks the active chip with aria-pressed="true" in the search dropdown', async () => {
+            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
+            render(<ActionFeed
+                {...defaultProps}
+                overviewFilters={makeFilter('ls')}
+            />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            const lsChip = await screen.findByTestId('search-dropdown-filter-ls');
+            expect(lsChip.getAttribute('aria-pressed')).toBe('true');
+            expect(screen.getByTestId('search-dropdown-filter-all').getAttribute('aria-pressed')).toBe('false');
+        });
+
+        it('filters the Scored Actions table by actionType', async () => {
+            const actionScores = {
+                line_disconnection: { scores: { disco_LINE_A: 10 } },
+                line_reconnection: { scores: { reco_LINE_B: 20 } },
+            };
+            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
+            render(<ActionFeed
+                {...defaultProps}
+                actionScores={actionScores}
+                overviewFilters={makeFilter('disco')}
+            />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            expect(await screen.findByText('disco_LINE_A')).toBeInTheDocument();
+            expect(screen.queryByText('reco_LINE_B')).not.toBeInTheDocument();
+        });
+
+        it('swallows chip clicks when onOverviewFiltersChange is not wired', async () => {
+            vi.mocked(api.getAvailableActions).mockResolvedValueOnce([]);
+            render(<ActionFeed
+                {...defaultProps}
+                overviewFilters={makeFilter('all')}
+                // intentionally no onOverviewFiltersChange
+            />);
+            fireEvent.click(screen.getByText('+ Manual Selection'));
+            const discoChip = await screen.findByTestId('search-dropdown-filter-disco');
+            // No throw — the optional handler is guarded with `?.`.
+            expect(() => fireEvent.click(discoChip)).not.toThrow();
         });
     });
 });

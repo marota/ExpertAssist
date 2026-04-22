@@ -201,4 +201,26 @@ describe('ExplorePairsTab', () => {
         render(<ExplorePairsTab {...defaultProps} actionTypeFilter="pst" />);
         expect(screen.getByText(/No scored actions available/)).toBeInTheDocument();
     });
+
+    it('defaults to "all" when actionTypeFilter prop is omitted', () => {
+        // No actionTypeFilter prop — all three actions must appear.
+        render(<ExplorePairsTab {...defaultProps} />);
+        expect(screen.getByText('act1')).toBeInTheDocument();
+        expect(screen.getByText('act2')).toBeInTheDocument();
+        expect(screen.getByText('act3')).toBeInTheDocument();
+    });
+
+    it('marks the active chip with aria-pressed="true"', () => {
+        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="reco" />);
+        const recoChip = screen.getByTestId('explore-pairs-filter-reco');
+        expect(recoChip.getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByTestId('explore-pairs-filter-all').getAttribute('aria-pressed')).toBe('false');
+    });
+
+    it('does not throw when onActionTypeFilterChange is omitted and a chip is clicked', () => {
+        // Legacy call sites may not wire the change handler; clicking
+        // a chip should be a silent no-op rather than crashing.
+        render(<ExplorePairsTab {...defaultProps} />);
+        expect(() => fireEvent.click(screen.getByTestId('explore-pairs-filter-disco'))).not.toThrow();
+    });
 });
