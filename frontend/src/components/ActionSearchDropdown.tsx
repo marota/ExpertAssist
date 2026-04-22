@@ -101,13 +101,13 @@ const ActionSearchDropdown: React.FC<ActionSearchDropdownProps> = ({
                     }}
                 />
             </div>
-            {/* Action type filter chips — single-select, same tokens as the overview. */}
-            <ActionTypeFilterChips
-                testIdPrefix="search-dropdown-filter"
-                value={actionTypeFilter}
-                onChange={onActionTypeFilterChange}
-                style={{ padding: '4px 8px', borderTop: '1px solid #eee' }}
-            />
+            <div style={{ padding: '4px 8px', borderTop: '1px solid #eee' }}>
+                <ActionTypeFilterChips
+                    testIdPrefix="search-dropdown-filter"
+                    value={actionTypeFilter}
+                    onChange={onActionTypeFilterChange}
+                />
+            </div>
             {error && (
                 <div style={{
                     padding: '6px 8px',

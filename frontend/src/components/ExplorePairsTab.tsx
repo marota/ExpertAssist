@@ -99,12 +99,13 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
 
             {/* Filter Buttons — reuses the shared chip row so
                 styling stays in sync with the action-overview filter. */}
-            <ActionTypeFilterChips
-                testIdPrefix="explore-pairs-filter"
-                value={actionTypeFilter}
-                onChange={onActionTypeFilterChange ?? (() => {})}
-                style={{ marginBottom: '12px' }}
-            />
+            <div style={{ marginBottom: '12px' }}>
+                <ActionTypeFilterChips
+                    testIdPrefix="explore-pairs-filter"
+                    value={actionTypeFilter}
+                    onChange={onActionTypeFilterChange ?? (() => {})}
+                />
+            </div>
 
             {/* Grouped Table */}
             <div style={{ flex: 1, maxHeight: '350px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', marginBottom: '15px' }}>
