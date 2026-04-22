@@ -160,17 +160,22 @@ describe('ExplorePairsTab', () => {
         expect(screen.getByText('Superposition failed')).toBeInTheDocument();
     });
 
-    it('filters actions when DISCO filter is clicked', () => {
-        render(<ExplorePairsTab {...defaultProps} />);
-        fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
+    it('shows only DISCO actions when actionTypeFilter is "disco"', () => {
+        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="disco" />);
         expect(screen.getByText('act1')).toBeInTheDocument();
         expect(screen.getByText('act3')).toBeInTheDocument();
         expect(screen.queryByText('act2')).not.toBeInTheDocument();
     });
 
-    it('filters actions when RECO filter is clicked', () => {
-        render(<ExplorePairsTab {...defaultProps} />);
-        fireEvent.click(screen.getByRole('button', { name: 'RECO' }));
+    it('calls onActionTypeFilterChange with "disco" when DISCO chip is clicked', () => {
+        const onActionTypeFilterChange = vi.fn();
+        render(<ExplorePairsTab {...defaultProps} onActionTypeFilterChange={onActionTypeFilterChange} />);
+        fireEvent.click(screen.getByRole('button', { name: 'DISCO' }));
+        expect(onActionTypeFilterChange).toHaveBeenCalledWith('disco');
+    });
+
+    it('shows only RECO actions when actionTypeFilter is "reco"', () => {
+        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="reco" />);
         expect(screen.getByText('act2')).toBeInTheDocument();
         expect(screen.queryByText('act1')).not.toBeInTheDocument();
     });
@@ -192,9 +197,8 @@ describe('ExplorePairsTab', () => {
         expect(screen.getAllByText('N/A').length).toBeGreaterThan(0);
     });
 
-    it('shows empty state when filter matches no actions', () => {
-        render(<ExplorePairsTab {...defaultProps} />);
-        fireEvent.click(screen.getByRole('button', { name: 'PST' }));
+    it('shows empty state when actionTypeFilter matches no actions', () => {
+        render(<ExplorePairsTab {...defaultProps} actionTypeFilter="pst" />);
         expect(screen.getByText(/No scored actions available/)).toBeInTheDocument();
     });
 });

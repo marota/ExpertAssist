@@ -390,115 +390,101 @@ describe('ActionFeed', () => {
         expect(goodIndex).toBeLessThan(badIndex);
     });
 
-    it('filters PST actions based on the PST checkbox', async () => {
+    it('shows only PST actions in dropdown when overviewFilters.actionType is "pst"', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
         const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
 
-        // Mock API to return both actions
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
 
-        render(<ActionFeed {...defaultProps} />);
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
+        />);
 
-        // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
-        // Both should be visible initially (PST filter is true by default)
+        // PST action visible, reco action hidden
         expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
-        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
-
-        // Find and click the PST checkbox to uncheck it
-        const pstCheckbox = screen.getByLabelText('PST');
-        fireEvent.click(pstCheckbox);
-
-        // PST action should be hidden, regular action should remain
-        expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
-        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
-
-        // Check it again
-        fireEvent.click(pstCheckbox);
-        expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
+        expect(screen.queryByText('line_reco_1')).not.toBeInTheDocument();
     });
 
-    it('hides PST actions matching search query when PST filter is unchecked', async () => {
+    it('shows all actions in dropdown when overviewFilters.actionType is "all"', async () => {
+        const pstAction = { id: 'pst_tap_up', description: 'PST action', type: 'pst_tap_change' };
+        const regularAction = { id: 'line_reco_1', description: 'Regular action', type: 'line_reconnection' };
+
+        vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, regularAction]);
+
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'all' }}
+        />);
+
+        fireEvent.click(screen.getByText('+ Manual Selection'));
+
+        expect(await screen.findByText('pst_tap_up')).toBeInTheDocument();
+        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+    });
+
+    it('hides PST actions in search results when actionType filter is "reco"', async () => {
         const pstAction = { id: 'pst_tap_up', description: 'PST action' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction]);
 
-        render(<ActionFeed {...defaultProps} />);
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'reco' }}
+        />);
 
-        // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
-
-        // Uncheck PST filter
-        const pstCheckbox = screen.getByLabelText('PST');
-        fireEvent.click(pstCheckbox);
 
         // Type "pst" in search
         const searchInput = screen.getByPlaceholderText(/Search action/);
         fireEvent.change(searchInput, { target: { value: 'pst' } });
 
-        // Wait for loading to finish if it hasn't already
         await waitFor(() => {
             expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
         });
 
-        // PST action should NOT be visible even if it matches search query
+        // PST action NOT visible because filter is 'reco'
         expect(screen.queryByText('pst_tap_up')).not.toBeInTheDocument();
-        expect(screen.getByText('No other matching actions')).toBeInTheDocument();
-        
-        // Manual simulation option should be visible
+        // Manual simulation option still visible
         expect(screen.getByText(/Simulate manual ID:/)).toBeInTheDocument();
-        expect(screen.getByText('pst')).toBeInTheDocument();
     });
 
-    it('shows ONLY PST actions when only PST filter is checked', async () => {
+    it('shows only PST actions in dropdown when actionType filter is "pst"', async () => {
         const pstAction = { id: 'pst_1', description: 'PST action' };
-        const discoAction = { id: 'abc', description: 'Ouverture de ligne' }; // Should be recognized as disco
+        const discoAction = { id: 'abc', description: 'Ouverture de ligne' };
         const unknownAction = { id: 'xyz', description: 'Some unknown action' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstAction, discoAction, unknownAction]);
 
-        render(<ActionFeed {...defaultProps} />);
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
+        />);
 
-        // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
-        // Uncheck everything except PST
-        fireEvent.click(screen.getByLabelText('Disconnections'));
-        fireEvent.click(screen.getByLabelText('Reconnections'));
-        fireEvent.click(screen.getByLabelText('Open coupling'));
-        fireEvent.click(screen.getByLabelText('Close coupling'));
-
-        // PST should be visible
         expect(await screen.findByText('pst_1')).toBeInTheDocument();
-
-        // Disco and Unknown should NOT be visible
         expect(screen.queryByText('abc')).not.toBeInTheDocument();
         expect(screen.queryByText('xyz')).not.toBeInTheDocument();
     });
-    
-    it('shows Load shedding actions when Load shedding filter is checked', async () => {
+
+    it('shows only LS actions in dropdown when actionType filter is "ls"', async () => {
         const lsAction = { id: 'load_shedding_LOAD1', description: 'Load shedding LOAD1' };
         const regularAction = { id: 'line_reco_1', description: 'Reconnexion' };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([lsAction, regularAction]);
 
-        render(<ActionFeed {...defaultProps} />);
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'ls' }}
+        />);
 
-        // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
-        // Both visible initially
         expect(await screen.findByText('load_shedding_LOAD1')).toBeInTheDocument();
-        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
-
-        // Uncheck Load shedding filter
-        const lsCheckbox = screen.getByLabelText('Load Shedding');
-        fireEvent.click(lsCheckbox);
-
-        // Load shedding should be hidden
-        expect(screen.queryByText('load_shedding_LOAD1')).not.toBeInTheDocument();
-        expect(screen.getByText('line_reco_1')).toBeInTheDocument();
+        expect(screen.queryByText('line_reco_1')).not.toBeInTheDocument();
     });
 
     it('triggers manual simulation when "Simulate manual ID" is clicked', async () => {
@@ -531,29 +517,24 @@ describe('ActionFeed', () => {
         );
     });
 
-    it('hides disconnections on PST branches when Disconnections filter is off but PST is on', async () => {
+    it('hides actions that classify as disco even when their score type is pst, when filter is "pst"', async () => {
+        // classifyActionType puts this action in 'disco' because the description
+        // starts with "Ouverture" — it should NOT appear under the PST chip filter.
         const pstDiscoAction = {
             id: 'disco_pst_branch',
             description: 'Ouverture de la branche PST',
-            type: 'pst_tap_change' // Simulating backend tagging it as PST
+            type: 'pst_tap_change',
         };
 
         vi.mocked(api.getAvailableActions).mockResolvedValueOnce([pstDiscoAction]);
 
-        render(<ActionFeed {...defaultProps} />);
+        render(<ActionFeed
+            {...defaultProps}
+            overviewFilters={{ categories: { green: true, orange: true, red: true, grey: true }, threshold: 1.5, showUnsimulated: false, actionType: 'pst' }}
+        />);
 
-        // Open search
         fireEvent.click(screen.getByText('+ Manual Selection'));
 
-        // Ensure Disconnections is unchecked, PST is checked
-        const discoCheckbox = screen.getByLabelText('Disconnections') as HTMLInputElement;
-        if (discoCheckbox.checked) fireEvent.click(discoCheckbox);
-
-        const pstCheckbox = screen.getByLabelText('PST') as HTMLInputElement;
-        if (!pstCheckbox.checked) fireEvent.click(pstCheckbox);
-
-        // PST branch disco should NOT be visible because it's a disconnection
-        // even if it has "pst" in id/type
         await waitFor(() => {
             expect(screen.queryByText('Loading actions...')).not.toBeInTheDocument();
         });

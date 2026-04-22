@@ -1078,6 +1078,7 @@ function App() {
             onActionDiagramPrimed={diagrams.primeActionDiagram}
             voltageLevelsLength={voltageLevels.length}
             overviewFilters={overviewFilters}
+            onOverviewFiltersChange={setOverviewFilters}
           />
         </AppSidebar>
         <div style={{ flex: 1, background: 'white', display: 'flex', flexDirection: 'column' }}>

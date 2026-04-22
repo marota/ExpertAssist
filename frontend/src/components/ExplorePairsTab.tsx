@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
-import React, { useState } from 'react';
+import React from 'react';
 import type { CombinedAction, AnalysisResult, ActionTypeFilterToken } from '../types';
 import ActionTypeFilterChips from './ActionTypeFilterChips';
 import { matchesActionTypeFilter } from '../utils/actionTypes';
@@ -44,6 +44,9 @@ interface ExplorePairsTabProps {
     onSimulate: () => void;
     onSimulateSingle: (actionId: string) => void;
     displayName?: (id: string) => string;
+    /** Shared action-type token — lifted to App.tsx via overviewFilters. */
+    actionTypeFilter?: ActionTypeFilterToken;
+    onActionTypeFilterChange?: (token: ActionTypeFilterToken) => void;
 }
 
 const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
@@ -64,8 +67,9 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
     onSimulate,
     onSimulateSingle,
     displayName = (id: string) => id,
+    actionTypeFilter = 'all',
+    onActionTypeFilterChange,
 }) => {
-    const [exploreFilter, setExploreFilter] = useState<ActionTypeFilterToken>('all');
 
     return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -97,8 +101,8 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                 styling stays in sync with the action-overview filter. */}
             <ActionTypeFilterChips
                 testIdPrefix="explore-pairs-filter"
-                value={exploreFilter}
-                onChange={setExploreFilter}
+                value={actionTypeFilter}
+                onChange={onActionTypeFilterChange ?? (() => {})}
                 style={{ marginBottom: '12px' }}
             />
 
@@ -106,7 +110,7 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
             <div style={{ flex: 1, maxHeight: '350px', overflowY: 'auto', border: '1px solid #eee', borderRadius: '4px', marginBottom: '15px' }}>
                 {(() => {
                     const filteredList = scoredActionsList.filter(item =>
-                        matchesActionTypeFilter(exploreFilter, item.actionId, null, item.type),
+                        matchesActionTypeFilter(actionTypeFilter, item.actionId, null, item.type),
                     );
 
                     const types = Array.from(new Set(filteredList.map(item => item.type)));

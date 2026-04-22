@@ -5,12 +5,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study. 
 
+import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import CombinedActionsModal from './CombinedActionsModal';
 import { api } from '../api';
-import type { AnalysisResult, CombinedAction } from '../types';
+import type { ActionTypeFilterToken, AnalysisResult, CombinedAction } from '../types';
 
 type SimulateResult = Awaited<ReturnType<typeof api.simulateManualAction>>;
 
@@ -89,7 +90,20 @@ describe('CombinedActionsModal', () => {
                 'load_shedding': { scores: { 'ls1': 5 } }
             }
         };
-        render(<CombinedActionsModal {...defaultProps} analysisResult={resultWithTypes as AnalysisResult} />);
+
+        // Wrap in a stateful parent so chip clicks actually update the filter.
+        const Wrapper = () => {
+            const [token, setToken] = useState<ActionTypeFilterToken>('all');
+            return (
+                <CombinedActionsModal
+                    {...defaultProps}
+                    analysisResult={resultWithTypes as AnalysisResult}
+                    actionTypeFilter={token}
+                    onActionTypeFilterChange={setToken}
+                />
+            );
+        };
+        render(<Wrapper />);
 
         fireEvent.click(getExploreTab());
 
