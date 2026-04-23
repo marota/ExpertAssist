@@ -390,6 +390,24 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
         if not config.SAVE_FOLDER_VISUALIZATION.exists():
             config.SAVE_FOLDER_VISUALIZATION.mkdir(parents=True, exist_ok=True)
 
+        # Switch the overflow-graph output from PDF to the interactive HTML
+        # viewer shipped in expert_op4grid_recommender. The "Overflow
+        # Analysis" tab in the React UI renders it via <iframe>. Legacy
+        # sessions that still carry a .pdf on disk continue to load — see
+        # the /api/load-session glob in main.py.
+        config.VISUALIZATION_FORMAT = "html"
+        logger.info("Overflow visualization format: %s", config.VISUALIZATION_FORMAT)
+
+        # Disable the combined-action-pair simulation verification
+        # (`VERIFY_SUPERPOSITION_MAX_RHO` upstream). When enabled, every
+        # superposition pair is also simulated end-to-end just to log the
+        # estimated-vs-simulated max-rho gap — it roughly doubles the
+        # Step-2 runtime and is only useful when validating the
+        # superposition approximation offline. Guarded with hasattr so
+        # older recommender installs (before commit 1f980169) stay happy.
+        if hasattr(config, "VERIFY_SUPERPOSITION_MAX_RHO"):
+            config.VERIFY_SUPERPOSITION_MAX_RHO = False
+
         # (base-NAD prefetch was kicked off earlier — right after the
         # monitoring config block — so it has more parallel runtime with
         # the enrich + env-setup work below. See docstring above in

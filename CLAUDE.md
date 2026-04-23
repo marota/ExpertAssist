@@ -199,7 +199,7 @@ Both scripts run in CI (`.github/workflows/code-quality.yml` and
 | POST | `/api/load-session` | Load session JSON and restore PDFs |
 | POST | `/api/restore-analysis-context` | Restore analysis context from saved session |
 | GET | `/api/pick-path` | Open native OS file/directory picker (tkinter subprocess) |
-| GET | `/results/pdf/{filename}` | Serve generated PDF files from `Overflow_Graph/` |
+| GET | `/results/pdf/{filename}` | Serve generated overflow-graph files from `Overflow_Graph/` — HTML (interactive viewer, current default via `config.VISUALIZATION_FORMAT="html"`) or PDF (legacy sessions). URL path kept for backward compatibility. |
 
 ## Key Patterns & Conventions
 

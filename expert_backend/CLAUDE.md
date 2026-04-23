@@ -148,8 +148,12 @@ OS pickers & static:
 `/api/run-analysis`, `/api/run-analysis-step2`, and
 `/api/simulate-and-variant-diagram` use FastAPI `StreamingResponse`
 with `application/x-ndjson`. Events are JSON lines:
-- `{"type":"pdf", "pdf_url":..., "pdf_path":...}` — overflow PDF
-  ready (delivered EARLY so the UI can show it before results).
+- `{"type":"pdf", "pdf_url":..., "pdf_path":...}` — overflow graph
+  file ready (delivered EARLY so the UI can show it before results).
+  Event / field names kept for session-schema backward compatibility;
+  the referenced file is now an interactive `.html` viewer by default
+  (`config.VISUALIZATION_FORMAT="html"` set in
+  `recommender_service.update_config`) and `.pdf` on legacy installs.
 - `{"type":"result", ...}` or `{"type":"metrics", ...}` /
   `{"type":"diagram", ...}` — final payloads.
 - `{"type":"error", "message":...}` — failure event; stream closes.

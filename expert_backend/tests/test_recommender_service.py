@@ -71,11 +71,78 @@ class TestRecommenderService:
         assert config.IGNORE_RECONNECTIONS is True
         assert config.PYPOWSYBL_FAST_MODE is False
 
+        # Overflow viewer: HTML is now the default output format (PR #74
+        # interactive viewer). Legacy .pdf loading is handled at the
+        # file-watcher / session-load layer, not via config.
+        assert config.VISUALIZATION_FORMAT == "html"
+
         # Verify side effects (mocks)
         mock_load_actions.assert_called_once_with(Path(action_path))
         # Since disco_ actions were not in mock_load_actions.return_value, it should have auto-generated them
         # and called open(action_path, 'w')
         mock_file.assert_called_with(Path(action_path), 'w')
+
+    @patch("expert_backend.services.recommender_service.enrich_actions_lazy")
+    @patch("expert_backend.services.recommender_service.load_actions")
+    @patch("expert_backend.services.network_service.network_service")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_update_config_disables_superposition_verify(
+        self, mock_file, mock_network_service, mock_load_actions, mock_enrich
+    ):
+        """update_config must flip VERIFY_SUPERPOSITION_MAX_RHO off so the
+        combined-action-pair simulation verification doesn't double the
+        Step-2 runtime in production analyses. Guarded by hasattr so
+        older recommender installs stay happy — we simulate the upstream
+        attribute being present (commit 1f980169 onward) by pre-setting
+        it to True on the config module."""
+        mock_load_actions.return_value = {"disco_line1": {}}  # already has disco
+        mock_network_service.get_disconnectable_elements.return_value = ["line1"]
+        mock_network_service.get_monitored_elements.return_value = ["line1"]
+
+        # Simulate an install that has the verify flag (like venv_py310).
+        # `reset_config` autouse fixture restores the original value/absence
+        # after the test, so this assignment is test-local.
+        config.VERIFY_SUPERPOSITION_MAX_RHO = True
+
+        service = RecommenderService()
+        settings = ConfigRequest(
+            network_path="/tmp/net.xiidm",
+            action_file_path="/tmp/act.json",
+        )
+        service.update_config(settings)
+
+        assert config.VERIFY_SUPERPOSITION_MAX_RHO is False
+
+    @patch("expert_backend.services.recommender_service.enrich_actions_lazy")
+    @patch("expert_backend.services.recommender_service.load_actions")
+    @patch("expert_backend.services.network_service.network_service")
+    @patch("builtins.open", new_callable=mock_open)
+    def test_update_config_superposition_verify_absent_is_noop(
+        self, mock_file, mock_network_service, mock_load_actions, mock_enrich
+    ):
+        """Older recommender installs (pre-commit 1f980169) don't have
+        VERIFY_SUPERPOSITION_MAX_RHO on the config module. update_config
+        must NOT raise AttributeError nor synthesize the attribute —
+        the hasattr guard keeps backward compatibility."""
+        mock_load_actions.return_value = {"disco_line1": {}}
+        mock_network_service.get_disconnectable_elements.return_value = ["line1"]
+        mock_network_service.get_monitored_elements.return_value = ["line1"]
+
+        # Ensure the attribute is absent before the call. `reset_config`
+        # will restore the module state afterwards.
+        if hasattr(config, "VERIFY_SUPERPOSITION_MAX_RHO"):
+            delattr(config, "VERIFY_SUPERPOSITION_MAX_RHO")
+
+        service = RecommenderService()
+        settings = ConfigRequest(
+            network_path="/tmp/net.xiidm",
+            action_file_path="/tmp/act.json",
+        )
+        service.update_config(settings)  # must not raise
+
+        # Backend must not have synthesized the field when it wasn't there
+        # upstream — keeps the recommender config as authoritative.
+        assert not hasattr(config, "VERIFY_SUPERPOSITION_MAX_RHO")
         
     def test_update_config_defaults(self):
         # We also want to verify that default settings work as expected

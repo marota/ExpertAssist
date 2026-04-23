@@ -529,17 +529,29 @@ def load_session(folder_path: str = Body(...), session_name: str = Body(...)):
         with open(json_path, "r", encoding="utf-8") as f:
             content = json_module.load(f)
 
-        # Restore overflow PDF: if the original pdf_path is gone, copy from session folder
+        # Restore overflow graph file: if the original pdf_path is gone, copy
+        # from the session folder. The file may be .html (current
+        # interactive viewer) or .pdf (legacy sessions saved before the
+        # VISUALIZATION_FORMAT switch). `pdf_url` / `pdf_path` field names
+        # are preserved for backward compatibility.
         overflow = content.get("overflow_graph")
         if overflow and overflow.get("pdf_url"):
             pdf_filename = os.path.basename(overflow["pdf_url"])
             target_path = os.path.join("Overflow_Graph", pdf_filename)
             if not os.path.isfile(target_path):
-                # Look for PDF in session folder
-                session_pdfs = glob.glob(os.path.join(session_dir, "*.pdf"))
-                if session_pdfs:
+                session_files = (
+                    glob.glob(os.path.join(session_dir, "*.html"))
+                    + glob.glob(os.path.join(session_dir, "*.pdf"))
+                )
+                if session_files:
                     os.makedirs("Overflow_Graph", exist_ok=True)
-                    shutil.copy2(session_pdfs[0], target_path)
+                    # Prefer the file whose basename matches the stored
+                    # pdf_url; otherwise fall back to the newest file.
+                    picked = next(
+                        (f for f in session_files if os.path.basename(f) == pdf_filename),
+                        max(session_files, key=os.path.getmtime),
+                    )
+                    shutil.copy2(picked, target_path)
 
         return content
     except Exception as e:
