@@ -247,17 +247,6 @@ const CombinedActionsModal: React.FC<Props> = ({
             interactionLogger.record('combine_pair_toggled', { action_id: id, selected: false });
         } else {
             if (newSet.size >= 2) return; // Only allow 2
-            
-            // Prevent selecting load shedding or curtailment for combination
-            const detail = allActions[id];
-            const isRestricted = (detail?.load_shedding_details && detail.load_shedding_details.length > 0) ||
-                                (detail?.curtailment_details && detail.curtailment_details.length > 0);
-            
-            if (isRestricted) {
-                setError("Load shedding and curtailment actions cannot be combined with other actions.");
-                return;
-            }
-            
             newSet.add(id);
             interactionLogger.record('combine_pair_toggled', { action_id: id, selected: true });
         }

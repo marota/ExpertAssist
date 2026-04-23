@@ -100,9 +100,32 @@ describe('ExplorePairsTab', () => {
         expect(screen.getByText('Estimate combination effect')).toBeInTheDocument();
     });
 
-    it('shows "Combination not allowed" when hasRestricted is true', () => {
+    it('disables Estimate and surfaces the load-shedding/curtailment caveat when hasRestricted is true', () => {
         render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} hasRestricted={true} />);
-        expect(screen.getByText('Combination not allowed')).toBeInTheDocument();
+        const estimateBtn = screen.getByTestId('estimate-button');
+        expect(estimateBtn).toBeDisabled();
+        expect(estimateBtn).toHaveTextContent(/Estimation not available/i);
+    });
+
+    it('exposes a Simulate Combined button in the no-preview state that stays enabled even when hasRestricted', () => {
+        const onSimulate = vi.fn();
+        render(
+            <ExplorePairsTab
+                {...defaultProps}
+                selectedIds={new Set(['act1', 'act2'])}
+                hasRestricted={true}
+                onSimulate={onSimulate}
+            />,
+        );
+        const simBtn = screen.getByTestId('simulate-combined-button');
+        expect(simBtn).toBeEnabled();
+        fireEvent.click(simBtn);
+        expect(onSimulate).toHaveBeenCalled();
+    });
+
+    it('disables the no-preview Simulate Combined button until 2 actions are selected', () => {
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1'])} />);
+        expect(screen.getByTestId('simulate-combined-button')).toBeDisabled();
     });
 
     it('calls onEstimate when estimate button is clicked', () => {

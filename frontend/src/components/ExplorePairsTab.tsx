@@ -236,6 +236,7 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                             onClick={onEstimate}
                             disabled={selectedIds.size !== 2 || loading || hasRestricted}
                             data-testid="estimate-button"
+                            title={hasRestricted ? 'Estimation is not available when a load shedding or curtailment action is selected — use Simulate Combined instead.' : undefined}
                             style={{
                                 width: '100%',
                                 padding: '12px',
@@ -250,7 +251,27 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                                 boxShadow: (selectedIds.size === 2 && !loading && !hasRestricted) ? '0 4px 6px rgba(52, 152, 219, 0.2)' : 'none'
                             }}
                         >
-                            {loading ? '⚙️ Estimating Combination...' : (selectedIds.size === 2 ? (hasRestricted ? 'Combination not allowed' : 'Estimate combination effect') : 'Select 2 actions to estimate')}
+                            {loading ? '⚙️ Estimating Combination...' : (selectedIds.size === 2 ? (hasRestricted ? 'Estimation not available for load shedding / curtailment' : 'Estimate combination effect') : 'Select 2 actions to estimate')}
+                        </button>
+                        <button
+                            onClick={onSimulate}
+                            disabled={selectedIds.size !== 2 || simulating}
+                            data-testid="simulate-combined-button"
+                            style={{
+                                width: '100%',
+                                padding: '10px',
+                                background: (selectedIds.size === 2 && !simulating) ? '#27ae60' : '#ecf0f1',
+                                color: (selectedIds.size === 2 && !simulating) ? 'white' : '#bdc3c7',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: (selectedIds.size !== 2 || simulating) ? 'not-allowed' : 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '13px',
+                                transition: 'all 0.2s',
+                                boxShadow: (selectedIds.size === 2 && !simulating) ? '0 2px 4px rgba(39,174,96,0.2)' : 'none'
+                            }}
+                        >
+                            {simulating ? '⌛ Simulating...' : (selectedIds.size === 2 ? 'Simulate Combined' : 'Select 2 actions to simulate')}
                         </button>
                     </div>
                 ) : (
@@ -275,28 +296,38 @@ const ExplorePairsTab: React.FC<ExplorePairsTabProps> = ({
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button
                                     onClick={onEstimate}
-                                    disabled={loading}
-                                    style={{ padding: '6px 12px', background: 'white', border: '1px solid #3498db', color: '#3498db', borderRadius: '4px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                                    disabled={loading || hasRestricted}
+                                    title={hasRestricted ? 'Estimation is not available when a load shedding or curtailment action is selected — use Simulate Combined instead.' : undefined}
+                                    style={{
+                                        padding: '6px 12px',
+                                        background: 'white',
+                                        border: '1px solid ' + (hasRestricted ? '#bdc3c7' : '#3498db'),
+                                        color: hasRestricted ? '#bdc3c7' : '#3498db',
+                                        borderRadius: '4px',
+                                        cursor: (loading || hasRestricted) ? 'not-allowed' : 'pointer',
+                                        fontSize: '12px',
+                                        fontWeight: 'bold'
+                                    }}
                                 >
-                                    {loading ? '...' : 'Estimate combination effect'}
+                                    {loading ? '...' : (hasRestricted ? 'Estimation unavailable' : 'Estimate combination effect')}
                                 </button>
                                 <button
                                     onClick={onSimulate}
-                                    disabled={simulating || hasRestricted}
+                                    disabled={simulating}
                                     style={{
                                         padding: '6px 16px',
-                                        background: (simulating || hasRestricted) ? '#6c757d' : '#27ae60',
+                                        background: simulating ? '#6c757d' : '#27ae60',
                                         color: 'white',
                                         border: 'none',
                                         borderRadius: '6px',
-                                        cursor: (simulating || hasRestricted) ? 'not-allowed' : 'pointer',
+                                        cursor: simulating ? 'not-allowed' : 'pointer',
                                         fontWeight: 'bold',
                                         fontSize: '12px',
-                                        boxShadow: (simulating || hasRestricted) ? 'none' : '0 2px 4px rgba(39,174,96,0.2)',
+                                        boxShadow: simulating ? 'none' : '0 2px 4px rgba(39,174,96,0.2)',
                                         minWidth: '140px'
                                     }}
                                 >
-                                    {simulating ? '⌛ Simulating...' : (hasRestricted ? 'Simulation Locked' : 'Simulate Combined')}
+                                    {simulating ? '⌛ Simulating...' : 'Simulate Combined'}
                                 </button>
                             </div>
                         </div>
