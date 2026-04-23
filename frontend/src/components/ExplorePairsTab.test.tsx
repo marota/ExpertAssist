@@ -6,7 +6,7 @@
 // This file is part of Co-Study4Grid a Power Grid Study tool Assistant Interface to help solve contigencies for a grid state under study.
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import ExplorePairsTab from './ExplorePairsTab';
 import type { AnalysisResult, CombinedAction } from '../types';
@@ -100,9 +100,32 @@ describe('ExplorePairsTab', () => {
         expect(screen.getByText('Estimate combination effect')).toBeInTheDocument();
     });
 
-    it('shows "Combination not allowed" when hasRestricted is true', () => {
+    it('disables Estimate and surfaces the load-shedding/curtailment caveat when hasRestricted is true', () => {
         render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} hasRestricted={true} />);
-        expect(screen.getByText('Combination not allowed')).toBeInTheDocument();
+        const estimateBtn = screen.getByTestId('estimate-button');
+        expect(estimateBtn).toBeDisabled();
+        expect(estimateBtn).toHaveTextContent(/Estimation not available/i);
+    });
+
+    it('exposes a Simulate Combined button in the no-preview state that stays enabled even when hasRestricted', () => {
+        const onSimulate = vi.fn();
+        render(
+            <ExplorePairsTab
+                {...defaultProps}
+                selectedIds={new Set(['act1', 'act2'])}
+                hasRestricted={true}
+                onSimulate={onSimulate}
+            />,
+        );
+        const simBtn = screen.getByTestId('simulate-combined-button');
+        expect(simBtn).toBeEnabled();
+        fireEvent.click(simBtn);
+        expect(onSimulate).toHaveBeenCalled();
+    });
+
+    it('disables the no-preview Simulate Combined button until 2 actions are selected', () => {
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1'])} />);
+        expect(screen.getByTestId('simulate-combined-button')).toBeDisabled();
     });
 
     it('calls onEstimate when estimate button is clicked', () => {
@@ -148,6 +171,124 @@ describe('ExplorePairsTab', () => {
         render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} simulationFeedback={feedback} />);
         expect(screen.getByTestId('simulation-feedback')).toBeInTheDocument();
         expect(screen.getByText('68.0%')).toBeInTheDocument();
+    });
+
+    it('shows the Simulate Combined button on top of the card while a preview is shown and no simulation has run yet', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} />);
+        expect(screen.getByTestId('simulate-combined-top-button')).toBeInTheDocument();
+    });
+
+    it('hides the top Simulate Combined button once a simulation result is available', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        const feedback = { max_rho: 0.68, max_rho_line: 'L2', is_rho_reduction: true };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} simulationFeedback={feedback} />);
+        expect(screen.queryByTestId('simulate-combined-top-button')).not.toBeInTheDocument();
+    });
+
+    it('renders the card with only the Simulation Result column when simulation ran without an estimate', () => {
+        const feedback = { max_rho: 0.68, max_rho_line: 'L2', is_rho_reduction: true };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} simulationFeedback={feedback} />);
+        expect(screen.getByTestId('comparison-card')).toBeInTheDocument();
+        expect(screen.getByTestId('simulation-feedback')).toBeInTheDocument();
+        expect(screen.queryByText(/Estimated Max Loading/)).not.toBeInTheDocument();
+    });
+
+    it('does not render Estimate / Simulate buttons inside the comparison card header', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} />);
+        const card = screen.getByTestId('comparison-card');
+        expect(within(card).queryByText('Estimate combination effect')).not.toBeInTheDocument();
+        expect(within(card).queryByText('Estimation unavailable')).not.toBeInTheDocument();
+        expect(within(card).queryByText('Simulate Combined')).not.toBeInTheDocument();
+    });
+
+    it('hides the bottom action bar once a simulation has run (no preview path)', () => {
+        const feedback = { max_rho: 0.68, max_rho_line: 'L2', is_rho_reduction: true };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} simulationFeedback={feedback} />);
+        expect(screen.queryByTestId('estimate-button')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('simulate-combined-button')).not.toBeInTheDocument();
+    });
+
+    it('clicking the top Simulate Combined button calls onSimulate', () => {
+        const onSimulate = vi.fn();
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} onSimulate={onSimulate} />);
+        fireEvent.click(screen.getByTestId('simulate-combined-top-button'));
+        expect(onSimulate).toHaveBeenCalled();
+    });
+
+    it('disables the top Simulate Combined button while simulating', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} simulating={true} />);
+        expect(screen.getByTestId('simulate-combined-top-button')).toBeDisabled();
+    });
+
+    it('uses the "Simulation Result" title when only simulation ran (no estimate)', () => {
+        const feedback = { max_rho: 0.68, max_rho_line: 'L2', is_rho_reduction: true };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} simulationFeedback={feedback} />);
+        const card = screen.getByTestId('comparison-card');
+        // "Simulation Result" appears as both the card title and the column header — so we expect 2 matches
+        expect(within(card).getAllByText('Simulation Result').length).toBe(2);
+        expect(within(card).queryByText('Explore Pairs Comparison')).not.toBeInTheDocument();
+    });
+
+    it('surfaces target_max_rho in the comparison card when it differs from the global estimated line', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.5, 0.5],
+            max_rho: 0.82, max_rho_line: 'LOUHAL31PYMON',
+            estimated_max_rho: 0.82, estimated_max_rho_line: 'LOUHAL31PYMON',
+            target_max_rho: 0.20, target_max_rho_line: 'BEON L31CPVAN',
+            is_rho_reduction: false, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.20],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} />);
+        const target = screen.getByTestId('target-max-rho');
+        expect(target).toHaveTextContent(/20\.0%.*BEON L31CPVAN/);
+    });
+
+    it('hides target_max_rho when it matches the global estimated line (nothing to add)', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0, 0.9],
+            max_rho: 0.72, max_rho_line: 'L3',
+            estimated_max_rho: 0.72, estimated_max_rho_line: 'L3',
+            target_max_rho: 0.72, target_max_rho_line: 'L3',
+            is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} />);
+        expect(screen.queryByTestId('target-max-rho')).not.toBeInTheDocument();
+    });
+
+    it('uses the "Explore Pairs Comparison" title when an estimate is present', () => {
+        const preview: CombinedAction = {
+            action1_id: 'act1', action2_id: 'act2', betas: [1.0], max_rho: 0.72,
+            max_rho_line: 'L3', is_rho_reduction: true, description: 'Combined',
+            p_or_combined: [], rho_before: [0.8], rho_after: [0.72],
+        };
+        render(<ExplorePairsTab {...defaultProps} selectedIds={new Set(['act1', 'act2'])} preview={preview} />);
+        const card = screen.getByTestId('comparison-card');
+        expect(within(card).getByText('Explore Pairs Comparison')).toBeInTheDocument();
     });
 
     it('shows error message in comparison card', () => {

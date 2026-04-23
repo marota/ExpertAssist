@@ -137,6 +137,8 @@ const CombinedActionsModal: React.FC<Props> = ({
                     betas: data.betas,
                     estimated_max_rho: estMaxRho,
                     estimated_max_rho_line: estMaxRhoLine,
+                    target_max_rho: data.target_max_rho ?? null,
+                    target_max_rho_line: data.target_max_rho_line,
                     is_suspect: !!data.is_islanded,
                     isSimulated,
                     simulated_max_rho: simMaxRho,
@@ -247,17 +249,6 @@ const CombinedActionsModal: React.FC<Props> = ({
             interactionLogger.record('combine_pair_toggled', { action_id: id, selected: false });
         } else {
             if (newSet.size >= 2) return; // Only allow 2
-            
-            // Prevent selecting load shedding or curtailment for combination
-            const detail = allActions[id];
-            const isRestricted = (detail?.load_shedding_details && detail.load_shedding_details.length > 0) ||
-                                (detail?.curtailment_details && detail.curtailment_details.length > 0);
-            
-            if (isRestricted) {
-                setError("Load shedding and curtailment actions cannot be combined with other actions.");
-                return;
-            }
-            
             newSet.add(id);
             interactionLogger.record('combine_pair_toggled', { action_id: id, selected: true });
         }

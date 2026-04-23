@@ -32,6 +32,7 @@ from expert_backend.services.simulation_helpers import (
     compute_action_metrics,
     compute_combined_rho,
     compute_reduction_setpoint,
+    compute_target_max_rho,
     extract_action_topology,
     is_pst_action,
     normalise_non_convergence,
@@ -170,7 +171,35 @@ class SimulationMixin:
         n = nm.network
         original_variant = n.get_working_variant_id()
 
-        obs, obs_simu_defaut = self._fetch_n_and_n1_observations(env, n, disconnected_element)
+        # Prefer the (obs, obs_simu_defaut) pair captured by step1 and
+        # stored on ``_analysis_context``. The grid2op ↔ pypowsybl env
+        # bridge does not re-sync ``env.get_obs()`` to
+        # ``n.set_working_variant(...)``, so a fresh fetch here can
+        # return an N-state observation even after pinning the N-1
+        # variant — the downstream ``obs.simulate(..., keep_variant=True)``
+        # would then run against the wrong baseline and the backend's
+        # max_rho drifts from the library's own simulation. Reusing the
+        # step1 obs keeps this path numerically aligned with step2 and
+        # with ``compute_superposition`` (which uses the same pattern
+        # via ``_obs_n1_from_context``).
+        ctx = self._analysis_context or {}
+        ctx_obs_n1 = self._obs_n1_from_context()
+        ctx_obs_n = ctx.get("obs")
+        used_context_obs = ctx_obs_n1 is not None and ctx_obs_n is not None
+        if used_context_obs:
+            obs, obs_simu_defaut = ctx_obs_n, ctx_obs_n1
+            # NOTE: do NOT overwrite ``obs_simu_defaut._variant_id``. The
+            # library stamped it at step1 with its own kept variant id,
+            # and ``pypowsybl_backend.observation.simulate`` clones from
+            # ``self._variant_id`` at simulate time — rewriting it to a
+            # backend-scoped variant that doesn't exist in the library's
+            # ``NetworkManager`` would raise ``Variant ... not found``.
+        else:
+            # Fallback: no step1 context (direct simulate without prior
+            # step1, or session reload — ``restore_analysis_context``
+            # doesn't serialize obs objects). The stale-obs desync still
+            # applies on this path; tracked as a follow-up.
+            obs, obs_simu_defaut = self._fetch_n_and_n1_observations(env, n, disconnected_element)
         obs_n1 = obs_simu_defaut
 
         self._create_dynamic_actions_if_needed(
@@ -206,6 +235,18 @@ class SimulationMixin:
         self._apply_target_tap_updates(action_ids, target_tap, nm)
 
         action = self._build_combined_action_object(action_ids, env, recent_actions)
+
+        # Re-pin the working variant to the backend's N-1 only on the
+        # fallback path. `_fetch_n_and_n1_observations` can return a
+        # cached obs whose associated working variant has drifted (its
+        # cache-hit branches don't touch the variant), so an
+        # ``obs.simulate(..., keep_variant=True)`` on that obs can run
+        # against the wrong variant. The context path is already safe:
+        # the library stamped ``obs_simu_defaut._variant_id`` to its own
+        # kept N-1 variant, which ``pypowsybl_backend.observation.simulate``
+        # clones from directly (independent of the working variant).
+        if not used_context_obs:
+            n.set_working_variant(self._get_n1_variant(disconnected_element))
 
         actual_fast_mode = getattr(config, "PYPOWSYBL_FAST_MODE", False)
         obs_simu_action, _, _, info_action = obs_simu_defaut.simulate(
@@ -628,8 +669,19 @@ class SimulationMixin:
         original_variant = n.get_working_variant_id()
 
         # Fetch N-1 and N observations (order matters for test mocks).
-        n.set_working_variant(self._get_n1_variant(disconnected_element))
-        obs_start = env.get_obs()
+        # Prefer the N-1 observation captured at step1 when available —
+        # grid2op's ``obs.simulate(action, keep_variant=True)`` used by
+        # ``simulate_manual_action`` can mutate the shared N-1 variant,
+        # so a fresh ``env.get_obs()`` here would drift away from the
+        # baseline step2 used to pre-compute ``combined_actions`` betas.
+        # Reusing the context obs keeps the on-demand re-estimation
+        # numerically consistent with the "Computed Pairs" view.
+        ctx_obs_n1 = self._obs_n1_from_context()
+        if ctx_obs_n1 is not None:
+            obs_start = ctx_obs_n1
+        else:
+            n.set_working_variant(self._get_n1_variant(disconnected_element))
+            obs_start = env.get_obs()
         self._log_per_line_rho(action1_id, action2_id, line_idxs1, line_idxs2, obs_start, env, all_actions)
 
         monitoring_factor = getattr(config, "MONITORING_FACTOR_THERMAL_LIMITS", 0.95)
@@ -762,16 +814,32 @@ class SimulationMixin:
     ):
         """Determine the active monitoring set for the superposition result.
 
-        Prefers `_analysis_context.lines_overloaded` when available (keeps
-        the pair result aligned with the step2 analysis view); otherwise
-        recomputes from `obs_start` with the same pre-existing-worsening
-        rule as `simulate_manual_action`.
+        Prefers the analysis context's overload set when available (keeps
+        the pair result aligned with the step2 "Computed Pairs" view);
+        otherwise recomputes from `obs_start` with the same
+        pre-existing-worsening rule as `simulate_manual_action`.
+
+        Context lookup order:
+          1. ``lines_overloaded_ids`` — indices resolved by step1 against
+             the same ``name_line`` ordering (used by step2 discovery).
+          2. ``lines_overloaded_names`` — step1 populates this key.
+          3. ``lines_overloaded`` — written by session reload
+             (``restore_analysis_context``).
         """
-        ctx_overloaded = (self._analysis_context or {}).get("lines_overloaded")
+        ctx = self._analysis_context or {}
+        ctx_ids = ctx.get("lines_overloaded_ids")
+        if ctx_ids:
+            ids = [int(i) for i in ctx_ids if 0 <= int(i) < len(name_line_list)]
+            logger.info(
+                "[compute_superposition] Using analysis context lines_overloaded_ids: %d lines",
+                len(ids),
+            )
+            return ids
+        ctx_overloaded = ctx.get("lines_overloaded_names") or ctx.get("lines_overloaded")
         if ctx_overloaded:
             ids = [name_to_idx_map[l] for l in ctx_overloaded if l in name_to_idx_map]
             logger.info(
-                "[compute_superposition] Using analysis context lines_overloaded: %d lines",
+                "[compute_superposition] Using analysis context lines_overloaded names: %d lines",
                 len(ids),
             )
             return ids
@@ -854,6 +922,10 @@ class SimulationMixin:
             max_rho = float(masked_rho[max_idx])
             max_rho_line = masked_names[max_idx]
 
+        target_max_rho, target_max_rho_line = compute_target_max_rho(
+            rho_combined, name_line_list, lines_overloaded_ids,
+        )
+
         logger.info(
             "[compute_superposition] monitored lines: %d/%d, lines_overloaded force-included: %d",
             int(np.sum(care_mask)), num_lines, len(lines_overloaded_ids),
@@ -870,6 +942,13 @@ class SimulationMixin:
         result.update({
             "max_rho": max_rho * monitoring_factor,
             "max_rho_line": max_rho_line,
+            # Max computed over the USER-SELECTED overloaded lines — the
+            # ones the pair is meant to resolve.  Lets the UI show the
+            # effect on the target contingency alongside the global
+            # `max_rho`, which may land on an off-target line due to
+            # linearisation error on lines far from either action.
+            "target_max_rho": target_max_rho * monitoring_factor if target_max_rho else 0.0,
+            "target_max_rho_line": target_max_rho_line,
             "is_rho_reduction": is_rho_reduction,
             "rho_after": (rho_combined[lines_overloaded_ids] * monitoring_factor).tolist(),
             "rho_before": (obs_start.rho[lines_overloaded_ids] * monitoring_factor).tolist(),
