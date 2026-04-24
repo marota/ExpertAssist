@@ -254,6 +254,7 @@ export function useDiagrams(
     const correlationId = interactionLogger.record('overflow_layout_mode_toggled', {
       to: mode,
     });
+    const startTs = new Date().toISOString();
     setOverflowLayoutLoading(true);
     try {
       const response = await api.regenerateOverflowGraph(mode);
@@ -262,15 +263,17 @@ export function useDiagrams(
         return { ...prev, pdf_url: response.pdf_url, pdf_path: response.pdf_path };
       });
       setOverflowLayoutMode(mode);
-      interactionLogger.recordCompletion(correlationId, {
+      interactionLogger.recordCompletion('overflow_layout_mode_toggled', correlationId, {
+        to: mode,
         cached: response.cached,
-      });
+      }, startTs);
     } catch (e) {
       const msg = (e instanceof Error) ? e.message : String(e);
       setError(`Failed to regenerate overflow graph in ${mode} mode: ${msg}`);
-      interactionLogger.recordCompletion(correlationId, {
+      interactionLogger.recordCompletion('overflow_layout_mode_toggled', correlationId, {
+        to: mode,
         error: msg,
-      });
+      }, startTs);
     } finally {
       setOverflowLayoutLoading(false);
     }
