@@ -233,3 +233,73 @@ def test_graph_transform_reanchored_to_new_viewbox():
     m = re.search(r'<g[^>]*class="graph"[^>]*transform="([^"]+)"', out)
     assert m, "Missing graph transform"
     assert "translate(40 " in m.group(1)
+
+
+def test_content_scales_ellipse_and_text_when_viewbox_grows():
+    """A layout that forces a much larger new viewBox than the
+    original must also scale node circles and text labels up so they
+    stay visually proportional. Graphviz emits font-size=10, rx=5
+    on our fixture — after a 5x+ canvas growth both should at least
+    double."""
+    html = """\
+<!doctype html><html><body>
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <g class="graph">
+    <g id="node1" class="node" data-name="A" data-attr-pos="10,10">
+      <title>A</title>
+      <ellipse cx="10" cy="-10" rx="5" ry="5" stroke-width="2"/>
+      <text x="10" y="-10" font-size="10">A</text>
+    </g>
+    <g id="node2" class="node" data-name="B" data-attr-pos="20,20">
+      <title>B</title>
+      <ellipse cx="20" cy="-20" rx="5" ry="5" stroke-width="2"/>
+      <text x="20" y="-20" font-size="10">B</text>
+    </g>
+  </g>
+</svg>
+</body></html>
+"""
+    # A large geographic spread forces the canvas to hit
+    # _MAX_VIEWBOX_DIM, delivering a much larger new viewBox.
+    layout = {"A": (0.0, 0.0), "B": (100000.0, 100000.0)}
+    out = transform_html(html, layout)
+    # font-size and rx should both be visibly larger than the
+    # originals (10, 5). Exact factor depends on the clamp, but it
+    # must be strictly greater.
+    font_sizes = [float(v) for v in re.findall(r'font-size="([-\d.]+)"', out)]
+    rxs = [float(v) for v in re.findall(r'rx="([-\d.]+)"', out)]
+    assert font_sizes and all(f > 10.0 for f in font_sizes), font_sizes
+    assert rxs and all(r > 5.0 for r in rxs), rxs
+
+
+def test_content_scale_leaves_small_canvas_untouched():
+    """When the layout is so small that the canvas stays at its
+    floor, the content-scale clamp keeps elements at their graphviz
+    sizes (no shrink below 1.0)."""
+    html = HIERARCHICAL_HTML.replace('viewBox="0 0 400 400"',
+                                     'viewBox="0 0 4000 4000"')
+    # Microscopic layout → natural new canvas much smaller than the
+    # original 4000×4000. sqrt(area_ratio) < 1 so content_scale is
+    # clamped to 1.0.
+    layout = {"A": (0.0, 0.0), "B": (0.01, 0.01)}
+    out = transform_html(html, layout)
+    # Node `rx` must not shrink below its original 5 — the fixture
+    # uses ellipses with `rx="5"`.
+    rxs = [float(v) for v in re.findall(r'rx="([-\d.]+)"', out)]
+    assert rxs and all(r >= 5.0 for r in rxs), rxs
+
+
+def test_drops_graphviz_background_polygon():
+    """The stale ``<polygon fill="white" stroke="transparent">`` must
+    not survive the transform — its points are stuck on the original
+    viewBox and it would render as a stray white rectangle on the
+    new canvas."""
+    html = HIERARCHICAL_HTML.replace(
+        '<g class="graph">',
+        '<g class="graph">'
+        '<polygon fill="white" stroke="transparent" points="-4,4 -4,-400 400,-400 400,4 -4,4"/>',
+    )
+    # Sanity check the original HTML does carry the background.
+    assert 'fill="white" stroke="transparent"' in html
+    out = transform_html(html, {"A": (0, 0), "B": (100, 100)})
+    assert 'fill="white" stroke="transparent"' not in out

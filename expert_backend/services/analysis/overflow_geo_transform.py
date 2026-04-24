@@ -77,6 +77,10 @@ _MIN_VIEWBOX_DIM = 600.0     # px, viewBox floor so tiny grids still
                              # get a usable canvas.
 _MAX_VIEWBOX_DIM = 4000.0    # px, viewBox ceiling so extreme spread
                              # grids don't blow up the iframe.
+_MIN_CONTENT_SCALE = 1.0     # never shrink visual elements below the
+                             # library's original sizes.
+_MAX_CONTENT_SCALE = 5.0     # don't let a huge canvas make labels
+                             # dominate to the point of overlap.
 
 
 def _fmt(v: float) -> str:
@@ -195,6 +199,15 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
     span_x = max_lx - min_lx or 1.0
     span_y = max_ly - min_ly or 1.0
 
+    # Capture the old viewBox BEFORE rewriting it so we can compute
+    # how much visual elements (text, node circles, arrows) need to
+    # grow to stay proportionally readable on the new, larger canvas.
+    old_vb = svg_root.get("viewBox", "0 0 726 1356").split()
+    try:
+        old_w, old_h = float(old_vb[2]), float(old_vb[3])
+    except (IndexError, ValueError):
+        old_w, old_h = 726.0, 1356.0
+
     scale = _scale_for_target_spacing(matched)
 
     # Natural viewBox size from the chosen scale.
@@ -220,6 +233,33 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
     svg_root.set("width", f"{_fmt(new_w)}pt")
     svg_root.set("height", f"{_fmt(new_h)}pt")
     _reanchor_graph_transform(svg_root, new_h)
+
+    # Content-size scale: visual elements (ellipses, labels, arrows)
+    # were sized by graphviz for the old viewBox area. Grow them by
+    # sqrt(area ratio) so they look proportional on the new canvas
+    # and edge labels stay readable. Clamped so we never shrink, and
+    # capped so a huge canvas doesn't inflate labels into overlapping
+    # blobs.
+    content_scale = math.sqrt((new_w * new_h) / max(old_w * old_h, 1.0))
+    content_scale = max(_MIN_CONTENT_SCALE, min(_MAX_CONTENT_SCALE, content_scale))
+
+    # The graphviz background `<polygon fill="white" stroke="transparent">`
+    # still carries the original viewBox's point coordinates. After we
+    # re-anchored the graph-level translate it ends up drawn in the
+    # wrong region of the new viewBox (visible as a stray white
+    # rectangle). Remove it — the `#stage` div already owns the page
+    # background.
+    _remove_background_polygon(svg_root)
+
+    # Scale node circles, text labels, and strokes so the visual
+    # vocabulary remains proportional to the new canvas.
+    _scale_visual_elements(svg_root, content_scale)
+
+    # Locally-scaled copies of the arrow / node-gap constants so the
+    # edge redraw downstream uses sizes matching the content scale.
+    arrow_len = _ARROW_LEN * content_scale
+    arrow_half = _ARROW_HALF * content_scale
+    node_gap = _NODE_GAP * content_scale
 
     def project(lx: float, ly: float) -> tuple[float, float]:
         """Layout (x, y) → graphviz-local (x, y_up). The graph-level
@@ -280,15 +320,19 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
         sxn, syn = sx, -sy
         txn, tyn = tx, -ty
         # Pull the arrowhead slightly back so its tip lands on the
-        # node outline rather than the node centre.
-        ex, ey = _pull_back(sxn, syn, txn, tyn, _NODE_GAP)
+        # node outline rather than the node centre. The pull-back
+        # plus arrow dimensions scale with the canvas so the arrow
+        # stays visually proportional to the node circle.
+        ex, ey = _pull_back(sxn, syn, txn, tyn, node_gap)
 
         for child in g.iter():
             tag = _local_tag(child)
             if tag == "path":
                 child.set("d", f"M{_fmt(sxn)},{_fmt(syn)} L{_fmt(ex)},{_fmt(ey)}")
             elif tag == "polygon":
-                child.set("points", _arrowhead_points(sxn, syn, ex, ey))
+                child.set("points", _arrowhead_points(sxn, syn, ex, ey,
+                                                     arrow_len=arrow_len,
+                                                     arrow_half=arrow_half))
             elif tag == "text":
                 # Edge label sits at midpoint.
                 mx = (sxn + ex) / 2
@@ -367,24 +411,83 @@ def _reanchor_graph_transform(svg_root, new_h: float) -> None:
         return
 
 
-def _arrowhead_points(sx: float, sy: float, ex: float, ey: float) -> str:
+def _arrowhead_points(sx: float, sy: float, ex: float, ey: float,
+                      arrow_len: float = _ARROW_LEN,
+                      arrow_half: float = _ARROW_HALF) -> str:
     """Return the `points` attribute for a triangular arrowhead whose
     tip is at (ex, ey) and whose base is perpendicular to the
-    (sx, sy) → (ex, ey) direction with half-width ``_ARROW_HALF``."""
+    (sx, sy) → (ex, ey) direction. Dimensions default to the module
+    constants but the caller passes scaled values in geo-mode so the
+    arrow stays proportional to the canvas."""
     dx, dy = ex - sx, ey - sy
     length = math.hypot(dx, dy)
     if length == 0:
         return f"{_fmt(ex)},{_fmt(ey)} {_fmt(ex)},{_fmt(ey)} {_fmt(ex)},{_fmt(ey)}"
     ux, uy = dx / length, dy / length           # unit along
     px, py = -uy, ux                            # unit perpendicular
-    base_x = ex - ux * _ARROW_LEN
-    base_y = ey - uy * _ARROW_LEN
-    left_x = base_x + px * _ARROW_HALF
-    left_y = base_y + py * _ARROW_HALF
-    right_x = base_x - px * _ARROW_HALF
-    right_y = base_y - py * _ARROW_HALF
+    base_x = ex - ux * arrow_len
+    base_y = ey - uy * arrow_len
+    left_x = base_x + px * arrow_half
+    left_y = base_y + py * arrow_half
+    right_x = base_x - px * arrow_half
+    right_y = base_y - py * arrow_half
     return (
         f"{_fmt(ex)},{_fmt(ey)} "
         f"{_fmt(left_x)},{_fmt(left_y)} "
         f"{_fmt(right_x)},{_fmt(right_y)}"
     )
+
+
+def _remove_background_polygon(svg_root) -> None:
+    """Drop the graphviz-emitted background ``<polygon fill="white"
+    stroke="transparent">``.  Its ``points`` attribute carries the
+    original viewBox coordinates; after we rewrite the viewBox the
+    polygon lands in the wrong place and renders as a stray white
+    rectangle over some of the content. The parent iframe already
+    has its own background colour."""
+    for g in svg_root.iter():
+        if _local_tag(g) != "g" or not _has_class(g, "graph"):
+            continue
+        for child in list(g):
+            if _local_tag(child) != "polygon":
+                continue
+            fill = child.get("fill", "").lower()
+            stroke = child.get("stroke", "").lower()
+            if fill == "white" and stroke == "transparent":
+                g.remove(child)
+        return
+
+
+def _scale_visual_elements(svg_root, content_scale: float) -> None:
+    """Multiply size / stroke-width / font-size on ellipses, circles,
+    and text elements by ``content_scale`` so visual vocabulary
+    remains proportional to the new, larger geo viewBox. Skips
+    ``<path>`` stroke widths to avoid burying nodes under fat edge
+    lines (graphviz encodes electrical capacity in edge stroke-width
+    and the ratios are preserved even without scaling)."""
+    if content_scale == 1.0:
+        return
+    for elem in svg_root.iter():
+        tag = _local_tag(elem)
+        if tag == "ellipse":
+            _scale_attr(elem, "rx", content_scale)
+            _scale_attr(elem, "ry", content_scale)
+            _scale_attr(elem, "stroke-width", content_scale)
+        elif tag == "circle":
+            _scale_attr(elem, "r", content_scale)
+            _scale_attr(elem, "stroke-width", content_scale)
+        elif tag == "text":
+            _scale_attr(elem, "font-size", content_scale)
+
+
+def _scale_attr(elem, name: str, factor: float) -> None:
+    """Multiply a float-valued SVG attribute by ``factor`` in place.
+    Silent no-op when the attribute is missing or non-numeric."""
+    raw = elem.get(name)
+    if raw is None:
+        return
+    try:
+        value = float(raw)
+    except ValueError:
+        return
+    elem.set(name, _fmt(value * factor))
