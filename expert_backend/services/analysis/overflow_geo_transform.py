@@ -234,14 +234,20 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
     svg_root.set("height", f"{_fmt(new_h)}pt")
     _reanchor_graph_transform(svg_root, new_h)
 
-    # Content-size scale: visual elements (ellipses, labels, arrows)
-    # were sized by graphviz for the old viewBox area. Grow them by
-    # sqrt(area ratio) so they look proportional on the new canvas
-    # and edge labels stay readable. Clamped so we never shrink, and
-    # capped so a huge canvas doesn't inflate labels into overlapping
-    # blobs.
-    content_scale = math.sqrt((new_w * new_h) / max(old_w * old_h, 1.0))
-    content_scale = max(_MIN_CONTENT_SCALE, min(_MAX_CONTENT_SCALE, content_scale))
+    # Text scale: labels were sized for the old (small) viewBox and
+    # look tiny on the new (big) canvas. Scale `font-size` by
+    # sqrt(area ratio), clamped, so edge labels stay readable.
+    #
+    # Node circles (`rx`/`ry`) and arrows are deliberately NOT scaled
+    # — doing so broke the edge-spacing invariant: the target edge
+    # length is `_TARGET_SPACING_RATIO * _NODE_RADIUS_PX` (6 × 27 =
+    # 162 px). If nodes grew by 3.6× the combined radii of two
+    # adjacent substations (200 px) would exceed the median edge
+    # length, hiding edges between close pairs. Keeping graphviz-
+    # native node sizes lets edges between close substations remain
+    # clearly drawn.
+    text_scale = math.sqrt((new_w * new_h) / max(old_w * old_h, 1.0))
+    text_scale = max(_MIN_CONTENT_SCALE, min(_MAX_CONTENT_SCALE, text_scale))
 
     # The graphviz background `<polygon fill="white" stroke="transparent">`
     # still carries the original viewBox's point coordinates. After we
@@ -251,15 +257,9 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
     # background.
     _remove_background_polygon(svg_root)
 
-    # Scale node circles, text labels, and strokes so the visual
-    # vocabulary remains proportional to the new canvas.
-    _scale_visual_elements(svg_root, content_scale)
-
-    # Locally-scaled copies of the arrow / node-gap constants so the
-    # edge redraw downstream uses sizes matching the content scale.
-    arrow_len = _ARROW_LEN * content_scale
-    arrow_half = _ARROW_HALF * content_scale
-    node_gap = _NODE_GAP * content_scale
+    # Scale text labels only; leave node circles and edge strokes at
+    # their graphviz-native sizes so close-pair edges stay visible.
+    _scale_text_labels(svg_root, text_scale)
 
     def project(lx: float, ly: float) -> tuple[float, float]:
         """Layout (x, y) → graphviz-local (x, y_up). The graph-level
@@ -320,19 +320,15 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
         sxn, syn = sx, -sy
         txn, tyn = tx, -ty
         # Pull the arrowhead slightly back so its tip lands on the
-        # node outline rather than the node centre. The pull-back
-        # plus arrow dimensions scale with the canvas so the arrow
-        # stays visually proportional to the node circle.
-        ex, ey = _pull_back(sxn, syn, txn, tyn, node_gap)
+        # node outline rather than the node centre.
+        ex, ey = _pull_back(sxn, syn, txn, tyn, _NODE_GAP)
 
         for child in g.iter():
             tag = _local_tag(child)
             if tag == "path":
                 child.set("d", f"M{_fmt(sxn)},{_fmt(syn)} L{_fmt(ex)},{_fmt(ey)}")
             elif tag == "polygon":
-                child.set("points", _arrowhead_points(sxn, syn, ex, ey,
-                                                     arrow_len=arrow_len,
-                                                     arrow_half=arrow_half))
+                child.set("points", _arrowhead_points(sxn, syn, ex, ey))
             elif tag == "text":
                 # Edge label sits at midpoint.
                 mx = (sxn + ex) / 2
@@ -458,26 +454,20 @@ def _remove_background_polygon(svg_root) -> None:
         return
 
 
-def _scale_visual_elements(svg_root, content_scale: float) -> None:
-    """Multiply size / stroke-width / font-size on ellipses, circles,
-    and text elements by ``content_scale`` so visual vocabulary
-    remains proportional to the new, larger geo viewBox. Skips
-    ``<path>`` stroke widths to avoid burying nodes under fat edge
-    lines (graphviz encodes electrical capacity in edge stroke-width
-    and the ratios are preserved even without scaling)."""
-    if content_scale == 1.0:
+def _scale_text_labels(svg_root, scale: float) -> None:
+    """Multiply ``font-size`` on every ``<text>`` element by
+    ``scale`` so labels stay readable on a larger geo canvas.
+
+    Node circles, edge strokes, and arrow polygons are left at their
+    graphviz-native sizes — scaling them up would break the
+    edge-spacing relationship between ``_NODE_RADIUS_PX`` and
+    ``_TARGET_SPACING_RATIO``, causing close-pair edges to be
+    hidden behind enlarged node outlines."""
+    if scale == 1.0:
         return
     for elem in svg_root.iter():
-        tag = _local_tag(elem)
-        if tag == "ellipse":
-            _scale_attr(elem, "rx", content_scale)
-            _scale_attr(elem, "ry", content_scale)
-            _scale_attr(elem, "stroke-width", content_scale)
-        elif tag == "circle":
-            _scale_attr(elem, "r", content_scale)
-            _scale_attr(elem, "stroke-width", content_scale)
-        elif tag == "text":
-            _scale_attr(elem, "font-size", content_scale)
+        if _local_tag(elem) == "text":
+            _scale_attr(elem, "font-size", scale)
 
 
 def _scale_attr(elem, name: str, factor: float) -> None:
