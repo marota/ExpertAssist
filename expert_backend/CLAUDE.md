@@ -131,12 +131,17 @@ Analysis:
 - `POST /api/run-analysis-step2` — resolve, **streaming** NDJSON.
 - `POST /api/run-analysis` — single-step legacy NDJSON stream.
 - `POST /api/regenerate-overflow-graph` — toggle overflow-graph
-  layout between hierarchical (graphviz `dot`) and geo
-  (graphviz `neato -n` using `grid_layout.json`). Non-streaming.
-  Cache-backed: the first call per mode produces a new HTML file
-  via `run_analysis_step2_graph`; subsequent calls in the same
-  mode return the cached path instantly. Cache is cleared at the
-  start of every fresh `run_analysis_step2` and on `reset()`.
+  layout between hierarchical (graphviz `dot`, produced by
+  `run_analysis_step2`) and geo (pure SVG transform that
+  repositions node groups using `grid_layout.json` coordinates
+  and redraws edges as straight lines). Non-streaming. Cache-
+  backed: the hierarchical path is seeded by `run_analysis_step2`
+  and the geo path is generated on first click, then cached.
+  Subsequent toggles in either direction return the cached file
+  instantly. Cache is cleared at the start of every fresh
+  `run_analysis_step2` and on `reset()`. The transform lives in
+  `services/analysis/overflow_geo_transform.py` (pure function,
+  lxml-based, fully unit-tested).
 - `POST /api/simulate-manual-action` — one-off simulation.
 - `POST /api/simulate-and-variant-diagram` — combined NDJSON stream
   emitting `{type:"metrics"}` then `{type:"diagram"}` so the
