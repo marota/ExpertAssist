@@ -128,6 +128,14 @@ The `RecommenderService.reset()` method clears, in order:
 5. NAD-prefetch state: `_prefetched_base_nad`,
    `_prefetched_base_nad_error`, `_prefetched_base_nad_event`,
    `_prefetched_base_nad_thread`.
+6. Overflow-graph toggle state:
+   - `_overflow_layout_mode` — reset to `"hierarchical"` so a new
+     study's Overflow Analysis tab always opens in the default layout.
+   - `_overflow_layout_cache` — cleared so file paths produced for
+     the previous contingency cannot be served for the new one.
+   - `_last_step2_context` — the preserved enriched Step-2 context
+     used by `/api/regenerate-overflow-graph`; stale context must
+     not be reused after a study reload.
 
 Adding a new per-study cache? It MUST be listed in
 `RecommenderService.reset()` (see

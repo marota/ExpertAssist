@@ -127,7 +127,9 @@ why enabling that is unsafe for the FastAPI thread pool today.
   `_analysis_context`, `_saved_computed_pairs`, `_cached_obs_n*`,
   `_cached_env_context`, `_initial_pst_taps`,
   `_lf_status_by_variant`, `_layout_cache`,
-  `_prefetched_base_nad*`. Adding a new instance-level cache?
+  `_prefetched_base_nad*`, `_overflow_layout_mode` (back to
+  `"hierarchical"`), `_overflow_layout_cache` (empty dict),
+  `_last_step2_context`. Adding a new instance-level cache?
   Add it here too — otherwise it WILL leak across studies (see the
   `_layout_cache` regression fixed on
   `claude/fix-grid-layout-reset-8TYEV`).
@@ -163,6 +165,18 @@ Analysis:
 - `POST /api/run-analysis-step1` — detect overloads (returns once).
 - `POST /api/run-analysis-step2` — resolve, **streaming** NDJSON.
 - `POST /api/run-analysis` — single-step legacy NDJSON stream.
+- `POST /api/regenerate-overflow-graph` — toggle overflow-graph
+  layout between hierarchical (graphviz `dot`, produced by
+  `run_analysis_step2`) and geo (pure SVG transform that
+  repositions node groups using `grid_layout.json` coordinates
+  and redraws edges as straight lines). Non-streaming. Cache-
+  backed: the hierarchical path is seeded by `run_analysis_step2`
+  and the geo path is generated on first click, then cached.
+  Subsequent toggles in either direction return the cached file
+  instantly. Cache is cleared at the start of every fresh
+  `run_analysis_step2` and on `reset()`. The transform lives in
+  `services/analysis/overflow_geo_transform.py` (pure function,
+  lxml-based, fully unit-tested).
 - `POST /api/simulate-manual-action` — one-off simulation.
 - `POST /api/simulate-and-variant-diagram` — combined NDJSON stream
   emitting `{type:"metrics"}` then `{type:"diagram"}` so the
@@ -183,8 +197,12 @@ OS pickers & static:
 `/api/run-analysis`, `/api/run-analysis-step2`, and
 `/api/simulate-and-variant-diagram` use FastAPI `StreamingResponse`
 with `application/x-ndjson`. Events are JSON lines:
-- `{"type":"pdf", "pdf_url":..., "pdf_path":...}` — overflow PDF
-  ready (delivered EARLY so the UI can show it before results).
+- `{"type":"pdf", "pdf_url":..., "pdf_path":...}` — overflow graph
+  file ready (delivered EARLY so the UI can show it before results).
+  Event / field names kept for session-schema backward compatibility;
+  the referenced file is now an interactive `.html` viewer by default
+  (`config.VISUALIZATION_FORMAT="html"` set in
+  `recommender_service.update_config`) and `.pdf` on legacy installs.
 - `{"type":"result", ...}` or `{"type":"metrics", ...}` /
   `{"type":"diagram", ...}` — final payloads.
 - `{"type":"error", "message":...}` — failure event; stream closes.

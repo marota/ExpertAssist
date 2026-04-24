@@ -230,6 +230,7 @@ Both scripts run in CI (`.github/workflows/code-quality.yml` and
 | POST | `/api/n1-sld` | Single Line Diagram in N-1 state (with flow deltas) |
 | POST | `/api/action-variant-sld` | SLD in post-action state |
 | GET  | `/api/actions` | Return all available action IDs and descriptions |
+| POST | `/api/regenerate-overflow-graph` | Regenerate (or serve from cache) the overflow graph in hierarchical / geo layout — drives the toggle on the Overflow Analysis tab |
 | POST | `/api/simulate-manual-action` | Simulate a specific action against a contingency |
 | POST | `/api/simulate-and-variant-diagram` | NDJSON stream: `{type:"metrics"}` then `{type:"diagram"}` so sidebar updates ahead of the SVG |
 | POST | `/api/compute-superposition` | Compute combined effect of two actions (superposition theorem) |
@@ -238,7 +239,7 @@ Both scripts run in CI (`.github/workflows/code-quality.yml` and
 | POST | `/api/load-session` | Load session JSON and restore PDFs |
 | POST | `/api/restore-analysis-context` | Restore analysis context from saved session |
 | GET  | `/api/pick-path` | Open native OS file/directory picker (tkinter subprocess) |
-| GET  | `/results/pdf/{filename}` | Serve generated PDF files from `Overflow_Graph/` |
+| GET  | `/results/pdf/{filename}` | Serve generated overflow-graph files from `Overflow_Graph/` — HTML (interactive viewer, current default via `config.VISUALIZATION_FORMAT="html"`) or PDF (legacy sessions). URL path kept for backward compatibility. |
 
 ## Key Patterns & Conventions
 
