@@ -630,6 +630,60 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
                 n.set_working_variant(original_variant)
         return variant_id
 
+    def _apply_contingency(self, n, contingency: str) -> bool:
+        """Disconnect ``contingency`` (a line or 2-winding transformer) on
+        the current working variant of ``n``.
+
+        ``pypowsybl.network.disconnect()`` silently returns ``False``
+        (without raising) when the equipment's terminals don't expose
+        the disconnectors the high-level API expects — which happens on
+        small test grids and some RTE xiidm exports. Simply catching
+        exceptions therefore misses the failure and leaves the N-1
+        variant identical to N, which then looks like "no overloads
+        anywhere" on the diagram even though the analysis pipeline
+        correctly finds them (it uses grid2op, which disconnects at the
+        line level, not at the pypowsybl switch level).
+
+        Fall back to ``update_lines`` / ``update_2_windings_transformers``
+        with ``connected1=False, connected2=False`` — that directly sets
+        the terminal connection flags regardless of the breaker model.
+        Returns True when the line is effectively disconnected after the
+        call, False when both paths failed (logged as a warning).
+        """
+        try:
+            ok = n.disconnect(contingency)
+        except Exception as e:
+            logger.warning("n.disconnect(%s) raised: %s", contingency, e)
+            ok = False
+        if ok:
+            return True
+        # Fall back to direct terminal-connection updates. We try lines
+        # first (most common case) and only fall back to transformers
+        # if the update reports no match.
+        is_line = contingency in n.get_lines().index
+        is_tfo = (not is_line) and contingency in n.get_2_windings_transformers().index
+        try:
+            if is_line:
+                n.update_lines(id=contingency, connected1=False, connected2=False)
+            elif is_tfo:
+                n.update_2_windings_transformers(id=contingency, connected1=False, connected2=False)
+            else:
+                logger.warning(
+                    "Cannot disconnect %r: not found as line or 2-winding "
+                    "transformer.",
+                    contingency,
+                )
+                return False
+            return True
+        except Exception as e:
+            logger.warning(
+                "Fallback update_* failed for %s: %s — N-1 variant will "
+                "not reflect the contingency and overload detection will "
+                "be wrong.",
+                contingency, e,
+            )
+            return False
+
     def _get_n1_variant(self, contingency: str):
         """Return the variant ID for the N-1 state, creating and simulating it if necessary.
 
@@ -652,10 +706,7 @@ class RecommenderService(DiagramMixin, AnalysisMixin, SimulationMixin):
             try:
                 n.set_working_variant(variant_id)
                 if contingency:
-                    try:
-                        n.disconnect(contingency)
-                    except Exception as e:
-                        logger.warning(f"Failed to disconnect {contingency} for N-1 variant: {e}")
+                    self._apply_contingency(n, contingency)
                 params = create_olf_rte_parameter()
                 results = self._run_ac_with_fallback(n, params)
                 # Cache the LF result so `get_n1_diagram` doesn't need
