@@ -305,6 +305,106 @@ def test_text_scale_leaves_small_canvas_untouched():
     assert font_sizes and all(f >= 10.0 for f in font_sizes), font_sizes
 
 
+def test_edges_stacked_before_nodes():
+    """SVG z-order follows document order. All ``<g class="edge">``
+    must appear BEFORE all ``<g class="node">`` inside
+    ``<g class="graph">`` so edges render behind nodes and node
+    circles (+ their labels) stay visible over an overlapping edge."""
+    layout = {"A": (0.0, 0.0), "B": (100.0, 100.0)}
+    out = transform_html(HIERARCHICAL_HTML, layout)
+    # Find the first <g class="node"> position and the last
+    # <g class="edge"> position inside the graph body.
+    edge_positions = [m.start() for m in re.finditer(r'<g [^>]*class="edge"', out)]
+    node_positions = [m.start() for m in re.finditer(r'<g [^>]*class="node"', out)]
+    assert edge_positions and node_positions, "Expected edges and nodes"
+    # Every edge must start BEFORE every node.
+    assert max(edge_positions) < min(node_positions), (
+        f"edges must come before nodes (last edge at {max(edge_positions)}, "
+        f"first node at {min(node_positions)})"
+    )
+
+
+def test_arrowhead_stroke_zeroed_to_avoid_chunky_triangles():
+    """Graphviz inherits a thick ``stroke-width`` (15 px on heavy
+    lines) onto the arrowhead polygon. Without zeroing it, our small
+    arrow triangle inflates into a chunky blob. The transform must
+    set ``stroke-width="0"`` on every redrawn polygon so the triangle
+    shape matches the ``points`` geometry exactly."""
+    html = HIERARCHICAL_HTML.replace(
+        '<polygon fill="coral" points="52,-58 48,-62 46,-60"/>',
+        '<polygon fill="coral" stroke="coral" stroke-width="15" points="52,-58 48,-62 46,-60"/>',
+    )
+    out = transform_html(html, {"A": (0, 0), "B": (100, 100)})
+    m = re.search(
+        r'<g[^>]*data-source="A"[^>]*>.*?'
+        r'<polygon[^>]*stroke-width="([-\d.]+)"',
+        out,
+        re.DOTALL,
+    )
+    assert m, "Arrow polygon should carry a stroke-width attribute"
+    assert float(m.group(1)) == 0.0
+
+
+def test_arrow_size_scales_with_edge_stroke_width():
+    """Heavy edges get proportionally bigger arrowheads; thin ones
+    get small arrowheads. Compare the arrow polygon spans between a
+    thick-stroke edge and a thin-stroke one."""
+    html = """\
+<!doctype html><html><body>
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <g class="graph">
+    <g id="node1" class="node" data-name="A" data-attr-pos="10,10">
+      <title>A</title>
+      <ellipse cx="10" cy="-10" rx="5" ry="5"/>
+    </g>
+    <g id="node2" class="node" data-name="B" data-attr-pos="20,20">
+      <title>B</title>
+      <ellipse cx="20" cy="-20" rx="5" ry="5"/>
+    </g>
+    <g id="edge1" class="edge" data-source="A" data-target="B">
+      <title>thick</title>
+      <path d="M 10,-10 L 20,-20" stroke-width="15"/>
+      <polygon points="0,0 1,1 2,0"/>
+    </g>
+    <g id="node3" class="node" data-name="C" data-attr-pos="30,30">
+      <title>C</title>
+      <ellipse cx="30" cy="-30" rx="5" ry="5"/>
+    </g>
+    <g id="node4" class="node" data-name="D" data-attr-pos="40,40">
+      <title>D</title>
+      <ellipse cx="40" cy="-40" rx="5" ry="5"/>
+    </g>
+    <g id="edge2" class="edge" data-source="C" data-target="D">
+      <title>thin</title>
+      <path d="M 30,-30 L 40,-40" stroke-width="1.5"/>
+      <polygon points="0,0 1,1 2,0"/>
+    </g>
+  </g>
+</svg>
+</body></html>
+"""
+    layout = {"A": (0, 0), "B": (1, 1), "C": (2, 2), "D": (3, 3)}
+    out = transform_html(html, layout)
+
+    def polygon_span(edge_id: str) -> float:
+        m = re.search(
+            rf'<g[^>]*id="{edge_id}"[^>]*>.*?<polygon[^>]*points="([^"]+)"',
+            out,
+            re.DOTALL,
+        )
+        assert m, f"No polygon in {edge_id}"
+        pts = [float(v) for pair in m.group(1).split() for v in pair.split(",")]
+        xs = pts[0::2]
+        ys = pts[1::2]
+        return (max(xs) - min(xs)) + (max(ys) - min(ys))
+
+    thick_span = polygon_span("edge1")
+    thin_span = polygon_span("edge2")
+    # Thick (stroke 15) must produce a meaningfully larger arrow
+    # than thin (stroke 1.5).
+    assert thick_span > thin_span * 2, (thick_span, thin_span)
+
+
 def test_drops_graphviz_background_polygon():
     """The stale ``<polygon fill="white" stroke="transparent">`` must
     not survive the transform — its points are stuck on the original

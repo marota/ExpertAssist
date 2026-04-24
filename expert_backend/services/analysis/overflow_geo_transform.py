@@ -319,22 +319,48 @@ def transform_html(html: str, layout: Mapping[str, tuple[float, float]]) -> str:
         # `M sx,-sy L tx,-ty` so paths render correctly.
         sxn, syn = sx, -sy
         txn, tyn = tx, -ty
+
+        # Size the arrowhead proportionally to the edge's own stroke
+        # width — graphviz emits ``stroke-width="15"`` for heavy lines
+        # and ``"1.5"`` for light ones.  A fixed-size arrow looked
+        # chunky on thick lines (the default stroke inflated the tiny
+        # triangle into a blob) and invisible on thin ones. Scaling
+        # with the stroke makes every arrowhead read as a natural
+        # extension of its line.
+        path_stroke = _edge_path_stroke_width(g)
+        arrow_len = max(4.0, path_stroke * 3.5)
+        arrow_half = max(2.5, path_stroke * 1.2)
+        node_gap = _NODE_GAP + path_stroke * 0.5
+
         # Pull the arrowhead slightly back so its tip lands on the
         # node outline rather than the node centre.
-        ex, ey = _pull_back(sxn, syn, txn, tyn, _NODE_GAP)
+        ex, ey = _pull_back(sxn, syn, txn, tyn, node_gap)
 
         for child in g.iter():
             tag = _local_tag(child)
             if tag == "path":
                 child.set("d", f"M{_fmt(sxn)},{_fmt(syn)} L{_fmt(ex)},{_fmt(ey)}")
             elif tag == "polygon":
-                child.set("points", _arrowhead_points(sxn, syn, ex, ey))
+                child.set("points", _arrowhead_points(sxn, syn, ex, ey,
+                                                     arrow_len=arrow_len,
+                                                     arrow_half=arrow_half))
+                # Zero the polygon's stroke — graphviz inherited
+                # `stroke-width="15"` onto the arrowhead polygon too,
+                # which inflates a 14×12 triangle into a ~28×27 chunky
+                # blob. The triangle shape from our ``points`` is all
+                # the arrowhead needs.
+                child.set("stroke-width", "0")
             elif tag == "text":
                 # Edge label sits at midpoint.
                 mx = (sxn + ex) / 2
                 my = (syn + ey) / 2
                 child.set("x", _fmt(mx))
                 child.set("y", _fmt(my))
+
+    # --------------------------------------------------------------
+    # 5. Z-order: edges behind nodes
+    # --------------------------------------------------------------
+    _stack_edges_below_nodes(svg_root)
 
     # --------------------------------------------------------------
     # 5. Serialise back
@@ -451,6 +477,59 @@ def _remove_background_polygon(svg_root) -> None:
             stroke = child.get("stroke", "").lower()
             if fill == "white" and stroke == "transparent":
                 g.remove(child)
+        return
+
+
+def _edge_path_stroke_width(edge_g) -> float:
+    """Return the stroke-width of the first ``<path>`` child of an
+    edge group.  Graphviz encodes line capacity there — we size the
+    arrowhead proportionally so a thick edge gets a matching big
+    arrow and a thin edge a small one. Falls back to 1.5 (the default
+    the library uses for low-capacity lines)."""
+    for child in edge_g.iter():
+        if _local_tag(child) != "path":
+            continue
+        raw = child.get("stroke-width")
+        if not raw:
+            return 1.5
+        try:
+            return float(raw)
+        except ValueError:
+            return 1.5
+    return 1.5
+
+
+def _stack_edges_below_nodes(svg_root) -> None:
+    """Reorder the direct children of ``<g class="graph">`` so every
+    ``<g class="edge">`` appears BEFORE every ``<g class="node">``.
+    SVG z-order equals document order — putting edges first means
+    they render behind nodes, so node circles (and the labels inside
+    them) stay visible even when an edge runs through a node's area.
+
+    Non-edge / non-node siblings (``<title>``, any leftover graphviz
+    scaffolding) keep their position at the head of the group so the
+    file opens identically in the library's interactive viewer."""
+    for g in svg_root.iter():
+        if _local_tag(g) != "g" or not _has_class(g, "graph"):
+            continue
+        children = list(g)
+        edges = [c for c in children
+                 if _local_tag(c) == "g" and _has_class(c, "edge")]
+        nodes = [c for c in children
+                 if _local_tag(c) == "g" and _has_class(c, "node")]
+        edge_set = set(id(e) for e in edges)
+        node_set = set(id(n) for n in nodes)
+        others = [c for c in children
+                  if id(c) not in edge_set and id(c) not in node_set]
+        # Already sorted? (others | edges | nodes order). Avoid a
+        # needless DOM mutation when the graph comes in that way.
+        desired = others + edges + nodes
+        if desired == children:
+            return
+        for child in children:
+            g.remove(child)
+        for child in desired:
+            g.append(child)
         return
 
 
